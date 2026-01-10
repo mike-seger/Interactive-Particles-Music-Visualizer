@@ -179,15 +179,9 @@ export default class AudioManager {
     const highFreqRangeStart = Math.floor((this.highFrequency * this.bufferLength) / this.audioContext.sampleRate)
     const highFreqRangeEnd = this.bufferLength - 1
 
-    let lowAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, lowFreqRangeStart, lowFreqRangeEnd))
-    let midAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, midFreqRangeStart, midFreqRangeEnd))
-    let highAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, highFreqRangeStart, highFreqRangeEnd))
-
-    // Apply noise gate - values below threshold are set to 0
-    const noiseGateThreshold = 0.02 // Adjust this value to change sensitivity
-    lowAvg = lowAvg < noiseGateThreshold ? 0 : lowAvg
-    midAvg = midAvg < noiseGateThreshold ? 0 : midAvg
-    highAvg = highAvg < noiseGateThreshold ? 0 : highAvg
+    const lowAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, lowFreqRangeStart, lowFreqRangeEnd))
+    const midAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, midFreqRangeStart, midFreqRangeEnd))
+    const highAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, highFreqRangeStart, highFreqRangeEnd))
 
     this.frequencyData = {
       low: lowAvg,
