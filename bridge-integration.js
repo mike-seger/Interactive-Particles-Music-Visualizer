@@ -80,11 +80,6 @@
           if (msg.frequencyData && window.App.audioManager.audioAnalyser.data) {
             const data = new Uint8Array(msg.frequencyData);
             window.App.audioManager.audioAnalyser.data.set(data);
-            
-            // Log occasionally
-            if (Math.random() < 0.01) {
-              console.log('[Visualizer] ✓ Received and applied audio data, sample:', data.slice(0, 5));
-            }
           } else {
             // Debug: what's missing?
             if (!window.__dataMissingLogged || Date.now() - window.__dataMissingLogged > 2000) {
