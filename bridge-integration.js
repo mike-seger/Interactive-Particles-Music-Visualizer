@@ -193,11 +193,6 @@
           for (let i = 0; i < length; i++) {
             array[i] = bridgeDataArray[i];
           }
-          
-          // Log occasionally to confirm patching works
-          if (Math.random() < 0.005) {
-            console.log('[Visualizer] 🎨 Injected bridge data into analyser, sample:', array.slice(0, 5));
-          }
         }
         // Don't call original - we're providing all the data
       };
