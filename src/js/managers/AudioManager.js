@@ -14,32 +14,98 @@ export default class AudioManager {
     this.highFrequency = 9000 //2000Hz to 20000Hz
     this.smoothedLowFrequency = 0
     this.audioContext = null
+    this.startTime = 0
+    this.pauseTime = 0
+    this.offset = 0
 
     this.song = {
-      url: 'https://p.scdn.co/mp3-preview/3be3fb77f5b2945c95e86d4c40ceceac20e5108f?cid=b62f0af3b0d54eca9bb49b99a2fc5820',
+      //url: 'http://michaels-macmini-2023:8080/video/user__eoy_bonus_mix_2025/aud_TKWp_ND-B1U.mp3',
+      url: 'http://michaels-macmini-2023:8080/video/user__eoy_bonus_mix_2025/vid_TKWp_ND-B1U.mp4',
     }
   }
 
-  async loadAudioBuffer() {
-    // Load the audio file and create the audio buffer
-    const promise = new Promise(async (resolve, reject) => {
-      const audioListener = new THREE.AudioListener()
-      this.audio = new THREE.Audio(audioListener)
-      const audioLoader = new THREE.AudioLoader()
-
-      audioLoader.load(this.song.url, (buffer) => {
-        this.audio.setBuffer(buffer)
-        this.audio.setLoop(true)
-        this.audio.setVolume(0.5)
-        this.audioContext = this.audio.context
-        this.bufferLength = this.audioAnalyser.data.length
-        resolve()
+  async loadAudioBuffer(onProgress = null) {
+    const promise = new Promise((resolve, reject) => {
+      // Create HTML5 audio element for streaming
+      const audioElement = document.createElement('audio')
+      audioElement.src = this.song.url
+      audioElement.crossOrigin = 'anonymous'
+      audioElement.loop = true
+      audioElement.volume = 0.5
+      
+      // Create Web Audio API context
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      
+      // Create source from the streaming audio element
+      const source = this.audioContext.createMediaElementSource(audioElement)
+      
+      // Create analyser for visualization
+      const analyser = this.audioContext.createAnalyser()
+      analyser.fftSize = 2048
+      
+      // Connect: source -> analyser -> destination (speakers)
+      source.connect(analyser)
+      analyser.connect(this.audioContext.destination)
+      
+      // Store references
+      this.audio = audioElement
+      this.analyserNode = analyser
+      this.bufferLength = analyser.frequencyBinCount
+      
+      // Wrap analyser to match THREE.AudioAnalyser interface
+      this.audioAnalyser = {
+        data: new Uint8Array(analyser.frequencyBinCount),
+        getFrequencyData: function() {
+          analyser.getByteFrequencyData(this.data)
+          return this.data
+        }
+      }
+      
+      // Track loading progress
+      audioElement.addEventListener('progress', () => {
+        if (audioElement.buffered.length > 0 && audioElement.duration) {
+          const buffered = audioElement.buffered.end(audioElement.buffered.length - 1)
+          const percent = (buffered / audioElement.duration) * 100
+          if (onProgress) onProgress(percent, false)
+        }
       })
-
-      this.audioAnalyser = new THREE.AudioAnalyser(this.audio, 1024)
+      
+      // Resolve when enough data is buffered to start
+      audioElement.addEventListener('canplay', () => {
+        if (onProgress) onProgress(100, true)
+        resolve()
+      }, { once: true })
+      
+      audioElement.addEventListener('error', reject)
+      
+      // Start loading
+      audioElement.load()
     })
-
+    
     return promise
+  }
+
+  async getAudioBufferForBPM(offsetSeconds = 60, durationSeconds = 30) {
+    // Fetch a small portion of the audio file for BPM analysis
+    // Estimate bytes: assume 128kbps MP3 = 16000 bytes/second
+    const bytesPerSecond = 16000
+    const startByte = offsetSeconds * bytesPerSecond
+    const endByte = (offsetSeconds + durationSeconds) * bytesPerSecond
+    
+    try {
+      const response = await fetch(this.song.url, {
+        headers: {
+          'Range': `bytes=${startByte}-${endByte}`
+        }
+      })
+      
+      const arrayBuffer = await response.arrayBuffer()
+      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
+      return audioBuffer
+    } catch (error) {
+      console.warn('Failed to fetch audio sample for BPM detection:', error)
+      throw error
+    }
   }
 
   play() {
@@ -50,6 +116,19 @@ export default class AudioManager {
   pause() {
     this.audio.pause()
     this.isPlaying = false
+  }
+
+  seek(time) {
+    if (this.audio && this.audio.currentTime !== undefined) {
+      this.audio.currentTime = time
+    }
+  }
+
+  getCurrentTime() {
+    if (this.audio && this.audio.currentTime !== undefined) {
+      return this.audio.currentTime
+    }
+    return 0
   }
 
   collectAudioData() {

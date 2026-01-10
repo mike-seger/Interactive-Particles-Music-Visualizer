@@ -10,7 +10,7 @@ export default class ReactiveParticles extends THREE.Object3D {
     this.name = 'ReactiveParticles'
     this.time = 0
     this.properties = {
-      startColor: 0xff00ff,
+      startColor: 0x3200ff,
       endColor: 0x00ffff,
       autoMix: true,
       autoRotate: true,
@@ -134,7 +134,7 @@ export default class ReactiveParticles extends THREE.Object3D {
       }
 
       // Randomly decide whether to reset the mesh
-      if (Math.random() < 0.3) {
+      if (Math.random() < 0.1) {
         this.resetMesh()
       }
     }
