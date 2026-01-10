@@ -54,6 +54,8 @@ export default class App {
   initPlayerControls() {
     const controls = document.getElementById('player-controls')
     const playPauseBtn = document.getElementById('play-pause-btn')
+    const muteBtn = document.getElementById('mute-btn')
+    const micBtn = document.getElementById('mic-btn')
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
     let hideTimer = null
@@ -126,6 +128,50 @@ export default class App {
       } else {
         App.audioManager.play()
         playPauseBtn.textContent = '❚❚'
+      }
+    })
+    
+    // Mute button
+    muteBtn.addEventListener('click', () => {
+      if (App.audioManager.audio) {
+        App.audioManager.audio.muted = !App.audioManager.audio.muted
+        if (App.audioManager.audio.muted) {
+          muteBtn.classList.add('active')
+        } else {
+          muteBtn.classList.remove('active')
+        }
+      }
+    })
+    
+    // Microphone button
+    micBtn.addEventListener('click', async () => {
+      const wasUsingMic = App.audioManager.isUsingMicrophone
+      
+      if (wasUsingMic) {
+        // Switch back to file source
+        await App.audioManager.switchToFileSource()
+        micBtn.classList.remove('active')
+      } else {
+        // Switch to microphone
+        try {
+          await App.audioManager.switchToMicrophoneSource()
+          micBtn.classList.add('active')
+        } catch (error) {
+          console.error('Failed to access microphone:', error)
+          let errorMessage = 'Failed to access microphone. '
+          
+          if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+            errorMessage += 'Please allow microphone access in your browser settings.'
+          } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+            errorMessage += 'No microphone found on your device.'
+          } else if (error.name === 'NotSupportedError') {
+            errorMessage += 'Microphone access is not supported (try using HTTPS).'
+          } else {
+            errorMessage += error.message || 'Unknown error.'
+          }
+          
+          alert(errorMessage)
+        }
       }
     })
     

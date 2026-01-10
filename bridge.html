@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Polaris Visualizer Bridge</title>
+    <link rel="stylesheet" href="./src/scss/style.scss" />
+    <script>
+      document.documentElement.className = 'js'
+    </script>
+    <style>
+      /* Hide the original player controls since Polaris handles them */
+      #player-controls {
+        display: none !important;
+      }
+      .frame {
+        display: none !important;
+      }
+      .user_interaction {
+        display: none !important;
+      }
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      .content {
+        position: fixed;
+        inset: 0;
+      }
+    </style>
+  </head>
+  <body class="demo-1">
+    <main>
+      <div class="content"></div>
+    </main>
+
+    <!-- Bridge Script: Connects Polaris Player to Visualizer -->
+    <script type="module">
+      import App from './src/js/App.js'
+
+      let app = null;
+      let isReady = false;
+
+      // Initialize the visualizer app
+      function init() {
+        if (app) return;
+        
+        app = new App();
+        
+        // Wait for app to initialize, then notify parent
+        setTimeout(() => {
+          isReady = true;
+          notifyParent({ type: 'VISUALIZER_READY' });
+        }, 500);
+      }
+
+      // Send messages to parent (Polaris Player)
+      function notifyParent(message) {
+        if (window.parent && window.parent !== window) {
+          window.parent.postMessage(message, '*');
+        }
+      }
+
+      // Handle commands from parent (Polaris Player)
+      window.addEventListener('message', async (event) => {
+        const msg = event.data;
+        if (!msg || typeof msg !== 'object') return;
+
+        // Initialize on first command if not already done
+        if (!app && msg.type !== 'PING') {
+          init();
+        }
+
+        // Wait for app to be ready before processing commands
+        if (!isReady && msg.type !== 'PING') {
+          // Queue the command to retry after initialization
+          setTimeout(() => window.postMessage(msg, '*'), 100);
+          return;
+        }
+
+        const audioManager = App.audioManager;
+        if (!audioManager) return;
+
+        switch (msg.type) {
+          case 'LOAD_TRACK':
+            if (msg.url) {
+              // Update the audio URL
+              audioManager.song.url = msg.url;
+              
+              // Stop current playback if any
+              if (audioManager.audio) {
+                audioManager.pause();
+              }
+              
+              notifyParent({ type: 'LOADING' });
+              
+              // Load the new track
+              try {
+                await audioManager.loadAudioBuffer((percent, done) => {
+                  if (done) {
+                    notifyParent({ type: 'READY' });
+                  }
+                });
+              } catch (err) {
+                console.error('Failed to load track:', err);
+                notifyParent({ type: 'ERROR', error: err.message });
+              }
+            }
+            break;
+
+          case 'PLAY':
+            if (audioManager.audio) {
+              audioManager.play();
+              notifyParent({ type: 'PLAYING' });
+            }
+            break;
+
+          case 'PAUSE':
+            if (audioManager.audio) {
+              audioManager.pause();
+              notifyParent({ type: 'PAUSED' });
+            }
+            break;
+
+          case 'STOP':
+            if (audioManager.audio) {
+              audioManager.pause();
+              audioManager.audio.currentTime = 0;
+              notifyParent({ type: 'PAUSED' });
+            }
+            break;
+
+          case 'SEEK':
+            if (audioManager.audio && typeof msg.time === 'number') {
+              audioManager.audio.currentTime = msg.time;
+            }
+            break;
+
+          case 'SET_VOLUME':
+            if (audioManager.audio && typeof msg.volume === 'number') {
+              audioManager.audio.volume = Math.max(0, Math.min(1, msg.volume));
+            }
+            break;
+
+          case 'SET_MUTED':
+            if (audioManager.audio) {
+              audioManager.audio.muted = !!msg.muted;
+            }
+            break;
+
+          case 'SET_RATE':
+            if (audioManager.audio && typeof msg.rate === 'number') {
+              audioManager.audio.playbackRate = msg.rate;
+            }
+            break;
+
+          case 'PING':
+            notifyParent({ type: 'PONG', ready: isReady });
+            break;
+        }
+      });
+
+      // Set up periodic time updates to parent
+      setInterval(() => {
+        if (!isReady || !App.audioManager || !App.audioManager.audio) return;
+        
+        const audio = App.audioManager.audio;
+        notifyParent({
+          type: 'TIME_UPDATE',
+          currentTime: audio.currentTime,
+          duration: audio.duration
+        });
+      }, 250);
+
+      // Listen for audio events and forward to parent
+      function setupAudioEventForwarding() {
+        if (!App.audioManager || !App.audioManager.audio) {
+          setTimeout(setupAudioEventForwarding, 100);
+          return;
+        }
+
+        const audio = App.audioManager.audio;
+        
+        audio.addEventListener('ended', () => {
+          notifyParent({ type: 'ENDED' });
+        });
+
+        audio.addEventListener('error', (e) => {
+          notifyParent({ type: 'ERROR', error: 'Audio playback error' });
+        });
+
+        audio.addEventListener('play', () => {
+          notifyParent({ type: 'PLAYING' });
+        });
+
+        audio.addEventListener('pause', () => {
+          if (!audio.ended) {
+            notifyParent({ type: 'PAUSED' });
+          }
+        });
+
+        audio.addEventListener('waiting', () => {
+          notifyParent({ type: 'BUFFERING' });
+        });
+
+        audio.addEventListener('canplay', () => {
+          notifyParent({ type: 'READY' });
+        });
+      }
+
+      // Auto-initialize when loaded in iframe
+      if (window.self !== window.top) {
+        document.addEventListener('click', () => init(), { once: true });
+        
+        // Auto-init after a short delay
+        setTimeout(() => {
+          if (!app) init();
+          setupAudioEventForwarding();
+        }, 1000);
+      } else {
+        // Standalone mode - just run normally
+        new App();
+      }
+    </script>
+  </body>
+</html>

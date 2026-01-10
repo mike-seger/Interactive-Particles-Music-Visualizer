@@ -45,6 +45,33 @@
   transform: scale(1.05);
 }
 
+.letter-btn {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: red;
+  font-size: 16px;
+  font-weight: bold;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+}
+
+.letter-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: scale(1.05);
+}
+
+.letter-btn.active {
+  color: white;
+}
+
 #position-slider {
   width: 180px;
   height: 4px;

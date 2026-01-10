@@ -17,6 +17,9 @@ export default class AudioManager {
     this.startTime = 0
     this.pauseTime = 0
     this.offset = 0
+    this.isUsingMicrophone = false
+    this.microphoneStream = null
+    this.microphoneSource = null
 
     this.song = {
       //url: 'http://michaels-macmini-2023:8080/video/user__eoy_bonus_mix_2025/aud_TKWp_ND-B1U.mp3',
@@ -176,9 +179,15 @@ export default class AudioManager {
     const highFreqRangeStart = Math.floor((this.highFrequency * this.bufferLength) / this.audioContext.sampleRate)
     const highFreqRangeEnd = this.bufferLength - 1
 
-    const lowAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, lowFreqRangeStart, lowFreqRangeEnd))
-    const midAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, midFreqRangeStart, midFreqRangeEnd))
-    const highAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, highFreqRangeStart, highFreqRangeEnd))
+    let lowAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, lowFreqRangeStart, lowFreqRangeEnd))
+    let midAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, midFreqRangeStart, midFreqRangeEnd))
+    let highAvg = this.normalizeValue(this.calculateAverage(this.frequencyArray, highFreqRangeStart, highFreqRangeEnd))
+
+    // Apply noise gate - values below threshold are set to 0
+    const noiseGateThreshold = 0.02 // Adjust this value to change sensitivity
+    lowAvg = lowAvg < noiseGateThreshold ? 0 : lowAvg
+    midAvg = midAvg < noiseGateThreshold ? 0 : midAvg
+    highAvg = highAvg < noiseGateThreshold ? 0 : highAvg
 
     this.frequencyData = {
       low: lowAvg,
@@ -201,9 +210,54 @@ export default class AudioManager {
   }
 
   update() {
-    if (!this.isPlaying) return
+    if (!this.isPlaying && !this.isUsingMicrophone) return
 
     this.collectAudioData()
     this.analyzeFrequency()
+  }
+
+  async switchToMicrophoneSource() {
+    // Request microphone access
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    
+    // Pause and disconnect file source if playing
+    if (this.audio) {
+      this.audio.pause()
+      this.isPlaying = false
+    }
+    
+    // Create microphone source
+    this.microphoneStream = stream
+    this.microphoneSource = this.audioContext.createMediaStreamSource(stream)
+    
+    // Disconnect previous source and connect microphone
+    this.microphoneSource.connect(this.analyserNode)
+    this.analyserNode.connect(this.audioContext.destination)
+    
+    this.isUsingMicrophone = true
+    console.log('Switched to microphone source')
+  }
+
+  async switchToFileSource() {
+    // Stop microphone
+    if (this.microphoneStream) {
+      this.microphoneStream.getTracks().forEach(track => track.stop())
+      this.microphoneStream = null
+    }
+    
+    if (this.microphoneSource) {
+      this.microphoneSource.disconnect()
+      this.microphoneSource = null
+    }
+    
+    this.isUsingMicrophone = false
+    
+    // Resume file playback
+    if (this.audio) {
+      this.audio.play()
+      this.isPlaying = true
+    }
+    
+    console.log('Switched to file source')
   }
 }

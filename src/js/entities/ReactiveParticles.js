@@ -170,23 +170,42 @@ export default class ReactiveParticles extends THREE.Object3D {
   }
 
   update() {
-    if (App.audioManager?.isPlaying) {
-      // Dynamically update amplitude based on the high frequency data from the audio manager
-      this.material.uniforms.amplitude.value = 0.8 + THREE.MathUtils.mapLinear(App.audioManager.frequencyData.high, 0, 0.6, -0.1, 0.2)
+    if (App.audioManager?.isPlaying || App.audioManager?.isUsingMicrophone) {
+      // Check if there's actual audio signal
+      const hasSignal = App.audioManager.frequencyData.low > 0 || 
+                       App.audioManager.frequencyData.mid > 0 || 
+                       App.audioManager.frequencyData.high > 0
+      
+      if (hasSignal) {
+        // Dynamically update amplitude based on the high frequency data from the audio manager
+        this.material.uniforms.amplitude.value = 0.8 + THREE.MathUtils.mapLinear(App.audioManager.frequencyData.high, 0, 0.6, -0.1, 0.2)
 
-      // Update offset gain based on the low frequency data for subtle effect changes
-      this.material.uniforms.offsetGain.value = App.audioManager.frequencyData.mid * 0.6
+        // Update offset gain based on the low frequency data for subtle effect changes
+        this.material.uniforms.offsetGain.value = App.audioManager.frequencyData.mid * 0.6
 
-      // Map low frequency data to a range and use it to increment the time uniform
-      const t = THREE.MathUtils.mapLinear(App.audioManager.frequencyData.low, 0.6, 1, 0.2, 0.5)
-      this.time += THREE.MathUtils.clamp(t, 0.2, 0.5) // Clamp the value to ensure it stays within a desired range
+        // Map low frequency data to a range and use it to increment the time uniform
+        const t = THREE.MathUtils.mapLinear(App.audioManager.frequencyData.low, 0.6, 1, 0.2, 0.5)
+        this.time += THREE.MathUtils.clamp(t, 0.2, 0.5) // Clamp the value to ensure it stays within a desired range
+        
+        // Normal size when audio is playing
+        this.material.uniforms.size.value = 1.1
+      } else {
+        // No signal detected - keep flat, still, but more visible
+        this.material.uniforms.amplitude.value = 0
+        this.material.uniforms.offsetGain.value = 0
+        // Don't increment time - keep frozen
+        // Make particles bigger and brighter when silent
+        this.material.uniforms.size.value = 12.5
+      }
     } else {
-      // Set default values for the uniforms when audio is not playing
-      this.material.uniforms.frequency.value = 0.8
-      this.material.uniforms.amplitude.value = 1
-      this.time += 0.2
+      // When audio is stopped, show flat geometry with gentle rotation
+      this.material.uniforms.amplitude.value = 0  // No deformation
+      this.material.uniforms.offsetGain.value = 0 // No offset variations
+      this.time += 0.01 // Slow gentle rotation to keep it alive
+      // Make particles bigger when paused
+      this.material.uniforms.size.value = 12.5
     }
-
+    
     this.material.uniforms.time.value = this.time
   }
 
