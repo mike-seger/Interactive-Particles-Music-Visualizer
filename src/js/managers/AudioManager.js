@@ -86,49 +86,58 @@ export default class AudioManager {
   }
 
   async getAudioBufferForBPM(offsetSeconds = 60, durationSeconds = 30) {
-    // Fetch from beginning to ~80 seconds (includes headers), then use last 30s
-    // Estimate bytes: assume 128kbps MP3 = 16000 bytes/second
-    const bytesPerSecond = 16000
-    const fetchDuration = offsetSeconds + durationSeconds // ~90 seconds total
-    const endByte = fetchDuration * bytesPerSecond
-    
-    try {
-      // Fetch from byte 0 to include headers and format data
-      const response = await fetch(this.song.url, {
-        headers: {
-          'Range': `bytes=0-${endByte}`
-        }
-      })
+    // Record from the currently playing audio stream
+    return new Promise((resolve, reject) => {
+      if (!this.audio || !this.audioContext) {
+        reject(new Error('Audio not loaded yet'))
+        return
+      }
       
-      const arrayBuffer = await response.arrayBuffer()
-      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
+      console.log('Recording audio for BPM detection...')
       
-      // Extract the last 30 seconds from the decoded buffer
-      const startSample = Math.max(0, Math.floor(offsetSeconds * audioBuffer.sampleRate))
-      const endSample = Math.min(audioBuffer.length, Math.floor((offsetSeconds + durationSeconds) * audioBuffer.sampleRate))
-      const length = endSample - startSample
+      // Create a destination to record the audio
+      const destination = this.audioContext.createMediaStreamDestination()
       
-      // Create a new buffer with just the segment we want
-      const segmentBuffer = this.audioContext.createBuffer(
-        audioBuffer.numberOfChannels,
-        length,
-        audioBuffer.sampleRate
-      )
+      // Connect analyser to destination (for recording)
+      this.analyserNode.connect(destination)
       
-      // Copy the data for each channel
-      for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-        const sourceData = audioBuffer.getChannelData(channel)
-        const segmentData = segmentBuffer.getChannelData(channel)
-        for (let i = 0; i < length; i++) {
-          segmentData[i] = sourceData[startSample + i]
+      // Create MediaRecorder to capture audio
+      const mediaRecorder = new MediaRecorder(destination.stream)
+      const chunks = []
+      
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunks.push(e.data)
         }
       }
       
-      return segmentBuffer
-    } catch (error) {
-      console.warn('Failed to fetch audio sample for BPM detection:', error)
-      throw error
-    }
+      mediaRecorder.onstop = async () => {
+        // Disconnect to avoid keeping the connection
+        this.analyserNode.disconnect(destination)
+        
+        // Convert recorded chunks to AudioBuffer
+        const blob = new Blob(chunks, { type: 'audio/webm' })
+        const arrayBuffer = await blob.arrayBuffer()
+        
+        try {
+          const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
+          console.log(`Recorded ${audioBuffer.duration.toFixed(2)}s for BPM detection`)
+          resolve(audioBuffer)
+        } catch (error) {
+          reject(error)
+        }
+      }
+      
+      mediaRecorder.onerror = reject
+      
+      // Start recording from current playback position
+      mediaRecorder.start()
+      
+      // Stop after duration
+      setTimeout(() => {
+        mediaRecorder.stop()
+      }, durationSeconds * 1000)
+    })
   }
 
   play() {

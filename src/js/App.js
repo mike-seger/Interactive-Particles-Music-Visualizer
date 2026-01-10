@@ -181,25 +181,29 @@ export default class App {
       loadingText.innerHTML = `<div style="font-family: monospace; font-size: 24px; color: white;">Loading: ${Math.round(progress)}%</div>`
     })
 
-    loadingText.innerHTML = '<div style="font-family: monospace; font-size: 24px; color: white;">Analyzing BPM...</div>'
-
     App.bpmManager = new BPMManager()
     App.bpmManager.addEventListener('beat', () => {
       this.particles.onBPMBeat()
     })
     
-    // Detect BPM from 30 seconds of audio starting at 60 seconds
-    try {
-      const bpmBuffer = await App.audioManager.getAudioBufferForBPM(60, 30)
-      await App.bpmManager.detectBPM(bpmBuffer)
-    } catch (e) {
-      console.warn('BPM detection failed, using default:', e)
-      App.bpmManager.setBPM(128) // Fallback BPM
-    }
+    // Start with default BPM
+    App.bpmManager.setBPM(140)
 
     loadingText.remove()
 
     App.audioManager.play()
+    
+    // Detect BPM in the background after 30 seconds
+    setTimeout(async () => {
+      console.log('Starting background BPM detection...')
+      try {
+        const bpmBuffer = await App.audioManager.getAudioBufferForBPM(60, 30)
+        await App.bpmManager.detectBPM(bpmBuffer)
+        console.log('BPM detection complete:', App.bpmManager.bpm)
+      } catch (e) {
+        console.warn('Background BPM detection failed, keeping default:', e)
+      }
+    }, 30000)
     
     // Initialize player controls
     this.initPlayerControls()
