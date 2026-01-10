@@ -80,6 +80,30 @@
           if (msg.frequencyData && window.App.audioManager.audioAnalyser.data) {
             const data = new Uint8Array(msg.frequencyData);
             window.App.audioManager.audioAnalyser.data.set(data);
+            
+            // Log occasionally
+            if (Math.random() < 0.01) {
+              console.log('[Visualizer] ✓ Received and applied audio data, sample:', data.slice(0, 5));
+            }
+          } else {
+            // Debug: what's missing?
+            if (!window.__dataMissingLogged || Date.now() - window.__dataMissingLogged > 2000) {
+              console.warn('[Visualizer] ⚠️ App ready but data structure missing:', {
+                hasFrequencyData: !!msg.frequencyData,
+                hasAnalyserData: !!window.App.audioManager.audioAnalyser.data
+              });
+              window.__dataMissingLogged = Date.now();
+            }
+          }
+        } else {
+          // Debug: what specifically is missing?
+          if (!window.__audioDataWarningLogged || Date.now() - window.__audioDataWarningLogged > 2000) {
+            console.log('[Visualizer] ⏳ Audio data received but App not ready:', {
+              hasApp: !!window.App,
+              hasAudioManager: !!(window.App && window.App.audioManager),
+              hasAudioAnalyser: !!(window.App && window.App.audioManager && window.App.audioManager.audioAnalyser)
+            });
+            window.__audioDataWarningLogged = Date.now();
           }
         }
         break;
@@ -108,35 +132,102 @@
     }
   });
   
-  // In bridge mode, make visualizer completely passive
+  // In bridge mode, create fake App structure for audio data
   if (bridgeMode) {
     console.log('[Visualizer] Setting up passive bridge mode');
     
-    // Store original AudioManager for patching
-    let AudioManagerPatched = false;
+    // Create fake App.audioManager structure immediately
+    window.App = {
+      audioManager: {
+        audioContext: null,
+        audioAnalyser: {
+          data: new Uint8Array(2048),  // FFT size from bridge
+          getFrequencyData: function() {
+            return this.data;
+          }
+        },
+        bpm: 120,
+        isPlaying: false,
+        
+        // Stub methods that might be called
+        loadAudioBuffer: async function(onProgress = null) {
+          console.log('[Visualizer] loadAudioBuffer bypassed - using bridge data');
+          if (onProgress) onProgress(100, true);
+          return Promise.resolve();
+        },
+        
+        detectBPM: async function() {
+          console.log('[Visualizer] detectBPM bypassed - using bridge BPM');
+          return Promise.resolve();
+        },
+        
+        play: function() {
+          this.isPlaying = true;
+        },
+        
+        pause: function() {
+          this.isPlaying = false;
+        },
+        
+        seek: function() {}
+      },
+      
+      particleManager: {
+        active: false,
+        setActive: function(active) {
+          this.active = active;
+          console.log('[Visualizer] Particles', active ? 'activated' : 'deactivated');
+        }
+      }
+    };
     
-    // Intercept at module import level by watching for AudioManager constructor
+    console.log('[Visualizer] ✓ Created App structure for bridge mode:', window.App);
+    
+    // Patch Web Audio API to inject our bridge data
+    // The visualizer's App runs in module scope, so we can't access it directly
+    // Instead, intercept at the AnalyserNode level
+    const bridgeDataArray = window.App.audioManager.audioAnalyser.data;
+    
+    if (window.AnalyserNode && window.AnalyserNode.prototype) {
+      const originalGetByteFrequencyData = window.AnalyserNode.prototype.getByteFrequencyData;
+      
+      window.AnalyserNode.prototype.getByteFrequencyData = function(array) {
+        // Copy bridge data into the array being requested
+        if (bridgeDataArray && array) {
+          const length = Math.min(bridgeDataArray.length, array.length);
+          for (let i = 0; i < length; i++) {
+            array[i] = bridgeDataArray[i];
+          }
+          
+          // Log occasionally to confirm patching works
+          if (Math.random() < 0.005) {
+            console.log('[Visualizer] 🎨 Injected bridge data into analyser, sample:', array.slice(0, 5));
+          }
+        }
+        // Don't call original - we're providing all the data
+      };
+      
+      console.log('[Visualizer] ✓ Patched AnalyserNode.getByteFrequencyData');
+    }
+    
+    // Intercept audio element creation to prevent actual audio loading
     const originalCreateElement = document.createElement.bind(document);
     document.createElement = function(tagName) {
       const element = originalCreateElement(tagName);
       
-      // Intercept audio element creation
       if (tagName.toLowerCase() === 'audio') {
         console.log('[Visualizer] Audio element created - neutering it');
-        // Neuter any audio element created
         element.volume = 0;
         element.muted = true;
         
-        // Stub out playback methods
         const noop = () => {};
         const noopPromise = () => Promise.resolve();
         
         element.play = noopPromise;
         element.pause = noop;
         
-        // Override load to fake successful loading
         element.load = function() {
-          console.log('[Visualizer] Audio load() called - faking success');
+          console.log('[Visualizer] Audio load() bypassed');
           setTimeout(() => {
             this.dispatchEvent(new Event('loadedmetadata'));
             this.dispatchEvent(new Event('loadeddata'));
@@ -144,24 +235,20 @@
           }, 10);
         };
         
-        // Prevent src from being set and trigger fake load
         Object.defineProperty(element, 'src', {
           get: () => '',
           set: (value) => {
-            console.log('[Visualizer] Blocked audio src:', value);
-            // Trigger fake loading when src is set
+            console.log('[Visualizer] Audio src blocked:', value);
             setTimeout(() => {
               element.dispatchEvent(new Event('loadedmetadata'));
               element.dispatchEvent(new Event('loadeddata'));
               element.dispatchEvent(new Event('canplay'));
-            }, 50);
+            }, 10);
             return '';
           }
         });
         
-        // Catch and suppress all errors
         element.addEventListener('error', (e) => {
-          console.log('[Visualizer] Suppressed audio error');
           e.stopPropagation();
           e.preventDefault();
           return false;
@@ -170,67 +257,5 @@
       
       return element;
     };
-    
-    // Wait for AudioManager and set it to passive mode
-    console.log('[Visualizer] Waiting for AudioManager to set passive mode');
-    
-    // Wait for App and disable audio loading/BPM detection
-    const checkInterval = setInterval(() => {
-      if (window.App && window.App.audioManager) {
-        clearInterval(checkInterval);
-        console.log('[Visualizer] ✓ Found App.audioManager, configuring for bridge mode');
-        patchAudioManagerForBridge(window.App.audioManager);
-      }
-    }, 100);
-    
-    setTimeout(() => clearInterval(checkInterval), 10000);
-  }
-  
-  function patchAudioManagerForBridge(audioManager) {
-    console.log('[Visualizer] Configuring AudioManager for bridge mode (passive)');
-    
-    // Disable audio loading completely
-    audioManager.loadAudioBuffer = async function(onProgress = null) {
-      console.log('[Visualizer] loadAudioBuffer called - skipping (bridge mode)');
-      
-      // Set up minimal analyser for receiving data
-      if (!this.audioContext) {
-        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      
-      if (!this.audioAnalyser) {
-        this.audioAnalyser = {
-          data: new Uint8Array(1024),
-          getFrequencyData: () => this.audioAnalyser.data
-        };
-      }
-      
-      if (onProgress) onProgress(100, true);
-      return Promise.resolve();
-    };
-    
-    // Disable BPM detection - will receive from bridge
-    audioManager.detectBPM = function() {
-      console.log('[Visualizer] BPM detection disabled - waiting for bridge');
-      // Return a promise that never resolves to prevent any BPM detection
-      return new Promise(() => {});
-    };
-    
-    // Disable audio playback
-    audioManager.play = function() {
-      this.isPlaying = true;
-      console.log('[Visualizer] Play (controlled by bridge)');
-    };
-    
-    audioManager.pause = function() {
-      this.isPlaying = false;
-      console.log('[Visualizer] Pause (controlled by bridge)');
-    };
-    
-    audioManager.seek = function() {
-      console.log('[Visualizer] Seek (controlled by bridge)');
-    };
-    
-    console.log('[Visualizer] AudioManager configured for passive bridge mode');
   }
 })();
