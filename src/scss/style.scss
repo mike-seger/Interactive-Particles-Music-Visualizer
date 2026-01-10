@@ -48,7 +48,7 @@
 .letter-btn {
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  color: red;
+  color: white;
   font-size: 16px;
   font-weight: bold;
   width: 35px;
@@ -69,7 +69,7 @@
 }
 
 .letter-btn.active {
-  color: white;
+  color: red;
 }
 
 #position-slider {

@@ -195,7 +195,7 @@ export default class ReactiveParticles extends THREE.Object3D {
         this.material.uniforms.offsetGain.value = 0
         // Don't increment time - keep frozen
         // Make particles bigger and brighter when silent
-        this.material.uniforms.size.value = 12.5
+        this.material.uniforms.size.value = 6.25
       }
     } else {
       // When audio is stopped, show flat geometry with gentle rotation
@@ -203,7 +203,7 @@ export default class ReactiveParticles extends THREE.Object3D {
       this.material.uniforms.offsetGain.value = 0 // No offset variations
       this.time += 0.01 // Slow gentle rotation to keep it alive
       // Make particles bigger when paused
-      this.material.uniforms.size.value = 12.5
+      this.material.uniforms.size.value = 6.25
     }
     
     this.material.uniforms.time.value = this.time
