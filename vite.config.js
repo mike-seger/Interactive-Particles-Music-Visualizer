@@ -5,6 +5,13 @@ import * as path from 'path'
 export default defineConfig({
   root: '',
   base: '/',
+  css: {
+    preprocessorOptions: {
+      scss: {
+        api: 'modern-compiler',
+      },
+    },
+  },
   build: {
     outDir: 'dist',
     cssCodeSplit: true,

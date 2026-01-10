@@ -86,22 +86,45 @@ export default class AudioManager {
   }
 
   async getAudioBufferForBPM(offsetSeconds = 60, durationSeconds = 30) {
-    // Fetch a small portion of the audio file for BPM analysis
+    // Fetch from beginning to ~80 seconds (includes headers), then use last 30s
     // Estimate bytes: assume 128kbps MP3 = 16000 bytes/second
     const bytesPerSecond = 16000
-    const startByte = offsetSeconds * bytesPerSecond
-    const endByte = (offsetSeconds + durationSeconds) * bytesPerSecond
+    const fetchDuration = offsetSeconds + durationSeconds // ~90 seconds total
+    const endByte = fetchDuration * bytesPerSecond
     
     try {
+      // Fetch from byte 0 to include headers and format data
       const response = await fetch(this.song.url, {
         headers: {
-          'Range': `bytes=${startByte}-${endByte}`
+          'Range': `bytes=0-${endByte}`
         }
       })
       
       const arrayBuffer = await response.arrayBuffer()
       const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer)
-      return audioBuffer
+      
+      // Extract the last 30 seconds from the decoded buffer
+      const startSample = Math.max(0, Math.floor(offsetSeconds * audioBuffer.sampleRate))
+      const endSample = Math.min(audioBuffer.length, Math.floor((offsetSeconds + durationSeconds) * audioBuffer.sampleRate))
+      const length = endSample - startSample
+      
+      // Create a new buffer with just the segment we want
+      const segmentBuffer = this.audioContext.createBuffer(
+        audioBuffer.numberOfChannels,
+        length,
+        audioBuffer.sampleRate
+      )
+      
+      // Copy the data for each channel
+      for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+        const sourceData = audioBuffer.getChannelData(channel)
+        const segmentData = segmentBuffer.getChannelData(channel)
+        for (let i = 0; i < length; i++) {
+          segmentData[i] = sourceData[startSample + i]
+        }
+      }
+      
+      return segmentBuffer
     } catch (error) {
       console.warn('Failed to fetch audio sample for BPM detection:', error)
       throw error
