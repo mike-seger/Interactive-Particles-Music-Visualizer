@@ -97,8 +97,8 @@ export default class AudioMesh extends THREE.Object3D {
     this.plane2 = plane2
     
     // Create icosahedron (main visualizer ball)
-    const ballRadius = 0.8
-    const icosahedronGeometry = new THREE.IcosahedronGeometry(ballRadius, 14)
+    const ballRadius = 0.5
+    const icosahedronGeometry = new THREE.IcosahedronGeometry(ballRadius, 20)
     const lambertMaterial = new THREE.MeshBasicMaterial({
       color: 0xff00ff,
       wireframe: true
@@ -190,7 +190,7 @@ export default class AudioMesh extends THREE.Object3D {
     const time = window.performance.now()
     const positions = mesh.geometry.attributes.position.array
     const offset = mesh.geometry.parameters.radius
-    const amp = offset * 2.5  // Scale amplitude with ball size
+    const amp = offset * 6  // Scale amplitude with ball size
     const rf = 0.00001
     
     for (let i = 0; i < positions.length; i += 3) {
