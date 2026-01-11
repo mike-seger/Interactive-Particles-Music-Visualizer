@@ -26,7 +26,7 @@ This project provides a comprehensive guide on creating dynamic and visually stu
 
 4. **Build for Production**:
     ```bash
-    npm run build
+    npm run build -- --base=/visualizer/
     ```
 
 ## How to Use

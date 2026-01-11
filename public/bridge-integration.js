@@ -31,6 +31,7 @@
       .frame { display: none !important; }
       #player-controls { display: none !important; }
       .user_interaction { display: none !important; }
+      .dg.ac { display: none !important; }
     `;
     document.head.appendChild(style);
     console.log('[Visualizer] UI elements hidden');
@@ -61,6 +62,7 @@
             .frame { display: none !important; }
             #player-controls { display: none !important; }
             .user_interaction { display: none !important; }
+            .dg.ac { display: none !important; }
           `;
           if (!document.getElementById('bridge-ui-hide')) {
             document.head.appendChild(style);
