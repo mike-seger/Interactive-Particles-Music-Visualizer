@@ -666,9 +666,9 @@ export default class Fluid extends THREE.Object3D {
     
     generateColor(intensity = 1.0) {
         const c = this.HSVtoRGB(Math.random(), 1.0, 1.0);
-        c.r *= 0.15 * (1 + intensity);
-        c.g *= 0.15 * (1 + intensity);
-        c.b *= 0.15 * (1 + intensity);
+        c.r *= 0.5 * (1 + intensity);
+        c.g *= 0.5 * (1 + intensity);
+        c.b *= 0.5 * (1 + intensity);
         return c;
     }
     
