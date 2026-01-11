@@ -14,6 +14,9 @@ import WavySpiral from './entities/wavy-spiral/WavySpiral'
 import AudioMesh from './entities/audio-mesh/AudioMesh'
 import WaveformVisualizer from './entities/waveform-visualizer/WaveformVisualizer'
 import AnimatedBlob from './entities/animated-blob/AnimatedBlob'
+import WebGLBlob from './entities/webgl-blob/WebGLBlob'
+import SynthWave from './entities/synthwave/SynthWave'
+import Fluid from './entities/fluid/Fluid'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -295,7 +298,17 @@ export default class App {
   update() {
     requestAnimationFrame(() => this.update())
 
-    App.currentVisualizer?.update()
+    // Update visualizer with audio data
+    const audioData = App.audioManager ? {
+      frequencies: {
+        bass: App.audioManager.frequencyData.low,
+        mid: App.audioManager.frequencyData.mid,
+        high: App.audioManager.frequencyData.high
+      },
+      isBeat: App.bpmManager?.beatActive || false
+    } : null
+    
+    App.currentVisualizer?.update(audioData)
     App.audioManager.update()
 
     this.renderer.render(this.scene, this.camera)
@@ -357,6 +370,15 @@ export default class App {
       case 'Animated Blob':
         App.currentVisualizer = new AnimatedBlob()
         break
+      case 'WebGL Blob':
+        App.currentVisualizer = new WebGLBlob()
+        break
+      case 'SynthWave':
+        App.currentVisualizer = new SynthWave()
+        break
+      case 'Fluid':
+        App.currentVisualizer = new Fluid()
+        break
       default:
         App.currentVisualizer = new ReativeParticles()
     }
@@ -375,7 +397,7 @@ export default class App {
     }
     
     visualizerFolder
-      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob'])
+      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid'])
       .name('Select Visualizer')
       .onChange((value) => {
         this.switchVisualizer(value)

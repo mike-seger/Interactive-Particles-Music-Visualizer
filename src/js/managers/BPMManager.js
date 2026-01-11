@@ -8,6 +8,8 @@ export default class BPMManager extends EventDispatcher {
     this.interval = 500 // Interval for beat events
     this.intervalId = null // Timer ID for beat interval
     this.bpmValue = 0 // BPM value
+    this.beatActive = false // Flag indicating if we're currently on a beat
+    this.beatDuration = 100 // How long the beat flag stays true (ms)
   }
 
   setBPM(bpm) {
@@ -19,7 +21,13 @@ export default class BPMManager extends EventDispatcher {
 
   updateBPM() {
     // Function called at each beat interval
+    this.beatActive = true
     this.dispatchEvent({ type: 'beat' })
+    
+    // Reset beat flag after short duration
+    setTimeout(() => {
+      this.beatActive = false
+    }, this.beatDuration)
   }
 
   async detectBPM(audioBuffer) {

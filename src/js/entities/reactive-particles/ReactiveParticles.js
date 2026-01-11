@@ -4,6 +4,8 @@ import vertex from './glsl/vertex.glsl'
 import fragment from './glsl/fragment.glsl'
 import App from '../../App'
 
+// https://tympanus.net/codrops/2023/12/19/creating-audio-reactive-visuals-with-dynamic-particles-in-three-js/
+
 export default class ReactiveParticles extends THREE.Object3D {
   constructor() {
     super()
