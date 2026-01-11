@@ -17,6 +17,8 @@ import AnimatedBlob from './entities/animated-blob/AnimatedBlob'
 import WebGLBlob from './entities/webgl-blob/WebGLBlob'
 import SynthWave from './entities/synthwave/SynthWave'
 import Fluid from './entities/fluid/Fluid'
+import Water from './entities/water/Water'
+import KevsPlasma from './entities/kevs-plasma/KevsPlasma'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -379,6 +381,15 @@ export default class App {
       case 'Fluid':
         App.currentVisualizer = new Fluid()
         break
+      case 'Water':
+        App.currentVisualizer = new Water()
+        if (typeof App.currentVisualizer.setRenderer === 'function') {
+          App.currentVisualizer.setRenderer(this.renderer)
+        }
+        break
+      case 'Kevs Plasma':
+        App.currentVisualizer = new KevsPlasma()
+        break
       default:
         App.currentVisualizer = new ReativeParticles()
     }
@@ -397,7 +408,7 @@ export default class App {
     }
     
     visualizerFolder
-      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid'])
+      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid', 'Water', 'Kevs Plasma'])
       .name('Select Visualizer')
       .onChange((value) => {
         this.switchVisualizer(value)
