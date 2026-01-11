@@ -19,6 +19,11 @@ import SynthWave from './entities/synthwave/SynthWave'
 import Fluid from './entities/fluid/Fluid'
 import Water from './entities/water/Water'
 import KevsPlasma from './entities/kevs-plasma/KevsPlasma'
+import FrequencyBars from './entities/frequency-bars/FrequencyBars'
+import AudioOscilloscope from './entities/oscilloscope/Oscilloscope'
+import DeepParticles from './entities/deep-particles/DeepParticles'
+import DeepLights from './entities/deep-lights/DeepLights'
+import AudioSphere from './entities/audio-sphere/AudioSphere'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -27,6 +32,8 @@ export default class App {
   //THREE objects
   static holder = null
   static gui = null
+  static camera = null
+  static scene = null
 
   //Managers
   static audioManager = null
@@ -57,9 +64,11 @@ export default class App {
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 10000)
     this.camera.position.z = 12
     this.camera.frustumCulled = false
+    App.camera = this.camera
 
     this.scene = new THREE.Scene()
     this.scene.add(this.camera)
+    App.scene = this.scene
 
     App.holder = new THREE.Object3D()
     App.holder.name = 'holder'
@@ -325,6 +334,14 @@ export default class App {
       App.currentVisualizer = null
     }
     
+    // Clear App.holder (Three.js scene objects)
+    while (App.holder.children.length > 0) {
+      App.holder.remove(App.holder.children[0])
+    }
+    
+    // Clear renderer
+    this.renderer.clear()
+    
     // Create new visualizer
     switch (type) {
       case 'Reactive Particles':
@@ -390,6 +407,21 @@ export default class App {
       case 'Kevs Plasma':
         App.currentVisualizer = new KevsPlasma()
         break
+      case 'Frequency Bars':
+        App.currentVisualizer = new FrequencyBars()
+        break
+      case 'Oscilloscope':
+        App.currentVisualizer = new AudioOscilloscope()
+        break
+      case 'Deep Particles':
+        App.currentVisualizer = new DeepParticles()
+        break
+      case 'Deep Lights':
+        App.currentVisualizer = new DeepLights()
+        break
+      case 'Audio Sphere':
+        App.currentVisualizer = new AudioSphere()
+        break
       default:
         App.currentVisualizer = new ReativeParticles()
     }
@@ -408,7 +440,7 @@ export default class App {
     }
     
     visualizerFolder
-      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid', 'Water', 'Kevs Plasma'])
+      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid', 'Water', 'Kevs Plasma', 'Frequency Bars', 'Oscilloscope', 'Deep Particles', 'Deep Lights', 'Audio Sphere'])
       .name('Select Visualizer')
       .onChange((value) => {
         this.switchVisualizer(value)
