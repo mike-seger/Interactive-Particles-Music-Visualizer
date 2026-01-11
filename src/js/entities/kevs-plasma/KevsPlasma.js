@@ -23,6 +23,7 @@ export default class KevsPlasma {
         this.bassReactivity = 0;
         this.midReactivity = 0;
         this.highReactivity = 0;
+        this.animationMomentum = 1.0; // Gradually decreases when no audio
         
         this.palettes = [];
         this.generatePalettes();
@@ -106,12 +107,29 @@ export default class KevsPlasma {
             this.midReactivity = frequencies.mid || 0;
             this.highReactivity = frequencies.high || 0;
             
+            // Calculate overall audio intensity
+            const audioIntensity = (this.bassReactivity + this.midReactivity + this.highReactivity) / 3;
+            
+            // Gradually adjust momentum based on audio presence
+            if (audioIntensity > 0.05) {
+                // Audio present - increase momentum
+                this.animationMomentum = Math.min(1.0, this.animationMomentum + 0.05);
+            } else {
+                // No audio - gradually slow down
+                this.animationMomentum = Math.max(0.0, this.animationMomentum - 0.01);
+            }
+            
             // Audio-reactive parameters
             // Mid affects cycle speed (very slow color cycling)
-            this.cycleSpeed = 0.01 + this.midReactivity * 0.05;
+            this.cycleSpeed = (0.01 + this.midReactivity * 0.05) * this.animationMomentum;
             
             // Time function fixed (no audio reactivity)
-            this.timeFunction = 66.67;
+            this.timeFunction = 66.67 / Math.max(0.1, this.animationMomentum);
+        } else {
+            // No audio data - slow down
+            this.animationMomentum = Math.max(0.0, this.animationMomentum - 0.01);
+            this.cycleSpeed = 0.01 * this.animationMomentum;
+            this.timeFunction = 66.67 / Math.max(0.1, this.animationMomentum);
         }
         
         this.render();
@@ -133,6 +151,12 @@ export default class KevsPlasma {
         
         const time = Date.now() / this.timeFunction;
         
+        // Add random variation for shape and color diversity
+        const randomOffset1 = Math.sin(time * 0.3) * 50;
+        const randomOffset2 = Math.cos(time * 0.4) * 30;
+        const randomOffset3 = Math.sin(time * 0.5) * 40;
+        const colorNoise = Math.sin(time * 2.1) * 20;
+        
         const dist = (a, b, c, d) => {
             return Math.sqrt((a - c) * (a - c) + (b - d) * (b - d));
         };
@@ -147,11 +171,11 @@ export default class KevsPlasma {
                     ) * 32;
                 case 1:
                     return (
-                        128 + 128 * Math.sin(x * 0.0625) +
-                        128 + 128 * Math.sin(y * 0.03125) +
-                        128 + 128 * Math.sin(dist(x + time, y - time, w, h) * 0.125) +
-                        128 + 128 * Math.sin(Math.sqrt(x * x + y * y) * 0.125)
-                    ) * 0.25;
+                        128 + 128 * Math.sin(x * 0.0625 + randomOffset1 * 0.01) +
+                        128 + 128 * Math.sin(y * 0.03125 + randomOffset2 * 0.01) +
+                        128 + 128 * Math.sin(dist(x + time + randomOffset3, y - time, w, h) * 0.125) +
+                        128 + 128 * Math.sin(Math.sqrt(x * x + y * y) * 0.125 + time * 0.2)
+                    ) * 0.25 + colorNoise;
                 default:
                     return 0;
             }
