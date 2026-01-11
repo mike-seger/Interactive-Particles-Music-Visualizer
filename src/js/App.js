@@ -1,5 +1,17 @@
 import * as THREE from 'three'
-import ReativeParticles from './entities/ReactiveParticles'
+import ReativeParticles from './entities/reactive-particles/ReactiveParticles'
+import FrequencyRings from './entities/frequency-rings/FrequencyRings'
+import PlasmaField from './entities/plasma/PlasmaField'
+import ParticleSphere from './entities/particle-sphere/ParticleSphere'
+import AudioParticles from './entities/audio-particles/AudioParticles'
+import Iris from './entities/iris/Iris'
+import CircularWave from './entities/circular-wave/CircularWave'
+import AudioFabric from './entities/audio-fabric/AudioFabric'
+import CircularSpectrum from './entities/circular-spectrum/CircularSpectrum'
+import SphereLines from './entities/sphere-lines/SphereLines'
+import Spiral from './entities/spiral/Spiral'
+import WavySpiral from './entities/wavy-spiral/WavySpiral'
+import AudioMesh from './entities/audio-mesh/AudioMesh'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -12,6 +24,10 @@ export default class App {
   //Managers
   static audioManager = null
   static bpmManager = null
+  
+  //Visualizer management
+  static currentVisualizer = null
+  static visualizerType = 'Reactive Particles'
 
   constructor() {
     this.onClickBinder = () => this.init()
@@ -229,7 +245,9 @@ export default class App {
 
     App.bpmManager = new BPMManager()
     App.bpmManager.addEventListener('beat', () => {
-      this.particles.onBPMBeat()
+      if (App.currentVisualizer && typeof App.currentVisualizer.onBPMBeat === 'function') {
+        App.currentVisualizer.onBPMBeat()
+      }
     })
     
     // Start with default BPM
@@ -254,8 +272,11 @@ export default class App {
     // Initialize player controls
     this.initPlayerControls()
 
-    this.particles = new ReativeParticles()
-    this.particles.init()
+    // Initialize default visualizer
+    this.switchVisualizer('Reactive Particles')
+    
+    // Add visualizer switcher to GUI
+    this.addVisualizerSwitcher()
 
     this.update()
   }
@@ -272,9 +293,84 @@ export default class App {
   update() {
     requestAnimationFrame(() => this.update())
 
-    this.particles?.update()
+    App.currentVisualizer?.update()
     App.audioManager.update()
 
     this.renderer.render(this.scene, this.camera)
+  }
+  
+  switchVisualizer(type) {
+    // Destroy current visualizer if exists
+    if (App.currentVisualizer) {
+      if (typeof App.currentVisualizer.destroy === 'function') {
+        App.currentVisualizer.destroy()
+      }
+      App.currentVisualizer = null
+    }
+    
+    // Create new visualizer
+    switch (type) {
+      case 'Reactive Particles':
+        App.currentVisualizer = new ReativeParticles()
+        break
+      case 'Frequency Rings':
+        App.currentVisualizer = new FrequencyRings()
+        break
+      case 'Plasma Field':
+        App.currentVisualizer = new PlasmaField()
+        break
+      case 'Particle Sphere':
+        App.currentVisualizer = new ParticleSphere()
+        break
+      case 'Audio Particles':
+        App.currentVisualizer = new AudioParticles()
+        break
+      case 'Iris':
+        App.currentVisualizer = new Iris()
+        break
+      case 'Circular Wave':
+        App.currentVisualizer = new CircularWave()
+        break
+      case 'Audio Fabric':
+        App.currentVisualizer = new AudioFabric()
+        break
+      case 'Circular Spectrum':
+        App.currentVisualizer = new CircularSpectrum()
+        break
+      case 'Sphere Lines':
+        App.currentVisualizer = new SphereLines()
+        break
+      case 'Spiral':
+        App.currentVisualizer = new Spiral()
+        break
+      case 'Wavy Spiral':
+        App.currentVisualizer = new WavySpiral()
+        break
+      case 'Audio Mesh':
+        App.currentVisualizer = new AudioMesh()
+        break
+      default:
+        App.currentVisualizer = new ReativeParticles()
+    }
+    
+    App.currentVisualizer.init()
+    App.visualizerType = type
+    console.log('Switched to visualizer:', type)
+  }
+  
+  addVisualizerSwitcher() {
+    const visualizerFolder = App.gui.addFolder('VISUALIZER TYPE')
+    visualizerFolder.open()
+    
+    const switcherConfig = {
+      visualizer: App.visualizerType
+    }
+    
+    visualizerFolder
+      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh'])
+      .name('Select Visualizer')
+      .onChange((value) => {
+        this.switchVisualizer(value)
+      })
   }
 }

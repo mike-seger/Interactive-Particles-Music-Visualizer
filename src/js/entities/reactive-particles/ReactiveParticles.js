@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import gsap from 'gsap'
 import vertex from './glsl/vertex.glsl'
 import fragment from './glsl/fragment.glsl'
-import App from '../App'
+import App from '../../App'
 
 export default class ReactiveParticles extends THREE.Object3D {
   constructor() {
@@ -212,8 +212,12 @@ export default class ReactiveParticles extends THREE.Object3D {
   addGUI() {
     //Add GUI controls
     const gui = App.gui
-    const particlesFolder = gui.addFolder('PARTICLES')
-    particlesFolder
+    
+    // Remove old folders if they exist
+    this.removeGUIFolders()
+    
+    this.particlesFolder = gui.addFolder('PARTICLES')
+    this.particlesFolder
       .addColor(this.properties, 'startColor')
       .listen()
       .name('Start Color')
@@ -221,7 +225,15 @@ export default class ReactiveParticles extends THREE.Object3D {
         this.material.uniforms.startColor.value = new THREE.Color(e)
       })
 
-    particlesFolder
+    this.particlesFolder
+      .addColor(this.properties, 'startColor')
+      .listen()
+      .name('Start Color')
+      .onChange((e) => {
+        this.material.uniforms.startColor.value = new THREE.Color(e)
+      })
+
+    this.particlesFolder
       .addColor(this.properties, 'endColor')
       .listen()
       .name('End Color')
@@ -229,9 +241,9 @@ export default class ReactiveParticles extends THREE.Object3D {
         this.material.uniforms.endColor.value = new THREE.Color(e)
       })
 
-    const visualizerFolder = gui.addFolder('VISUALIZER')
-    visualizerFolder.add(this.properties, 'autoMix').listen().name('Auto Mix')
-    visualizerFolder.add(this.properties, 'autoRotate').listen().name('Auto Rotate')
+    this.visualizerFolder = gui.addFolder('VISUALIZER')
+    this.visualizerFolder.add(this.properties, 'autoMix').listen().name('Auto Mix')
+    this.visualizerFolder.add(this.properties, 'autoRotate').listen().name('Auto Rotate')
 
     const buttonShowBox = {
       showBox: () => {
@@ -240,7 +252,7 @@ export default class ReactiveParticles extends THREE.Object3D {
         this.properties.autoMix = false
       },
     }
-    visualizerFolder.add(buttonShowBox, 'showBox').name('Show Box')
+    this.visualizerFolder.add(buttonShowBox, 'showBox').name('Show Box')
 
     const buttonShowCylinder = {
       showCylinder: () => {
@@ -249,6 +261,27 @@ export default class ReactiveParticles extends THREE.Object3D {
         this.properties.autoMix = false
       },
     }
-    visualizerFolder.add(buttonShowCylinder, 'showCylinder').name('Show Cylinder')
+    this.visualizerFolder.add(buttonShowCylinder, 'showCylinder').name('Show Cylinder')
+  }
+  
+  removeGUIFolders() {
+    const gui = App.gui
+    if (this.particlesFolder) {
+      gui.removeFolder(this.particlesFolder)
+      this.particlesFolder = null
+    }
+    if (this.visualizerFolder) {
+      gui.removeFolder(this.visualizerFolder)
+      this.visualizerFolder = null
+    }
+  }
+  
+  destroy() {
+    this.destroyMesh()
+    this.removeGUIFolders()
+    
+    if (this.parent) {
+      this.parent.remove(this)
+    }
   }
 }
