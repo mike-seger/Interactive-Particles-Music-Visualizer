@@ -170,22 +170,6 @@ export default class AudioMesh extends THREE.Object3D {
     this.group.rotation.y += 0.005
   }
 
-    // makeRoughBall(mesh, originalPositions, bassFr, treFr) {
-    //     mesh.geometry.vertices.forEach(function (vertex, i) {
-    //         var offset = mesh.geometry.parameters.radius;
-    //         var amp = 7;
-    //         var time = window.performance.now();
-    //         vertex.normalize();
-    //         var rf = 0.00001;
-    //         var distance = (offset + bassFr ) + noise.noise3D(vertex.x + time *rf*7, vertex.y +  time*rf*8, vertex.z + time*rf*9) * amp * treFr;
-    //         vertex.multiplyScalar(distance);
-    //     });
-    //     mesh.geometry.verticesNeedUpdate = true;
-    //     mesh.geometry.normalsNeedUpdate = true;
-    //     mesh.geometry.computeVertexNormals();
-    //     mesh.geometry.computeFaceNormals();
-    // }
-
   makeRoughBall(mesh, originalPositions, bassFr, treFr) {
     const time = window.performance.now()
     const positions = mesh.geometry.attributes.position.array
@@ -225,7 +209,7 @@ export default class AudioMesh extends THREE.Object3D {
   makeRoughGround(mesh, originalPositions, distortionFr) {
     const time = Date.now()
     const positions = mesh.geometry.attributes.position.array
-    const amp = 2
+    const amp = 5
     
     for (let i = 0; i < positions.length; i += 3) {
       // Reset to original position
