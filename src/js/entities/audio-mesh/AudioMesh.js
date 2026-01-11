@@ -97,7 +97,7 @@ export default class AudioMesh extends THREE.Object3D {
     this.plane2 = plane2
     
     // Create icosahedron (main visualizer ball)
-    const ballRadius = 2
+    const ballRadius = 1.2
     const icosahedronGeometry = new THREE.IcosahedronGeometry(ballRadius, 14)
     const lambertMaterial = new THREE.MeshBasicMaterial({
       color: 0xff00ff,
@@ -162,8 +162,8 @@ export default class AudioMesh extends THREE.Object3D {
     this.makeRoughGround(this.plane2, this.originalPlane2Positions, ground2Distortion)
     
     // Distort ball
-    const bassFr = this.modulate(Math.pow(lowerMaxFr, 0.8), 0, 1, 0, this.ballRadius * 0.8)
-    const treFr = this.modulate(upperAvgFr, 0, 1, 0, 4)
+    const bassFr = this.modulate(Math.pow(lowerMaxFr, 0.8), 0, 1, 0, this.ballRadius * 2)
+    const treFr = this.modulate(upperAvgFr, 0, 1, 0, 8)
     this.makeRoughBall(this.ball, this.originalBallPositions, bassFr, treFr)
     
     // Rotate group
@@ -190,7 +190,7 @@ export default class AudioMesh extends THREE.Object3D {
     const time = window.performance.now()
     const positions = mesh.geometry.attributes.position.array
     const offset = mesh.geometry.parameters.radius
-    const amp = offset * 0.7  // Scale amplitude with ball size
+    const amp = offset * 1.5  // Scale amplitude with ball size
     const rf = 0.00001
     
     for (let i = 0; i < positions.length; i += 3) {
