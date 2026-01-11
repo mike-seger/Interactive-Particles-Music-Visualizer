@@ -52,22 +52,25 @@ export default class SimplePlasma extends THREE.Object3D {
       uniform vec2 uResolution;
 
       vec3 palette(float t) {
-        // Hand-tuned stops to match the reference: red -> yellow -> light-cyan -> cobalt -> violet
+        // Tuned stops with added green and less near-white: red -> yellow -> green -> cyan -> cobalt -> violet
         vec3 c1 = vec3(0.98, 0.12, 0.08); // red
-        vec3 c2 = vec3(1.00, 0.82, 0.08); // yellow
-        vec3 c3 = vec3(0.85, 0.98, 1.00); // pale cyan
-        vec3 c4 = vec3(0.14, 0.24, 0.95); // cobalt blue
-        vec3 c5 = vec3(0.30, 0.12, 0.62); // violet
+        vec3 c2 = vec3(1.00, 0.82, 0.10); // yellow
+        vec3 c3 = vec3(0.18, 0.72, 0.28); // green
+        vec3 c4 = vec3(0.50, 0.90, 0.95); // soft cyan (dimmer to reduce white)
+        vec3 c5 = vec3(0.14, 0.24, 0.95); // cobalt blue
+        vec3 c6 = vec3(0.30, 0.12, 0.62); // violet
 
-        float t1 = smoothstep(0.00, 0.25, t);
-        float t2 = smoothstep(0.20, 0.50, t);
-        float t3 = smoothstep(0.45, 0.75, t);
-        float t4 = smoothstep(0.70, 1.00, t);
+        float t1 = smoothstep(0.00, 0.20, t);
+        float t2 = smoothstep(0.15, 0.35, t);
+        float t3 = smoothstep(0.30, 0.55, t);
+        float t4 = smoothstep(0.50, 0.75, t);
+        float t5 = smoothstep(0.70, 1.00, t);
 
         vec3 col = mix(c1, c2, t1);
         col = mix(col, c3, t2);
         col = mix(col, c4, t3);
         col = mix(col, c5, t4);
+        col = mix(col, c6, t5);
         return col;
       }
 
@@ -75,18 +78,25 @@ export default class SimplePlasma extends THREE.Object3D {
         vec2 uv = vUv * 2.0 - 1.0;
         uv.x *= uResolution.x / uResolution.y;
 
+        // Audio-warp the domain so loudness bends shapes, not just colors
+        float warp = uBass * 0.35 + uAudio * 0.25;
+        uv += vec2(
+          sin(uTime * 0.7 + uv.y * 3.0),
+          cos(uTime * 0.5 + uv.x * 2.5)
+        ) * (0.12 * warp);
+
         float t = uTime;
-        float a = sin(uv.x * 4.0 + t * 1.6 + sin(uv.y * 3.5 + t * 0.9));
-        float b = sin(uv.y * 5.0 - t * 1.2 + cos(uv.x * 2.8 - t * 0.6));
-        float c = sin((uv.x + uv.y) * 3.2 + t * 1.4);
+        float a = sin(uv.x * (4.0 + uAudio * 2.0) + t * (1.6 + uBass * 1.4) + sin(uv.y * (3.5 + uAudio * 1.5) + t * (0.9 + uBass * 1.1)));
+        float b = sin(uv.y * (5.0 + uBass * 2.4) - t * (1.2 + uAudio * 1.1) + cos(uv.x * (2.8 + uAudio * 1.8) - t * (0.6 + uBass * 0.8)));
+        float c = sin((uv.x + uv.y) * (3.2 + uAudio * 1.6) + t * (1.4 + uBass * 1.2));
         float m = (a + b + c) / 3.0;
 
         float audioBoost = uAudio * 0.8 + uBass * 0.6;
         float tPlasma = clamp(0.5 + 0.5 * m + audioBoost * 0.15, 0.0, 1.0);
 
         vec3 color = palette(tPlasma);
-        // Brighten with audio
-        color *= 0.8 + audioBoost * 0.8;
+        // Brighten with audio, but keep highlights restrained to reduce white-out
+        color *= 0.75 + audioBoost * 0.65;
 
         gl_FragColor = vec4(color, 1.0);
       }
