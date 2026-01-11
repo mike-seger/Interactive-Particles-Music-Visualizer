@@ -22,8 +22,7 @@ export default class AudioManager {
     this.microphoneSource = null
 
     this.song = {
-      //url: 'http://michaels-macmini-2023:8080/video/user__eoy_bonus_mix_2025/aud_TKWp_ND-B1U.mp3',
-      url: 'http://michaels-macmini-2023:8080/video/user__eoy_bonus_mix_2025/vid_TKWp_ND-B1U.mp4',
+      url: 'http://localhost:8080/player/video/user__eoy_bonus_mix_2025/vid_TKWp_ND-B1U.mp4',
     }
   }
 
