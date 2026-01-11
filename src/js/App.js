@@ -42,14 +42,25 @@ export default class App {
   //Visualizer management
   static currentVisualizer = null
   static visualizerType = 'Reactive Particles'
+  static visualizerList = ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid', 'Water', 'Kevs Plasma', 'Frequency Bars', 'Oscilloscope', 'Deep Particles', 'Deep Lights', 'Audio Sphere']
 
   constructor() {
     this.onClickBinder = () => this.init()
     document.addEventListener('click', this.onClickBinder)
+
+    // Bind hotkey handler
+    this.onKeyDown = (e) => this.handleKeyDown(e)
+
+    // GUI controller references
+    this.visualizerSwitcherConfig = null
+    this.visualizerController = null
   }
 
   init() {
     document.removeEventListener('click', this.onClickBinder)
+
+    // Hotkeys: numpad + / - to cycle visualizers
+    window.addEventListener('keydown', this.onKeyDown)
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -333,6 +344,9 @@ export default class App {
       }
       App.currentVisualizer = null
     }
+
+    // Reset camera/scene transforms to defaults so visualizers don't leak state
+    this.resetView()
     
     // Clear App.holder (Three.js scene objects)
     while (App.holder.children.length > 0) {
@@ -428,19 +442,75 @@ export default class App {
     
     App.currentVisualizer.init()
     App.visualizerType = type
+
+    // Sync GUI dropdown if available
+    if (this.visualizerController && this.visualizerController.getValue() !== type) {
+      this.visualizerController.setValue(type)
+    }
+
     console.log('Switched to visualizer:', type)
+  }
+
+  resetView() {
+    if (this.camera) {
+      this.camera.position.set(0, 0, 12)
+      this.camera.up.set(0, 1, 0)
+      this.camera.quaternion.identity()
+      this.camera.lookAt(0, 0, 0)
+      this.camera.zoom = 1
+      this.camera.fov = 70
+      this.camera.updateProjectionMatrix()
+    }
+
+    if (App.holder) {
+      App.holder.position.set(0, 0, 0)
+      App.holder.rotation.set(0, 0, 0)
+      App.holder.scale.set(1, 1, 1)
+    }
+
+    if (this.scene) {
+      this.scene.fog = null
+    }
+  }
+
+  handleKeyDown(event) {
+    // Ignore if focused on form inputs
+    const target = event.target
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+
+    if (event.code === 'NumpadAdd' || event.key === '+') {
+      event.preventDefault()
+      this.cycleVisualizer(1)
+    } else if (event.code === 'NumpadSubtract' || event.key === '-') {
+      event.preventDefault()
+      this.cycleVisualizer(-1)
+    }
+  }
+
+  cycleVisualizer(step) {
+    const list = App.visualizerList
+    if (!list || list.length === 0) return
+    const currentIndex = Math.max(0, list.indexOf(App.visualizerType))
+    const nextIndex = (currentIndex + step + list.length) % list.length
+    const next = list[nextIndex]
+    // Prefer updating the GUI controller so UI stays in sync and uses onChange
+    if (this.visualizerController) {
+      this.visualizerController.setValue(next)
+    } else {
+      this.switchVisualizer(next)
+    }
   }
   
   addVisualizerSwitcher() {
     const visualizerFolder = App.gui.addFolder('VISUALIZER TYPE')
     visualizerFolder.open()
     
-    const switcherConfig = {
+    this.visualizerSwitcherConfig = {
       visualizer: App.visualizerType
     }
     
-    visualizerFolder
-      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid', 'Water', 'Kevs Plasma', 'Frequency Bars', 'Oscilloscope', 'Deep Particles', 'Deep Lights', 'Audio Sphere'])
+    this.visualizerController = visualizerFolder
+      .add(this.visualizerSwitcherConfig, 'visualizer', App.visualizerList)
       .name('Select Visualizer')
       .onChange((value) => {
         this.switchVisualizer(value)

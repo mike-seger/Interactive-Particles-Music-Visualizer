@@ -86,18 +86,18 @@ export default class AudioMesh extends THREE.Object3D {
     
     const plane = new THREE.Mesh(planeGeometry, planeMaterial)
     plane.rotation.x = -0.5 * Math.PI
-    plane.position.set(0, -30, 0)
+    plane.position.set(0, -50, 0)
     this.group.add(plane)
     this.plane = plane
     
     const plane2 = new THREE.Mesh(planeGeometry.clone(), planeMaterial.clone())
     plane2.rotation.x = -0.5 * Math.PI
-    plane2.position.set(0, 30, 0)
+    plane2.position.set(0, 50, 0)
     this.group.add(plane2)
     this.plane2 = plane2
     
     // Create icosahedron (main visualizer ball)
-    const ballRadius = 0.5
+    const ballRadius = 8.5
     const icosahedronGeometry = new THREE.IcosahedronGeometry(ballRadius, 20)
     const lambertMaterial = new THREE.MeshBasicMaterial({
       color: 0xff00ff,
