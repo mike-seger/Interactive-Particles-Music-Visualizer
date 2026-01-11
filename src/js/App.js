@@ -12,6 +12,8 @@ import SphereLines from './entities/sphere-lines/SphereLines'
 import Spiral from './entities/spiral/Spiral'
 import WavySpiral from './entities/wavy-spiral/WavySpiral'
 import AudioMesh from './entities/audio-mesh/AudioMesh'
+import WaveformVisualizer from './entities/waveform-visualizer/WaveformVisualizer'
+import AnimatedBlob from './entities/animated-blob/AnimatedBlob'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -349,6 +351,12 @@ export default class App {
       case 'Audio Mesh':
         App.currentVisualizer = new AudioMesh()
         break
+      case 'Waveform Visualizer':
+        App.currentVisualizer = new WaveformVisualizer()
+        break
+      case 'Animated Blob':
+        App.currentVisualizer = new AnimatedBlob()
+        break
       default:
         App.currentVisualizer = new ReativeParticles()
     }
@@ -367,7 +375,7 @@ export default class App {
     }
     
     visualizerFolder
-      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh'])
+      .add(switcherConfig, 'visualizer', ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob'])
       .name('Select Visualizer')
       .onChange((value) => {
         this.switchVisualizer(value)
