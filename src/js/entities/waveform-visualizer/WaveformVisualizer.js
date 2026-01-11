@@ -23,6 +23,9 @@ export default class WaveformVisualizer extends THREE.Object3D {
       App.camera.lookAt(0, 0, 0)
     }
 
+    // Give the disk a slight tilt for 3D rotation
+    this.rotation.x = 0.35
+
     this.lastTime = Date.now()
     this.fpsInterval = 1000 / 60 // 60 fps
   }
@@ -88,6 +91,10 @@ export default class WaveformVisualizer extends THREE.Object3D {
       
       line.userData.delta += 0.12
     })
+
+    // Slow 3D rotation of the disk
+    this.rotation.y += 0.0025
+    this.rotation.z += 0.0008
 
     // Remove hue cycling for more consistent cyan color
   }

@@ -113,18 +113,23 @@ export default class AudioParticles extends THREE.Object3D {
       
       if (hasAudio) {
         this._processAudio()
-        
+
         const elapsedTime = this.clock.getElapsedTime()
-        
-        // Update uniforms with audio-reactive values
-        const amplitude = this.params.amplitude
-        const frequency = this.params.frequency
-        const maxDistance = this.params.maxDistance - this.timeDomainValue
-        const timeX = this.params.timeX * this.frequencyValue1
-        const timeY = this.params.timeY * this.frequencyValue2
-        const timeZ = this.params.timeZ * this.frequencyValue3
-        const interpolation = this.params.interpolation
-        
+        const bass = App.audioManager.frequencyData.low || 0
+        const mid = App.audioManager.frequencyData.mid || 0
+        const high = App.audioManager.frequencyData.high || 0
+        const intensity = (bass + mid + high) / 3
+
+        // Audio-reactive uniform boosts
+        const amplitude = this.params.amplitude * (1.0 + intensity * 1.8)
+        const frequency = this.params.frequency * (1.0 + high * 1.1)
+        const maxDistance = (this.params.maxDistance * (0.7 + bass * 0.9)) - this.timeDomainValue * 0.6
+        const timeX = this.params.timeX * (0.4 + this.frequencyValue1 * 2.0)
+        const timeY = this.params.timeY * (0.4 + this.frequencyValue2 * 2.0)
+        const timeZ = this.params.timeZ * (0.4 + this.frequencyValue3 * 2.0)
+        const interpolation = this.params.interpolation * (0.6 + intensity * 0.9)
+        const opacity = 0.1 + intensity * 0.8
+
         this.points.material.uniforms.uTime.value = elapsedTime
         this.points.material.uniforms.uAmplitude.value = amplitude
         this.points.material.uniforms.uFrequency.value = frequency
@@ -133,9 +138,13 @@ export default class AudioParticles extends THREE.Object3D {
         this.points.material.uniforms.uTimeY.value = timeY
         this.points.material.uniforms.uTimeZ.value = timeZ
         this.points.material.uniforms.uInterpolation.value = interpolation
-        
-        // Rotate based on audio
-        this.points.rotation.y += this.timeDomainValue / 5000
+        if (this.points.material.uniforms.uOpacity) {
+          this.points.material.uniforms.uOpacity.value = opacity
+        }
+
+        // Rotate and pulse based on audio
+        this.points.rotation.y += (this.timeDomainValue + intensity) * 0.003
+        this.points.scale.setScalar(1 + intensity * 0.9)
       }
     }
   }

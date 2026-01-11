@@ -227,6 +227,9 @@ export default class WebGLBlob extends THREE.Object3D {
     this.plane.position.y = -5
     this.add(this.plane)
 
+    // Scale to ~37.5% (was 30%)
+    this.scale.setScalar(0.375)
+
     this.startTime = performance.now()
   }
 

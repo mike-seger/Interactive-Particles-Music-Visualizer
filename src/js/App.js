@@ -24,6 +24,8 @@ import AudioOscilloscope from './entities/oscilloscope/Oscilloscope'
 import DeepParticles from './entities/deep-particles/DeepParticles'
 import DeepLights from './entities/deep-lights/DeepLights'
 import AudioSphere from './entities/audio-sphere/AudioSphere'
+import VoxelLiquidSpectrum from './entities/voxel-liquid-spectrum/VoxelLiquidSpectrum'
+import SimplePlasma from './entities/simple-plasma/SimplePlasma'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -42,7 +44,35 @@ export default class App {
   //Visualizer management
   static currentVisualizer = null
   static visualizerType = 'Reactive Particles'
-  static visualizerList = ['Reactive Particles', 'Frequency Rings', 'Plasma Field', 'Particle Sphere', 'Audio Particles', 'Iris', 'Circular Wave', 'Audio Fabric', 'Circular Spectrum', 'Sphere Lines', 'Spiral', 'Wavy Spiral', 'Audio Mesh', 'Waveform Visualizer', 'Animated Blob', 'WebGL Blob', 'SynthWave', 'Fluid', 'Water', 'Kevs Plasma', 'Frequency Bars', 'Oscilloscope', 'Deep Particles', 'Deep Lights', 'Audio Sphere']
+  static visualizerList = [
+    'Animated Blob',
+    'Audio Fabric',
+    'Audio Mesh',
+    'Audio Particles',
+    'Audio Sphere',
+    'Circular Spectrum',
+    'Circular Wave',
+    'Deep Lights',
+    'Deep Particles',
+    'Fluid',
+    'Frequency Bars',
+    'Frequency Rings',
+    'Iris',
+    'Kevs Plasma',
+    'Oscilloscope',
+    'Particle Sphere',
+    'Plasma Field',
+    'Reactive Particles',
+    'Simple Plasma',
+    'Sphere Lines',
+    'Spiral',
+    'SynthWave',
+    'Voxel Liquid Spectrum',
+    'Water',
+    'Waveform Visualizer',
+    'WebGL Blob',
+    'Wavy Spiral'
+  ]
 
   constructor() {
     this.onClickBinder = () => this.init()
@@ -66,6 +96,9 @@ export default class App {
       antialias: true,
       alpha: true,
     })
+
+    // Expose renderer for visualizers needing post-processing
+    App.renderer = this.renderer
 
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
@@ -435,6 +468,12 @@ export default class App {
         break
       case 'Audio Sphere':
         App.currentVisualizer = new AudioSphere()
+        break
+      case 'Simple Plasma':
+        App.currentVisualizer = new SimplePlasma()
+        break
+      case 'Voxel Liquid Spectrum':
+        App.currentVisualizer = new VoxelLiquidSpectrum()
         break
       default:
         App.currentVisualizer = new ReativeParticles()
