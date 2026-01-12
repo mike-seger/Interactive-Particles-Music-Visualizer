@@ -81,6 +81,11 @@ export default class App {
     // Bind hotkey handler
     this.onKeyDown = (e) => this.handleKeyDown(e)
 
+    // Bridge messaging (iframe -> parent)
+    this.bridgeTarget = window.parent && window.parent !== window ? window.parent : null
+    this.handleBridgeMessage = (event) => this.onBridgeMessage(event)
+    window.addEventListener('message', this.handleBridgeMessage)
+
     // GUI controller references
     this.visualizerSwitcherConfig = null
     this.visualizerController = null
@@ -333,10 +338,15 @@ export default class App {
     this.initPlayerControls()
 
     // Initialize default visualizer
-    this.switchVisualizer('Reactive Particles')
+    this.switchVisualizer('Reactive Particles', { notify: false })
     
     // Add visualizer switcher to GUI
     this.addVisualizerSwitcher()
+
+    // Emit available modules to parent (if embedded)
+    if (this.bridgeTarget) {
+      this.postModuleList(this.bridgeTarget)
+    }
 
     this.update()
   }
@@ -369,7 +379,7 @@ export default class App {
     this.renderer.render(this.scene, this.camera)
   }
   
-  switchVisualizer(type) {
+  switchVisualizer(type, { notify = true } = {}) {
     // Destroy current visualizer if exists
     if (App.currentVisualizer) {
       if (typeof App.currentVisualizer.destroy === 'function') {
@@ -488,6 +498,65 @@ export default class App {
     }
 
     console.log('Switched to visualizer:', type)
+
+    // Notify parent bridge about module change (only when embedded)
+    if (notify && this.bridgeTarget) {
+      this.postModuleSet(true, this.bridgeTarget)
+    }
+  }
+
+  onBridgeMessage(event) {
+    const msg = event?.data
+    if (!msg || typeof msg !== 'object') return
+
+    const target = event?.source || this.bridgeTarget || null
+
+    switch (msg.type) {
+      case 'LIST_MODULES':
+        this.postModuleList(target)
+        break
+      case 'SET_MODULE': {
+        const moduleName = typeof msg.module === 'string' ? msg.module : null
+        const isValid = moduleName && App.visualizerList.includes(moduleName)
+
+        if (isValid) {
+          this.switchVisualizer(moduleName, { notify: false })
+          this.postModuleSet(true, target)
+        } else {
+          this.postModuleSet(false, target)
+        }
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  postModuleList(target = this.bridgeTarget) {
+    if (!target) return
+    try {
+      target.postMessage({
+        type: 'MODULE_LIST',
+        modules: [...App.visualizerList],
+        active: App.visualizerType
+      }, '*')
+    } catch (err) {
+      console.warn('[Visualizer] Failed to post module list', err)
+    }
+  }
+
+  postModuleSet(ok, target = this.bridgeTarget) {
+    if (!target) return
+    try {
+      target.postMessage({
+        type: 'MODULE_SET',
+        ok: ok === true,
+        active: App.visualizerType,
+        modules: [...App.visualizerList]
+      }, '*')
+    } catch (err) {
+      console.warn('[Visualizer] Failed to post module change', err)
+    }
   }
 
   resetView() {

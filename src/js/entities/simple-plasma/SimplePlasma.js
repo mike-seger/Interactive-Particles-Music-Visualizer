@@ -13,6 +13,8 @@ export default class SimplePlasma extends THREE.Object3D {
     this.name = 'Simple Plasma'
     this.clock = new THREE.Clock()
 
+    this._freqData = null
+
     this.uniforms = {
       uTime: { value: 0 },
       uAudio: { value: 0 },
@@ -118,19 +120,23 @@ export default class SimplePlasma extends THREE.Object3D {
     if (!this.mesh) return
 
     const elapsed = this.clock.getElapsedTime()
-    this.uniforms.uTime.value = elapsed
+    // Keep time bounded to avoid long-run float precision artifacts in the shader.
+    this.uniforms.uTime.value = elapsed % 10000
     this.uniforms.uResolution.value.set(window.innerWidth, window.innerHeight)
 
     const analyser = App.audioManager?.analyserNode
     if (analyser) {
-      const freqData = new Uint8Array(analyser.frequencyBinCount)
-      analyser.getByteFrequencyData(freqData)
-      const len = freqData.length
+      if (!this._freqData || this._freqData.length !== analyser.frequencyBinCount) {
+        this._freqData = new Uint8Array(analyser.frequencyBinCount)
+      }
+
+      analyser.getByteFrequencyData(this._freqData)
+      const len = this._freqData.length
       const third = Math.max(1, Math.floor(len / 3))
       let bassSum = 0
-      for (let i = 0; i < third; i++) bassSum += freqData[i]
+      for (let i = 0; i < third; i++) bassSum += this._freqData[i]
       let midSum = 0
-      for (let i = third; i < third * 2; i++) midSum += freqData[i]
+      for (let i = third; i < third * 2; i++) midSum += this._freqData[i]
       const bass = (bassSum / third) / 255
       const mid = (midSum / third) / 255
       // Smooth the response
