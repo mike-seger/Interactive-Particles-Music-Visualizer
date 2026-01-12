@@ -82,7 +82,20 @@
           if (msg.frequencyData && window.App.audioManager.audioAnalyser.data) {
             const data = new Uint8Array(msg.frequencyData);
             window.App.audioManager.audioAnalyser.data.set(data);
-            try { refreshTimeDomainFromFreq(data); } catch { /* ignore */ }
+            const usedPCM = (() => {
+              if (msg.timeData && Array.isArray(msg.timeData)) {
+                try {
+                  const t = new Uint8Array(msg.timeData);
+                  return refreshTimeDomainFromPCM(t);
+                } catch {
+                  return false;
+                }
+              }
+              return false;
+            })();
+            if (!usedPCM) {
+              try { refreshTimeDomainFromFreq(data); } catch { /* ignore */ }
+            }
           } else {
             // Debug: what's missing?
             if (!window.__dataMissingLogged || Date.now() - window.__dataMissingLogged > 2000) {
@@ -232,6 +245,19 @@
       phaseLow += lowStep * bridgeTimeArray.length;
       phaseMid += midStep * bridgeTimeArray.length;
       phaseHigh += highStep * bridgeTimeArray.length;
+    }
+
+    function refreshTimeDomainFromPCM(srcArray) {
+      if (!srcArray || !srcArray.length) return false;
+      const len = Math.min(srcArray.length, bridgeTimeArray.length);
+      for (let i = 0; i < len; i++) {
+        bridgeTimeArray[i] = srcArray[i];
+      }
+      // If incoming shorter, pad with midpoint.
+      for (let i = len; i < bridgeTimeArray.length; i++) {
+        bridgeTimeArray[i] = 128;
+      }
+      return len > 0;
     }
     
     if (window.AnalyserNode && window.AnalyserNode.prototype) {
