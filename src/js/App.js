@@ -92,6 +92,7 @@ export default class App {
 
     // Toast showing the current visualizer name
     this.visualizerToast = null
+    this.visualizerToastHideTimer = null
   }
 
   init() {
@@ -524,7 +525,8 @@ export default class App {
     el.style.color = '#fff'
     el.style.background = '#000'
     el.style.borderRadius = '3px'
-    el.style.opacity = '0.9'
+    el.style.opacity = '0'
+    el.style.transition = 'opacity 250ms ease'
     el.style.pointerEvents = 'none'
     el.style.zIndex = '1000'
     document.body.appendChild(el)
@@ -535,6 +537,18 @@ export default class App {
   updateVisualizerToast(name) {
     const el = this.createVisualizerToast()
     el.textContent = name || ''
+    if (this.visualizerToastHideTimer) {
+      clearTimeout(this.visualizerToastHideTimer)
+      this.visualizerToastHideTimer = null
+    }
+
+    // Fade in immediately, then fade out after 5s.
+    requestAnimationFrame(() => {
+      el.style.opacity = '0.9'
+      this.visualizerToastHideTimer = setTimeout(() => {
+        el.style.opacity = '0'
+      }, 5000)
+    })
   }
 
   onBridgeMessage(event) {
