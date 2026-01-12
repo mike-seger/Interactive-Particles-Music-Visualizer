@@ -89,6 +89,9 @@ export default class App {
     // GUI controller references
     this.visualizerSwitcherConfig = null
     this.visualizerController = null
+
+    // Toast showing the current visualizer name
+    this.visualizerToast = null
   }
 
   init() {
@@ -492,6 +495,8 @@ export default class App {
     App.currentVisualizer.init()
     App.visualizerType = type
 
+    this.updateVisualizerToast(type)
+
     // Sync GUI dropdown if available
     if (this.visualizerController && this.visualizerController.getValue() !== type) {
       this.visualizerController.setValue(type)
@@ -503,6 +508,33 @@ export default class App {
     if (notify && this.bridgeTarget) {
       this.postModuleSet(true, this.bridgeTarget)
     }
+  }
+
+  createVisualizerToast() {
+    if (this.visualizerToast) return this.visualizerToast
+    const el = document.createElement('div')
+    el.style.position = 'fixed'
+    el.style.bottom = '8px'
+    el.style.right = '8px'
+    el.style.padding = '2px 6px'
+    el.style.height = '12px'
+    el.style.lineHeight = '12px'
+    el.style.fontSize = '11px'
+    el.style.fontFamily = 'Inter, system-ui, -apple-system, sans-serif'
+    el.style.color = '#fff'
+    el.style.background = '#000'
+    el.style.borderRadius = '3px'
+    el.style.opacity = '0.9'
+    el.style.pointerEvents = 'none'
+    el.style.zIndex = '1000'
+    document.body.appendChild(el)
+    this.visualizerToast = el
+    return el
+  }
+
+  updateVisualizerToast(name) {
+    const el = this.createVisualizerToast()
+    el.textContent = name || ''
   }
 
   onBridgeMessage(event) {
