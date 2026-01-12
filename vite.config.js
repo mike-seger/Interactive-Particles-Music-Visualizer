@@ -17,7 +17,7 @@ export default defineConfig({
     cssCodeSplit: true,
     rollupOptions: {
       input: {
-        demo: './index.html',
+        visualizer: './index.html',
       },
     },
   },
