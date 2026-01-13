@@ -25,6 +25,7 @@
     "dat.gui": "^0.7.9",
     "gsap": "^3.12.2",
     "three": "^0.158.0",
+    "threejs-components": "^0.0.30",
     "web-audio-beat-detector": "^8.1.56"
   }
 }

@@ -26,6 +26,8 @@ import DeepLights from './entities/deep-lights/DeepLights'
 import AudioSphere from './entities/audio-sphere/AudioSphere'
 import VoxelLiquidSpectrum from './entities/voxel-liquid-spectrum/VoxelLiquidSpectrum'
 import SimplePlasma from './entities/simple-plasma/SimplePlasma'
+import SparklingBoxes from './entities/sparkling-boxes/SparklingBoxes'
+import TubesCursor from './entities/tubes-cursor/TubesCursor'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -58,6 +60,8 @@ export default class App {
     'Frequency Bars',
     'Frequency Rings',
     'Iris',
+    'Sparkling Boxes',
+    'Tubes Cursor',
     'Kevs Plasma',
     'Oscilloscope',
     'Particle Sphere',
@@ -377,13 +381,21 @@ export default class App {
       isBeat: App.bpmManager?.beatActive || false
     } : null
     
-    App.currentVisualizer?.update(audioData)
+    const activeVisualizer = App.currentVisualizer
+    activeVisualizer?.update(audioData)
     App.audioManager.update()
 
-    this.renderer.render(this.scene, this.camera)
+    // Some visualizers render into their own canvas/renderer.
+    if (!activeVisualizer?.rendersSelf) {
+      this.renderer.render(this.scene, this.camera)
+    }
   }
   
   switchVisualizer(type, { notify = true } = {}) {
+    // Normalize legacy/slugs to display names.
+    if (type === 'sparkling-boxes') type = 'Sparkling Boxes'
+    if (type === 'tubes-cursor') type = 'Tubes Cursor'
+
     // Destroy current visualizer if exists
     if (App.currentVisualizer) {
       if (typeof App.currentVisualizer.destroy === 'function') {
@@ -482,6 +494,12 @@ export default class App {
         break
       case 'Audio Sphere':
         App.currentVisualizer = new AudioSphere()
+        break
+      case 'Sparkling Boxes':
+        App.currentVisualizer = new SparklingBoxes()
+        break
+      case 'Tubes Cursor':
+        App.currentVisualizer = new TubesCursor()
         break
       case 'Simple Plasma':
         App.currentVisualizer = new SimplePlasma()
