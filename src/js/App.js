@@ -2,7 +2,6 @@ import * as THREE from 'three'
 import ReativeParticles from './entities/reactive-particles/ReactiveParticles'
 import FrequencyRings from './entities/frequency-rings/FrequencyRings'
 import PlasmaField from './entities/plasma/PlasmaField'
-import ParticleSphere from './entities/particle-sphere/ParticleSphere'
 import AudioParticles from './entities/audio-particles/AudioParticles'
 import Iris from './entities/iris/Iris'
 import CircularWave from './entities/circular-wave/CircularWave'
@@ -10,12 +9,9 @@ import AudioFabric from './entities/audio-fabric/AudioFabric'
 import CircularSpectrum from './entities/circular-spectrum/CircularSpectrum'
 import SphereLines from './entities/sphere-lines/SphereLines'
 import Spiral from './entities/spiral/Spiral'
-import WavySpiral from './entities/wavy-spiral/WavySpiral'
 import AudibleSpiral from './entities/audible-spiral/AudibleSpiral'
 import Audible3dSpiral from './entities/audible-3d-spiral/Audible3dSpiral'
 import Audible3dSpiralLines from './entities/audible-3d-spiral-lines/Audible3dSpiralLines'
-import FlowerSpiral from './entities/flower-spiral/FlowerSpiral'
-import CirclePulse from './entities/circle-pulse/CirclePulse'
 import Waves from './entities/waves/Waves'
 import AudioMesh from './entities/audio-mesh/AudioMesh'
 import WaveformVisualizer from './entities/waveform-visualizer/WaveformVisualizer'
@@ -30,7 +26,6 @@ import AudioOscilloscope from './entities/oscilloscope/Oscilloscope'
 import DeepParticles from './entities/deep-particles/DeepParticles'
 import DeepLights from './entities/deep-lights/DeepLights'
 import AudioSphere from './entities/audio-sphere/AudioSphere'
-import VoxelLiquidSpectrum from './entities/voxel-liquid-spectrum/VoxelLiquidSpectrum'
 import SimplePlasma from './entities/simple-plasma/SimplePlasma'
 import SparklingBoxes from './entities/sparkling-boxes/SparklingBoxes'
 import TubesCursor from './entities/tubes-cursor/TubesCursor'
@@ -61,13 +56,11 @@ export default class App {
     'Audio Mesh',
     'Audio Particles',
     'Audio Sphere',
-    'Circle Pulse',
     'Circular Spectrum',
     'Circular Wave',
     'Deep Lights',
     'Deep Particles',
     'Fluid',
-    'Flower Spiral',
     'Frequency Bars',
     'Frequency Rings',
     'Iris',
@@ -75,19 +68,16 @@ export default class App {
     'Tubes Cursor',
     'Kevs Plasma',
     'Oscilloscope',
-    'Particle Sphere',
     'Plasma Field',
     'Reactive Particles',
     'Simple Plasma',
     'Sphere Lines',
     'Spiral',
     'SynthWave',
-    'Voxel Liquid Spectrum',
     'Water',
     'Waves',
     'Waveform Visualizer',
-    'WebGL Blob',
-    'Wavy Spiral'
+    'WebGL Blob'
   ]
 
   constructor() {
@@ -109,6 +99,63 @@ export default class App {
     // Toast showing the current visualizer name
     this.visualizerToast = null
     this.visualizerToastHideTimer = null
+
+    this.storageKeys = {
+      playbackPosition: 'visualizer.playbackPosition',
+      visualizerType: 'visualizer.lastType'
+    }
+  }
+
+  getStoredPlaybackPosition() {
+    try {
+      const value = window.localStorage.getItem(this.storageKeys.playbackPosition)
+      const parsed = value ? Number(value) : 0
+      return Number.isFinite(parsed) ? parsed : 0
+    } catch (error) {
+      return 0
+    }
+  }
+
+  savePlaybackPosition(time) {
+    if (!Number.isFinite(time)) return
+    try {
+      window.localStorage.setItem(this.storageKeys.playbackPosition, String(time))
+    } catch (error) {
+      // ignore storage errors
+    }
+  }
+
+  getStoredVisualizerType() {
+    try {
+      const value = window.localStorage.getItem(this.storageKeys.visualizerType)
+      return value && App.visualizerList.includes(value) ? value : null
+    } catch (error) {
+      return null
+    }
+  }
+
+  saveVisualizerType(type) {
+    if (!type) return
+    try {
+      window.localStorage.setItem(this.storageKeys.visualizerType, type)
+    } catch (error) {
+      // ignore storage errors
+    }
+  }
+
+  restoreSessionOnPlay() {
+    if (!App.audioManager || !App.audioManager.audio || App.audioManager.isUsingMicrophone) return
+
+    const storedVisualizer = this.getStoredVisualizerType()
+    if (storedVisualizer && storedVisualizer !== App.visualizerType) {
+      this.switchVisualizer(storedVisualizer, { notify: false })
+    }
+
+    const storedTime = this.getStoredPlaybackPosition()
+    if (storedTime > 0 && Number.isFinite(App.audioManager.audio.duration)) {
+      const clamped = Math.min(storedTime, App.audioManager.audio.duration)
+      App.audioManager.seek(clamped)
+    }
   }
 
   init() {
@@ -177,6 +224,10 @@ export default class App {
         // Update slider position
         const percentage = (current / duration) * 100
         positionSlider.value = percentage
+
+        if (duration > 0) {
+          this.savePlaybackPosition(current)
+        }
       }
     }
     
@@ -227,6 +278,7 @@ export default class App {
         App.audioManager.pause()
         playPauseBtn.textContent = '▶'
       } else {
+        this.restoreSessionOnPlay()
         App.audioManager.play()
         playPauseBtn.textContent = '❚❚'
       }
@@ -306,6 +358,7 @@ export default class App {
         
         // Seek to the new position
         App.audioManager.seek(seekTime)
+        this.savePlaybackPosition(seekTime)
       }
       isSeeking = false
     })
@@ -357,8 +410,9 @@ export default class App {
     // Initialize player controls
     this.initPlayerControls()
 
-    // Initialize default visualizer
-    this.switchVisualizer('Reactive Particles', { notify: false })
+    // Initialize last-used visualizer (fallback to default)
+    const storedVisualizer = this.getStoredVisualizerType()
+    this.switchVisualizer(storedVisualizer || 'Reactive Particles', { notify: false })
     
     // Add visualizer switcher to GUI
     this.addVisualizerSwitcher()
@@ -447,9 +501,6 @@ export default class App {
       case 'Plasma Field':
         App.currentVisualizer = new PlasmaField()
         break
-      case 'Particle Sphere':
-        App.currentVisualizer = new ParticleSphere()
-        break
       case 'Audio Particles':
         App.currentVisualizer = new AudioParticles()
         break
@@ -470,15 +521,6 @@ export default class App {
         break
       case 'Spiral':
         App.currentVisualizer = new Spiral()
-        break
-      case 'Wavy Spiral':
-        App.currentVisualizer = new WavySpiral()
-        break
-      case 'Flower Spiral':
-        App.currentVisualizer = new FlowerSpiral()
-        break
-      case 'Circle Pulse':
-        App.currentVisualizer = new CirclePulse()
         break
       case 'Waves':
         App.currentVisualizer = new Waves()
@@ -534,15 +576,13 @@ export default class App {
       case 'Simple Plasma':
         App.currentVisualizer = new SimplePlasma()
         break
-      case 'Voxel Liquid Spectrum':
-        App.currentVisualizer = new VoxelLiquidSpectrum()
-        break
       default:
         App.currentVisualizer = new ReativeParticles()
     }
     
     App.currentVisualizer.init()
     App.visualizerType = type
+    this.saveVisualizerType(type)
 
     this.updateVisualizerToast(type)
 
@@ -679,6 +719,30 @@ export default class App {
     // Ignore if focused on form inputs
     const target = event.target
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+
+    if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
+      if (!App.audioManager || !App.audioManager.audio) return
+      event.preventDefault()
+      const direction = event.code === 'ArrowLeft' ? -1 : 1
+      const currentTime = App.audioManager.getCurrentTime()
+      const duration = App.audioManager.audio.duration || 0
+      const nextTime = Math.min(Math.max(currentTime + direction * 10, 0), duration)
+      App.audioManager.seek(nextTime)
+      this.savePlaybackPosition(nextTime)
+      return
+    }
+
+    if (event.code === 'Digit1' || event.code === 'Numpad1' || event.key === '1') {
+      event.preventDefault()
+      this.cycleVisualizer(-1)
+      return
+    }
+
+    if (event.code === 'Digit2' || event.code === 'Numpad2' || event.key === '2') {
+      event.preventDefault()
+      this.cycleVisualizer(1)
+      return
+    }
 
     if (event.code === 'NumpadAdd' || event.key === '+') {
       event.preventDefault()

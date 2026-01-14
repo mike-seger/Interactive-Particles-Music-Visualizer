@@ -321,6 +321,7 @@ export default class DeepLights {
     this.visConnectors = null
     this.bounds = null
     this.distances = null
+    this.baseParticleSize = 0.5
   }
 
   init() {
@@ -343,7 +344,7 @@ export default class DeepLights {
     this.bounds = Particulate.PointForce.create([0, 0, 0], {
       type: Particulate.Force.ATTRACTOR_REPULSOR,
       intensity: 0.05,
-      radius: 15.0
+      radius: 30.0
     })
     
     const linkIndices = []
@@ -398,7 +399,7 @@ export default class DeepLights {
       blending: THREE.AdditiveBlending,
       transparent: true,
       map: texture,
-      size: 0.5,
+      size: this.baseParticleSize,
       opacity: 0.7
     }))
     
@@ -453,7 +454,7 @@ export default class DeepLights {
     // Audio-reactive opacity and size with stronger response
     this.visConnectors.material.opacity = 0.3 + intensity * 0.7
     this.visParticles.material.opacity = 0.4 + intensity * 0.6
-    this.visParticles.material.size = 0.4 + bass * 1.6
+    this.visParticles.material.size = this.baseParticleSize
     
     // Audio-reactive distance constraints with more variation
     const edgesDistance = 0.8 + mid * 1.2
@@ -465,7 +466,7 @@ export default class DeepLights {
     
     // Audio-reactive attractor/repulsor force
     this.bounds.intensity = 0.03 + bass * 0.1
-    this.bounds.radius = 12.0 + mid * 8.0
+    this.bounds.radius = 24.0 + mid * 16.0
     
     // Audio-reactive physics speed
     const tickSpeed = 0.4 + intensity * 0.6
