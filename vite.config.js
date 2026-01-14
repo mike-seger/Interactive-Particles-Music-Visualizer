@@ -25,6 +25,7 @@ export default defineConfig({
     host: true,
   },
   resolve: {
+    dedupe: ['three'],
     alias: {
       '@': path.resolve(__dirname, './src'),
     },

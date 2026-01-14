@@ -11,6 +11,12 @@ import CircularSpectrum from './entities/circular-spectrum/CircularSpectrum'
 import SphereLines from './entities/sphere-lines/SphereLines'
 import Spiral from './entities/spiral/Spiral'
 import WavySpiral from './entities/wavy-spiral/WavySpiral'
+import AudibleSpiral from './entities/audible-spiral/AudibleSpiral'
+import Audible3dSpiral from './entities/audible-3d-spiral/Audible3dSpiral'
+import Audible3dSpiralLines from './entities/audible-3d-spiral-lines/Audible3dSpiralLines'
+import FlowerSpiral from './entities/flower-spiral/FlowerSpiral'
+import CirclePulse from './entities/circle-pulse/CirclePulse'
+import Waves from './entities/waves/Waves'
 import AudioMesh from './entities/audio-mesh/AudioMesh'
 import WaveformVisualizer from './entities/waveform-visualizer/WaveformVisualizer'
 import AnimatedBlob from './entities/animated-blob/AnimatedBlob'
@@ -48,15 +54,20 @@ export default class App {
   static visualizerType = 'Reactive Particles'
   static visualizerList = [
     'Animated Blob',
+    'Audible Spiral',
+    'Audible 3d Spiral',
+    'Audible 3d Spiral Lines',
     'Audio Fabric',
     'Audio Mesh',
     'Audio Particles',
     'Audio Sphere',
+    'Circle Pulse',
     'Circular Spectrum',
     'Circular Wave',
     'Deep Lights',
     'Deep Particles',
     'Fluid',
+    'Flower Spiral',
     'Frequency Bars',
     'Frequency Rings',
     'Iris',
@@ -73,6 +84,7 @@ export default class App {
     'SynthWave',
     'Voxel Liquid Spectrum',
     'Water',
+    'Waves',
     'Waveform Visualizer',
     'WebGL Blob',
     'Wavy Spiral'
@@ -420,6 +432,15 @@ export default class App {
       case 'Reactive Particles':
         App.currentVisualizer = new ReativeParticles()
         break
+      case 'Audible Spiral':
+        App.currentVisualizer = new AudibleSpiral()
+        break
+      case 'Audible 3d Spiral':
+        App.currentVisualizer = new Audible3dSpiral()
+        break
+      case 'Audible 3d Spiral Lines':
+        App.currentVisualizer = new Audible3dSpiralLines()
+        break
       case 'Frequency Rings':
         App.currentVisualizer = new FrequencyRings()
         break
@@ -452,6 +473,15 @@ export default class App {
         break
       case 'Wavy Spiral':
         App.currentVisualizer = new WavySpiral()
+        break
+      case 'Flower Spiral':
+        App.currentVisualizer = new FlowerSpiral()
+        break
+      case 'Circle Pulse':
+        App.currentVisualizer = new CirclePulse()
+        break
+      case 'Waves':
+        App.currentVisualizer = new Waves()
         break
       case 'Audio Mesh':
         App.currentVisualizer = new AudioMesh()
