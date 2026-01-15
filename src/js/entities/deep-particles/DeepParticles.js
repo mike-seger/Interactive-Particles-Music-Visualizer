@@ -330,6 +330,16 @@ export default class DeepParticles {
       horizontalSpeed: 0.8,
       verticalSpeed: 0.4
     }
+
+    // Low -> high frequency palette (requested): green > yellow > orange > red > violet > blue
+    this.bandPalette = [
+      0x22ff66, // green
+      0xffee33, // yellow
+      0xff9933, // orange
+      0xff3344, // red
+      0xaa44ff, // violet
+      0x3388ff  // blue
+    ]
   }
 
   init() {
@@ -348,41 +358,86 @@ export default class DeepParticles {
 
   update() {
     if (!App.audioManager || !App.bpmManager) return
-    
+
     const bass = App.audioManager.frequencyData.low
     const mid = App.audioManager.frequencyData.mid
     const high = App.audioManager.frequencyData.high
     const intensity = (bass + mid + high) / 3
-    
+
+    // Frequency band energies (0..1). Prefer full spectrum if available.
+    const spectrum = App.audioManager.frequencyArray
+    let bandE = null
+    if (spectrum && spectrum.length) {
+      const n = spectrum.length
+      const bands = [
+        [0.0, 0.06],
+        [0.06, 0.14],
+        [0.14, 0.28],
+        [0.28, 0.48],
+        [0.48, 0.70],
+        [0.70, 1.0]
+      ]
+
+      bandE = bands.map(([a, b]) => {
+        const start = Math.max(0, Math.floor(a * n))
+        const end = Math.max(start + 1, Math.floor(b * n))
+        let sum = 0
+        for (let i = start; i < end; i++) sum += spectrum[i]
+        return (sum / (end - start)) / 255
+      })
+    } else {
+      // Fallback: approximate 6 bands using the 3-band summary.
+      bandE = [
+        bass,
+        (bass + mid) * 0.5,
+        mid,
+        (mid + high) * 0.5,
+        high,
+        high * 0.8
+      ]
+    }
+
     this.tick += 0.02 * (1 + intensity)
-    
-    const spawnRate = 10000 + bass * 5000
-    const hue = 180 + mid * 120
-    const saturation = 50 + high * 50
-    const lightness = 40 + bass * 30
-    
+
     const position = new THREE.Vector3()
     position.x = Math.sin(this.tick * this.options.horizontalSpeed) * 20
     position.y = Math.sin(this.tick * this.options.verticalSpeed) * 10
     position.z = Math.sin(this.tick * this.options.horizontalSpeed + this.options.verticalSpeed) * 5
-    
-    const colorHSL = `hsl(${hue}, ${saturation}%, ${lightness}%)`
-    
-    const particleOptions = {
-      position: position,
-      color: colorHSL,
-      sizeRandomness: 1.0,
-      colorRandomness: 0.2,
-      spawnRate: spawnRate,
-      lifetime: 3 + mid * 2,
-      size: 4 + bass * 2
-    }
-    
+
+    // Spawn more overall particles when music is louder.
+    // We still keep per-particle size smaller (requested).
     const timeDelta = 0.016 // ~60fps
-    for (let x = 0; x < particleOptions.spawnRate * timeDelta; x++) {
-      this.particleSystem.spawnParticle(particleOptions)
+    const baseSpawnRate = 1400
+    const spawnGain = 5200
+
+    for (let bi = 0; bi < 6; bi++) {
+      const e = THREE.MathUtils.clamp(bandE[bi] || 0, 0, 1)
+      const spawnRate = baseSpawnRate + spawnGain * e
+
+      const col = new THREE.Color(this.bandPalette[bi])
+      const brightness = THREE.MathUtils.clamp(0.25 + e * 0.95, 0, 1)
+      col.multiplyScalar(brightness)
+      col.r = Math.min(1, col.r)
+      col.g = Math.min(1, col.g)
+      col.b = Math.min(1, col.b)
+
+      const particleOptions = {
+        position,
+        color: col,
+        // Smaller points + less randomness
+        size: 2.0 + e * 1.4,
+        sizeRandomness: 0.6,
+        colorRandomness: 0.06,
+        spawnRate,
+        lifetime: 2.2 + mid * 2.2
+      }
+
+      const count = particleOptions.spawnRate * timeDelta
+      for (let x = 0; x < count; x++) {
+        this.particleSystem.spawnParticle(particleOptions)
+      }
     }
-    
+
     this.particleSystem.update(this.tick)
   }
 

@@ -14,7 +14,8 @@ export default class Water {
         // Audio reactivity
         this.lastBeat = false;
         this.rippleTimer = 0;
-        this.autoRippleInterval = 2.0; // seconds
+        // Slightly more frequent ripples so multiple small wavefronts overlap.
+        this.autoRippleInterval = 1.2; // seconds
         
         // Create render targets for height map double buffering
         const options = {
@@ -33,12 +34,18 @@ export default class Water {
     }
     
     init() {
-        // Camera framing: keep the water plane filling the lower half of view.
+        // Camera framing: top-down so the plane fills the viewport.
         if (App.camera) {
-            App.camera.position.set(0, 14, 16);
-            App.camera.up.set(0, 1, 0);
-            // Look slightly above the plane so the plane sits in the lower half.
-            App.camera.lookAt(0, 4, 0);
+            // Looking down the -Y axis: set up-vector to avoid colinearity with view direction.
+            App.camera.up.set(0, 0, -1);
+            // Much higher Y => show a large surface area (see many ripple centers at once).
+            App.camera.position.set(0, 320, 0);
+            App.camera.lookAt(0, 0, 0);
+
+            // Slightly narrower FOV so we see more of the plane at once.
+            if (typeof App.camera.fov === 'number') {
+                App.camera.fov = 60;
+            }
             App.camera.updateProjectionMatrix();
         }
 
@@ -84,8 +91,9 @@ export default class Water {
             uniforms: {
                 uTexture: { value: null },
                 uCenter: { value: new THREE.Vector2(0.5, 0.5) },
-                uRadius: { value: 0.015 },
-                uStrength: { value: 0.5 }
+                // Smaller default ripples (individual drops set these too)
+                uRadius: { value: 0.01 },
+                uStrength: { value: 0.25 }
             },
             vertexShader: this.getUpdateVertexShader(),
             fragmentShader: this.getDropFragmentShader()
@@ -123,7 +131,8 @@ export default class Water {
                 
                 // Displace vertex
                 vec3 pos = position;
-                pos.z += height * 2.0;
+                // Smaller wave height so multiple drops are readable.
+                pos.z += height * 1.0;
                 
                 vPosition = (modelViewMatrix * vec4(pos, 1.0)).xyz;
                 gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
@@ -300,10 +309,11 @@ export default class Water {
         
         // Beat-triggered ripples
         if (isBeat && !this.lastBeat) {
-            const x = Math.random();
-            const y = Math.random();
-            const strength = 0.1 + bass * 0.2;
-            this.addDrop(x, y, 0.025, strength);
+            // Keep centers in the central area so they're all visible with the top-down camera.
+            const x = 0.3 + Math.random() * 0.4;
+            const y = 0.3 + Math.random() * 0.4;
+            const strength = 0.06 + bass * 0.12;
+            this.addDrop(x, y, 0.012, strength);
         }
         this.lastBeat = isBeat;
         
@@ -315,8 +325,8 @@ export default class Water {
             this.rippleTimer = 0;
             const x = 0.3 + Math.random() * 0.4;
             const y = 0.3 + Math.random() * 0.4;
-            const strength = 0.05 + bass * 0.1;
-            this.addDrop(x, y, 0.015 + bass * 0.025, strength);
+            const strength = 0.035 + bass * 0.08;
+            this.addDrop(x, y, 0.008 + bass * 0.01, strength);
         }
         
         // Keep the water surface horizontal (no container rotation)
@@ -326,7 +336,7 @@ export default class Water {
         // Extra ripple on BPM beat
         const x = 0.5;
         const y = 0.5;
-        this.addDrop(x, y, 0.05, 0.15);
+        this.addDrop(x, y, 0.018, 0.10);
     }
     
     // Called from App.js to pass renderer reference
