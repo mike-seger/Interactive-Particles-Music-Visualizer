@@ -322,6 +322,22 @@ export default class DeepLights {
     this.bounds = null
     this.distances = null
     this.baseParticleSize = 0.6
+
+    this._colors = null
+
+    // Additional per-particle force to create distributed, audio-driven motion.
+    this._audioWaveForce = null
+
+    // Audio response shaping
+    this._audioSmoothed = 0
+    this._audioPeak = 0
+    this._beatKick = 0
+    this._lastUpdateMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+
+    // Smoothed physics targets (helps avoid “blow-outs” on loud sections)
+    this._boundsIntensity = 0.03
+    this._boundsRadius = 24.0
+    this._tickSpeed = 0.5
   }
 
   init() {
@@ -369,6 +385,54 @@ export default class DeepLights {
     
     this.simulation.addConstraint(this.distances)
     this.simulation.addForce(this.bounds)
+
+    // Audio wave force: pushes particles with a traveling wave so the whole
+    // "string" moves (not just one end).
+    const particleCount = particles
+    this._audioWaveForce = {
+      intensity: 0,
+      radialIntensity: 0,
+      phase: 0,
+      waveFreq: 10,
+      count: particleCount,
+      applyForce(ix, f0, p0) {
+        const i = ix / 3
+        const t = this.count > 1 ? i / (this.count - 1) : 0
+
+        // Tangential direction around the Y axis (keeps motion "stringy").
+        const x = p0[ix]
+        const z = p0[ix + 2]
+        let tx = -z
+        let tz = x
+        const len = Math.hypot(tx, tz) || 1
+        tx /= len
+        tz /= len
+
+        // Radial direction from center in XZ (adds "breathing" expansion/contraction).
+        const rLen = Math.hypot(x, z) || 1
+        const rx = x / rLen
+        const rz = z / rLen
+
+        // Traveling wave (distributed across entire length)
+        const w = Math.sin(this.phase + t * this.waveFreq)
+        const w2 = Math.cos(this.phase * 1.15 + t * this.waveFreq * 0.85)
+        const wR = Math.sin(this.phase * 0.9 - t * this.waveFreq * 0.6)
+
+        const amp = this.intensity
+        // `radialIntensity` is a desired displacement fraction of radius (0..0.05).
+        // Convert that into a small force scaled by radius so the breathing stays
+        // within ~0–5% of the current radius.
+        const rTarget = rLen * this.radialIntensity
+        f0[ix] += tx * w * amp
+        f0[ix + 2] += tz * w * amp
+        f0[ix + 1] += w2 * amp * 0.65
+
+        // Radial push/pull (subtle; keeps the structure cohesive)
+        f0[ix] += rx * wR * rTarget * 0.02
+        f0[ix + 2] += rz * wR * rTarget * 0.02
+      }
+    }
+    this.simulation.addForce(this._audioWaveForce)
     
     // Relax simulation
     for (let i = 0; i < 50; i++) {
@@ -378,6 +442,10 @@ export default class DeepLights {
     // Create particle visualization
     const vertices = new THREE.BufferAttribute(this.simulation.positions, 3)
     const indices = new THREE.BufferAttribute(new Uint16Array(visIndices), 1)
+
+    // Per-vertex colors so the whole structure can react (not just a uniform tint).
+    this._colors = new Float32Array(this.simulation.positions.length)
+    const colorsAttr = new THREE.BufferAttribute(this._colors, 3)
     
     // Create particle texture
     const canvas = document.createElement('canvas')
@@ -393,9 +461,11 @@ export default class DeepLights {
     
     const dots = new THREE.BufferGeometry()
     dots.setAttribute('position', vertices)
+    dots.setAttribute('color', colorsAttr)
     
     this.visParticles = new THREE.Points(dots, new THREE.PointsMaterial({
-      color: new THREE.Color('hsl(220, 50%, 50%)'),
+      color: new THREE.Color(0xffffff),
+      vertexColors: true,
       blending: THREE.AdditiveBlending,
       transparent: true,
       map: texture,
@@ -406,12 +476,15 @@ export default class DeepLights {
     // Connections
     const lines = new THREE.BufferGeometry()
     lines.setAttribute('position', vertices)
+    // Share the same color buffer (colors are per-vertex position).
+    lines.setAttribute('color', colorsAttr)
     lines.setIndex(indices)
     
     this.visConnectors = new THREE.LineSegments(lines, new THREE.LineBasicMaterial({
       blending: THREE.AdditiveBlending,
       transparent: true,
-      color: new THREE.Color('hsl(220, 50%, 50%)'),
+      color: new THREE.Color(0xffffff),
+      vertexColors: true,
       opacity: 0.7
     }))
     
@@ -439,43 +512,124 @@ export default class DeepLights {
     const bass = App.audioManager.frequencyData.low
     const mid = App.audioManager.frequencyData.mid
     const high = App.audioManager.frequencyData.high
+
+    // 0..1 base signal
     const intensity = (bass + mid + high) / 3
+
+    // Estimate dt (seconds) for stable decay independent of frame rate.
+    const nowMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+    const dt = Math.min(0.05, Math.max(0.001, (nowMs - this._lastUpdateMs) / 1000))
+    this._lastUpdateMs = nowMs
+
+    // Boost + contrast (more reactive at lower amplitudes)
+    const clamp01 = (v) => Math.min(1, Math.max(0, v))
+    const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
+    // Higher gain + slightly stronger curve to bring back punch.
+    const boosted = Math.pow(clamp01(intensity * 2.7), 0.55)
+    const bassBoost = Math.pow(clamp01(bass * 3.0), 0.52)
+    const midBoost = Math.pow(clamp01(mid * 2.7), 0.56)
+    const highBoost = Math.pow(clamp01(high * 2.6), 0.6)
+
+    // Smooth + peak-hold so transients pop.
+    const smoothAlpha = 1 - Math.pow(0.000001, dt) // faster smoothing (more responsive)
+    this._audioSmoothed += (boosted - this._audioSmoothed) * smoothAlpha
+    const peakDecay = Math.pow(0.15, dt) // decay over ~1s
+    this._audioPeak = Math.max(boosted, this._audioPeak * peakDecay)
+
+    // Beat kick (short pulse)
+    if (App.bpmManager.beatActive) this._beatKick = 1
+    const kickDecay = Math.pow(0.02, dt) // decay quickly
+    this._beatKick *= kickDecay
+
+    // Amplify combined response, then apply a gentle curve so small signals still move.
+    const combined = clamp01((this._audioSmoothed * 0.9 + this._audioPeak * 0.75 + this._beatKick * 0.45) * 1.25)
+    const react = Math.pow(combined, 0.7)
     
     // Audio-reactive colors with more range
-    const hue = 160 + mid * 180
-    const saturation = 60 + high * 40
-    const lightness = 30 + bass * 50
-    const colorString = `hsl(${hue}, ${saturation}%, ${lightness}%)`
-    const color = new THREE.Color(colorString)
-    
-    this.visParticles.material.color = color
-    this.visConnectors.material.color = color
+    const hueBase = (200 + midBoost * 260 + react * 90 + nowMs * 0.02) % 360
+    const hueParticles = hueBase
+    const hueLines = (hueBase + 70 + highBoost * 60) % 360
+    const saturation = clamp(60 + highBoost * 40, 55, 100)
+    const lightness = clamp(28 + bassBoost * 42 + react * 14, 22, 80)
+
+    // Update per-vertex colors to make the whole structure reactive.
+    if (this._colors && this.visParticles?.geometry?.getAttribute('color')) {
+      const colorTmp = this._colorTmp || (this._colorTmp = new THREE.Color())
+      const count = this.simulation ? this.simulation.positions.length / 3 : 0
+      const time = nowMs * 0.001
+
+      // Normalized HSL helpers
+      const satN = clamp(saturation / 100, 0, 1)
+      const lightBaseN = clamp(lightness / 100, 0, 1)
+      const lightLineN = clamp((clamp(lightness + 6, 22, 85)) / 100, 0, 1)
+
+      for (let i = 0; i < count; i++) {
+        const t = count > 1 ? i / (count - 1) : 0
+
+        // Traveling hue wave + audio wobble along the chain.
+        const wave = Math.sin(time * (1.3 + react * 1.6) + t * (10 + react * 18))
+        const wobble = wave * (25 + react * 70) + this._beatKick * 35
+
+        // Interpolate between particle/line palettes across the length.
+        const h = ((hueParticles * (1 - t) + hueLines * t) + wobble + t * 120) % 360
+        const l = clamp(lightBaseN + wave * 0.08 * react, 0.18, 0.92)
+
+        colorTmp.setHSL((h < 0 ? h + 360 : h) / 360, satN, l)
+        const idx = i * 3
+        this._colors[idx] = colorTmp.r
+        this._colors[idx + 1] = colorTmp.g
+        this._colors[idx + 2] = colorTmp.b
+      }
+
+      this.visParticles.geometry.getAttribute('color').needsUpdate = true
+      this.visConnectors.geometry.getAttribute('color').needsUpdate = true
+    }
     
     // Audio-reactive opacity and size with stronger response
-    this.visConnectors.material.opacity = 0.3 + intensity * 0.7
-    this.visParticles.material.opacity = 0.4 + intensity * 0.6
-    this.visParticles.material.size = this.baseParticleSize
+    // Keep a visible floor so the structure never “disappears” on hot sections.
+    this.visConnectors.material.opacity = clamp(0.22 + react * 0.72, 0.22, 0.95)
+    this.visParticles.material.opacity = clamp(0.30 + react * 0.62, 0.30, 0.95)
+    this.visParticles.material.size = this.baseParticleSize * (0.80 + react * 1.45)
     
     // Audio-reactive distance constraints with more variation
-    const edgesDistance = 0.8 + mid * 1.2
-    this.distances.setDistance(edgesDistance * 0.4, edgesDistance * 1.2)
+    const edgesDistance = clamp(0.70 + midBoost * 1.75 + this._beatKick * 0.35, 0.70, 2.35)
+    this.distances.setDistance(edgesDistance * 0.38, edgesDistance * 1.30)
     
     // Audio-reactive particle weights (affects physics movement)
-    const particlesWeight = 0.8 + high * 1.2
+    const particlesWeight = clamp(0.70 + highBoost * 1.35 + react * 0.35, 0.70, 2.1)
     this.simulation.setWeights(particlesWeight)
     
     // Audio-reactive attractor/repulsor force
-    this.bounds.intensity = 0.03 + bass * 0.1
-    this.bounds.radius = 24.0 + mid * 16.0
+    const targetBoundsIntensity = clamp(0.03 + bassBoost * 0.14 + this._beatKick * 0.07, 0.02, 0.16)
+    const targetBoundsRadius = clamp(22.0 + midBoost * 18.0 + react * 4.0, 20.0, 40.0)
+    // Faster interpolation so it “follows” the music.
+    const physAlpha = 1 - Math.pow(0.0005, dt)
+    this._boundsIntensity += (targetBoundsIntensity - this._boundsIntensity) * physAlpha
+    this._boundsRadius += (targetBoundsRadius - this._boundsRadius) * physAlpha
+    this.bounds.intensity = this._boundsIntensity
+    this.bounds.radius = this._boundsRadius
     
     // Audio-reactive physics speed
-    const tickSpeed = 0.4 + intensity * 0.6
-    this.simulation.tick(tickSpeed)
+    const targetTickSpeed = clamp(0.35 + react * 1.25 + this._beatKick * 0.35, 0.25, 1.55)
+    this._tickSpeed += (targetTickSpeed - this._tickSpeed) * physAlpha
+
+    // Drive the distributed wave force from audio so motion is visible across
+    // the entire string, not just one side.
+    if (this._audioWaveForce) {
+      this._audioWaveForce.phase += dt * (1.8 + react * 4.2 + this._beatKick * 6)
+      this._audioWaveForce.waveFreq = 8 + react * 22
+      // Keep force small (integration uses delta^2); scale with audio.
+      this._audioWaveForce.intensity = clamp(0.002 + react * 0.018 + bassBoost * 0.01 + this._beatKick * 0.02, 0.001, 0.045)
+      // Bass-driven breathing: 0..5% of radius
+      this._audioWaveForce.radialIntensity = clamp(bassBoost * 0.05 + this._beatKick * 0.02, 0.0, 0.05)
+    }
+
+    this.simulation.tick(this._tickSpeed)
     
     // Audio-reactive fog density
     if (App.scene.fog) {
-      App.scene.fog.near = 1 - high * 0.5
-      App.scene.fog.far = 180 + bass * 40
+      App.scene.fog.near = 0.8 - highBoost * 0.55
+      App.scene.fog.far = 165 + bassBoost * 55 + react * 10
     }
     
     // Update geometry

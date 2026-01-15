@@ -8,16 +8,13 @@ import CircularWave from './entities/circular-wave/CircularWave'
 import AudioFabric from './entities/audio-fabric/AudioFabric'
 import CircularSpectrum from './entities/circular-spectrum/CircularSpectrum'
 import SphereLines from './entities/sphere-lines/SphereLines'
-import Spiral from './entities/spiral/Spiral'
 import AudibleSpiral from './entities/audible-spiral/AudibleSpiral'
 import Audible3dSpiral from './entities/audible-3d-spiral/Audible3dSpiral'
 import Audible3dSpiralLines from './entities/audible-3d-spiral-lines/Audible3dSpiralLines'
-import Waves from './entities/waves/Waves'
 import AudioMesh from './entities/audio-mesh/AudioMesh'
 import WaveformVisualizer from './entities/waveform-visualizer/WaveformVisualizer'
 import AnimatedBlob from './entities/animated-blob/AnimatedBlob'
 import WebGLBlob from './entities/webgl-blob/WebGLBlob'
-import SynthWave from './entities/synthwave/SynthWave'
 import Fluid from './entities/fluid/Fluid'
 import Water from './entities/water/Water'
 import KevsPlasma from './entities/kevs-plasma/KevsPlasma'
@@ -29,6 +26,7 @@ import AudioSphere from './entities/audio-sphere/AudioSphere'
 import SimplePlasma from './entities/simple-plasma/SimplePlasma'
 import SparklingBoxes from './entities/sparkling-boxes/SparklingBoxes'
 import TubesCursor from './entities/tubes-cursor/TubesCursor'
+import RandomFlowers from './entities/random-flowers/RandomFlowers'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -70,12 +68,10 @@ export default class App {
     'Oscilloscope',
     'Plasma Field',
     'Reactive Particles',
+    'Random Flowers',
     'Simple Plasma',
     'Sphere Lines',
-    'Spiral',
-    'SynthWave',
     'Water',
-    'Waves',
     'Waveform Visualizer',
     'WebGL Blob'
   ]
@@ -192,6 +188,23 @@ export default class App {
     App.holder.sortObjects = false
 
     App.gui = new dat.GUI()
+
+    // Keep the controls visible above any full-screen overlay canvases.
+    // (Some visualizers render into their own 2D canvas and may clear to black.)
+    if (App.gui?.domElement) {
+      const guiRoot = App.gui.domElement
+      // dat.GUI autoPlace uses a wrapper (usually `.dg.ac`) for positioning.
+      const guiContainer = guiRoot.parentElement || guiRoot
+
+      guiContainer.style.position = 'fixed'
+      guiContainer.style.zIndex = '2500'
+      guiContainer.style.pointerEvents = 'auto'
+      guiContainer.style.display = 'block'
+
+      // Also set on the root in case autoPlace behavior differs.
+      guiRoot.style.position = 'relative'
+      guiRoot.style.zIndex = '2500'
+    }
 
     this.createManagers()
 
@@ -368,6 +381,12 @@ export default class App {
     
     // Update time every second
     setInterval(updateTime, 1000)
+
+    // Best-effort save on reload/navigation as well.
+    window.addEventListener('beforeunload', () => {
+      if (!App.audioManager || !App.audioManager.audio || App.audioManager.isUsingMicrophone) return
+      this.savePlaybackPosition(App.audioManager.getCurrentTime())
+    })
   }
 
   async createManagers() {
@@ -393,8 +412,22 @@ export default class App {
 
     loadingText.remove()
 
-    App.audioManager.play()
+    // Initialize player controls
+    this.initPlayerControls()
+
+    // Initialize last-used visualizer (fallback to default)
+    const storedVisualizer = this.getStoredVisualizerType()
+    this.switchVisualizer(storedVisualizer || 'Reactive Particles', { notify: false })
     
+    // Add visualizer switcher to GUI
+    this.addVisualizerSwitcher()
+
+    // Restore last playback position before starting audio so reload resumes.
+    this.restoreSessionOnPlay()
+
+    // Start playback (user already clicked to initialize the app)
+    App.audioManager.play()
+
     // Detect BPM in the background after 30 seconds
     setTimeout(async () => {
       console.log('Starting background BPM detection...')
@@ -406,16 +439,6 @@ export default class App {
         console.warn('Background BPM detection failed, keeping default:', e)
       }
     }, 30000)
-    
-    // Initialize player controls
-    this.initPlayerControls()
-
-    // Initialize last-used visualizer (fallback to default)
-    const storedVisualizer = this.getStoredVisualizerType()
-    this.switchVisualizer(storedVisualizer || 'Reactive Particles', { notify: false })
-    
-    // Add visualizer switcher to GUI
-    this.addVisualizerSwitcher()
 
     // Emit available modules to parent (if embedded)
     if (this.bridgeTarget) {
@@ -513,17 +536,14 @@ export default class App {
       case 'Audio Fabric':
         App.currentVisualizer = new AudioFabric()
         break
+      case 'Random Flowers':
+        App.currentVisualizer = new RandomFlowers()
+        break
       case 'Circular Spectrum':
         App.currentVisualizer = new CircularSpectrum()
         break
       case 'Sphere Lines':
         App.currentVisualizer = new SphereLines()
-        break
-      case 'Spiral':
-        App.currentVisualizer = new Spiral()
-        break
-      case 'Waves':
-        App.currentVisualizer = new Waves()
         break
       case 'Audio Mesh':
         App.currentVisualizer = new AudioMesh()
@@ -536,9 +556,6 @@ export default class App {
         break
       case 'WebGL Blob':
         App.currentVisualizer = new WebGLBlob()
-        break
-      case 'SynthWave':
-        App.currentVisualizer = new SynthWave()
         break
       case 'Fluid':
         App.currentVisualizer = new Fluid()
@@ -730,6 +747,22 @@ export default class App {
     // Ignore if focused on form inputs
     const target = event.target
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+
+    // Spacebar: toggle play/pause
+    if (event.code === 'Space' || event.key === ' ') {
+      if (!App.audioManager) return
+      event.preventDefault()
+      const playPauseBtn = document.getElementById('play-pause-btn')
+      if (App.audioManager.isPlaying) {
+        App.audioManager.pause()
+        if (playPauseBtn) playPauseBtn.textContent = '▶'
+      } else {
+        this.restoreSessionOnPlay()
+        App.audioManager.play()
+        if (playPauseBtn) playPauseBtn.textContent = '❚❚'
+      }
+      return
+    }
 
     if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
       if (!App.audioManager || !App.audioManager.audio) return

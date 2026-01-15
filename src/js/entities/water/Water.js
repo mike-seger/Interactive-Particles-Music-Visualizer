@@ -33,9 +33,20 @@ export default class Water {
     }
     
     init() {
+        // Camera framing: keep the water plane filling the lower half of view.
+        if (App.camera) {
+            App.camera.position.set(0, 14, 16);
+            App.camera.up.set(0, 1, 0);
+            // Look slightly above the plane so the plane sits in the lower half.
+            App.camera.lookAt(0, 4, 0);
+            App.camera.updateProjectionMatrix();
+        }
+
         App.holder.add(this.container);
         // Create the water plane mesh
-        const geometry = new THREE.PlaneGeometry(20, 20, 200, 200);
+        // Make the plane large enough to behave like an infinite horizon
+        // (push side edges out of the camera frustum so no trapezoid outline shows).
+        const geometry = new THREE.PlaneGeometry(800, 800, 200, 200);
         
         const material = new THREE.ShaderMaterial({
             uniforms: {
@@ -53,7 +64,8 @@ export default class Water {
         });
         
         this.waterMesh = new THREE.Mesh(geometry, material);
-        this.waterMesh.rotation.x = -Math.PI / 3;
+        // Keep the plane horizontal (XZ plane)
+        this.waterMesh.rotation.set(-Math.PI / 2, 0, 0);
         this.container.add(this.waterMesh);
         
         // Create update material for height map simulation
@@ -72,7 +84,7 @@ export default class Water {
             uniforms: {
                 uTexture: { value: null },
                 uCenter: { value: new THREE.Vector2(0.5, 0.5) },
-                uRadius: { value: 0.03 },
+                uRadius: { value: 0.015 },
                 uStrength: { value: 0.5 }
             },
             vertexShader: this.getUpdateVertexShader(),
@@ -291,7 +303,7 @@ export default class Water {
             const x = Math.random();
             const y = Math.random();
             const strength = 0.1 + bass * 0.2;
-            this.addDrop(x, y, 0.05, strength);
+            this.addDrop(x, y, 0.025, strength);
         }
         this.lastBeat = isBeat;
         
@@ -304,18 +316,17 @@ export default class Water {
             const x = 0.3 + Math.random() * 0.4;
             const y = 0.3 + Math.random() * 0.4;
             const strength = 0.05 + bass * 0.1;
-            this.addDrop(x, y, 0.03 + bass * 0.05, strength);
+            this.addDrop(x, y, 0.015 + bass * 0.025, strength);
         }
         
-        // Rotate slowly
-        this.container.rotation.z += 0.001;
+        // Keep the water surface horizontal (no container rotation)
     }
     
     onBPMBeat() {
         // Extra ripple on BPM beat
         const x = 0.5;
         const y = 0.5;
-        this.addDrop(x, y, 0.1, 0.15);
+        this.addDrop(x, y, 0.05, 0.15);
     }
     
     // Called from App.js to pass renderer reference
