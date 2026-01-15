@@ -16,7 +16,25 @@ export default class Water {
         this.rippleTimer = 0;
         // Slightly more frequent ripples so multiple small wavefronts overlap.
         this.autoRippleInterval = 1.2; // seconds
-        
+
+        // Bass-kick detector (drops should only fall on audible bass drum kicks)
+        this.bassFast = 0;
+        this.bassSlow = 0;
+        this.prevKick = false;
+        this.kickCooldown = 0;
+        this.kickCooldownSeconds = 0.10;
+
+        // Global sensitivity for kick detection (higher => more drops)
+        this.kickSensitivity = 1.35;
+
+        // BPM assist window: briefly relax kick thresholds right after a beat.
+        this.beatAssist = 0;
+
+        this._lastUpdateAt = performance.now();
+
+        // Cached FFT array for kick detection
+        this._fftData = null;
+
         // Create render targets for height map double buffering
         const options = {
             minFilter: THREE.LinearFilter,
@@ -31,6 +49,38 @@ export default class Water {
         // Create scenes for computation
         this.scene = new THREE.Scene();
         this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    }
+
+    _estimateBassFromSpectrum() {
+        // Match FrequencyBars: each "bar" is a raw FFT bin.
+        // User reported the 5th bar correlates well with kicks => bin index 4.
+        const analyser = App.audioManager?.analyserNode;
+        if (!analyser) return 0;
+
+        const bins = analyser.frequencyBinCount;
+        if (!this._fftData || this._fftData.length !== bins) {
+            this._fftData = new Uint8Array(bins);
+        }
+
+        analyser.getByteFrequencyData(this._fftData);
+
+        const target = 4;
+        const start = Math.max(0, target - 2);
+        const end = Math.min(bins - 1, target + 2);
+
+        let maxV = 0;
+        let sum = 0;
+        let count = 0;
+        for (let i = start; i <= end; i++) {
+            const v = this._fftData[i] || 0;
+            if (v > maxV) maxV = v;
+            sum += v;
+            count++;
+        }
+
+        // Blend peak + average so we react to sharp kicks and rounder booms.
+        const blended = maxV * 0.65 + (sum / Math.max(1, count)) * 0.35;
+        return blended / 255;
     }
     
     init() {
@@ -292,9 +342,15 @@ export default class Water {
     
     update(audioData) {
         if (!audioData) return;
+
+        const now = performance.now();
+        const dt = Math.min(0.05, (now - this._lastUpdateAt) / 1000);
+        this._lastUpdateAt = now;
         
         const { frequencies, isBeat } = audioData;
-        const bass = frequencies.bass || 0;
+        const bassFromBands = frequencies.bass || 0;
+        const bassFromSpectrum = this._estimateBassFromSpectrum();
+        const bass = Math.max(bassFromBands, bassFromSpectrum);
         const mid = frequencies.mid || 0;
         const high = frequencies.high || 0;
         
@@ -306,37 +362,61 @@ export default class Water {
         
         // Update water simulation
         this.updateWater(0.016);
-        
-        // Beat-triggered ripples
-        if (isBeat && !this.lastBeat) {
+
+        // BPM assist window (useful when onset detection misses some kicks)
+        const beatEdge = !!(isBeat && !this.lastBeat);
+        if (beatEdge) {
+            // Slightly longer window to account for latency/swing.
+            this.beatAssist = 0.28;
+        } else {
+            this.beatAssist = Math.max(0, this.beatAssist - dt);
+        }
+
+        // Bass-kick driven drops
+        // Use an onset detector (fast vs slow envelope) and trigger only on rising edge.
+        this.kickCooldown = Math.max(0, this.kickCooldown - dt);
+
+        const fastK = 1.0 - Math.pow(0.001, dt);
+        const slowK = 1.0 - Math.pow(0.06, dt);
+        this.bassFast += (bass - this.bassFast) * fastK;
+        this.bassSlow += (bass - this.bassSlow) * slowK;
+
+        const assist = this.beatAssist > 0 ? (1.0 + this.beatAssist * 1.2) : 1.0;
+        const onset = Math.max(0, (this.bassFast - this.bassSlow) * this.kickSensitivity * assist);
+
+        // Default thresholds (off-beat)
+        let bassMin = 0.012;
+        let onsetThresh = 0.0060;
+
+        // In a short window after BPM beat, relax thresholds to catch quieter kicks.
+        if (this.beatAssist > 0) {
+            bassMin = 0.008;
+            onsetThresh = 0.0032;
+        }
+
+        const kick = (this.bassFast > bassMin) && (onset > onsetThresh);
+
+        if (kick && !this.prevKick && this.kickCooldown === 0) {
             // Keep centers in the central area so they're all visible with the top-down camera.
             const x = 0.3 + Math.random() * 0.4;
             const y = 0.3 + Math.random() * 0.4;
-            const strength = 0.06 + bass * 0.12;
-            this.addDrop(x, y, 0.012, strength);
+
+            const radius = 0.008 + bass * 0.01;
+            const strength = 0.04 + bass * 0.22 + onset * 0.55;
+            this.addDrop(x, y, radius, strength);
+
+            this.kickCooldown = this.kickCooldownSeconds;
         }
+
+        this.prevKick = kick;
+
         this.lastBeat = isBeat;
-        
-        // Auto-generate ripples based on bass
-        this.rippleTimer += 0.016;
-        const interval = this.autoRippleInterval * (1.0 - bass * 0.5);
-        
-        if (this.rippleTimer > interval) {
-            this.rippleTimer = 0;
-            const x = 0.3 + Math.random() * 0.4;
-            const y = 0.3 + Math.random() * 0.4;
-            const strength = 0.035 + bass * 0.08;
-            this.addDrop(x, y, 0.008 + bass * 0.01, strength);
-        }
         
         // Keep the water surface horizontal (no container rotation)
     }
     
     onBPMBeat() {
-        // Extra ripple on BPM beat
-        const x = 0.5;
-        const y = 0.5;
-        this.addDrop(x, y, 0.018, 0.10);
+        // Drops are driven by bass kick detection in update().
     }
     
     // Called from App.js to pass renderer reference
