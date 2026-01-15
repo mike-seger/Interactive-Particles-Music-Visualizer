@@ -5,6 +5,7 @@ import PlasmaField from './entities/plasma/PlasmaField'
 import AudioParticles from './entities/audio-particles/AudioParticles'
 import Iris from './entities/iris/Iris'
 import CircularWave from './entities/circular-wave/CircularWave'
+import CircularAudioWave from './entities/circular-audio-wave/CircularAudioWave'
 import AudioFabric from './entities/audio-fabric/AudioFabric'
 import CircularSpectrum from './entities/circular-spectrum/CircularSpectrum'
 import SphereLines from './entities/sphere-lines/SphereLines'
@@ -27,6 +28,13 @@ import SimplePlasma from './entities/simple-plasma/SimplePlasma'
 import SparklingBoxes from './entities/sparkling-boxes/SparklingBoxes'
 import TubesCursor from './entities/tubes-cursor/TubesCursor'
 import RandomFlowers from './entities/random-flowers/RandomFlowers'
+import Fireworks from './entities/fireworks/Fireworks'
+import FireworksNight from './entities/fireworks-night/FireworksNight'
+import FireworksShader from './entities/fireworks-shader/FireworksShader'
+import ThreeDAudioVisualizer from './entities/3d-audio-visualizer/ThreeDAudioVisualizer'
+import FrequencyVisualization from './entities/frequency-visualization/FrequencyVisualization'
+import PulseWaves from './entities/pulse-waves/PulseWaves'
+import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -47,6 +55,7 @@ export default class App {
   static visualizerType = 'Reactive Particles'
   static visualizerList = [
     'Animated Blob',
+    '3D Audio Visualizer',
     'Audible Spiral',
     'Audible 3d Spiral',
     'Audible 3d Spiral Lines',
@@ -54,12 +63,17 @@ export default class App {
     'Audio Mesh',
     'Audio Particles',
     'Audio Sphere',
+    'Circular Audio Wave',
     'Circular Spectrum',
     'Circular Wave',
     'Deep Lights',
     'Deep Particles',
+    'Fireworks',
+    'Fireworks Night',
+    'Fireworks Shader',
     'Fluid',
     'Frequency Bars',
+    'Frequency Visualization',
     'Frequency Rings',
     'Iris',
     'Sparkling Boxes',
@@ -67,13 +81,15 @@ export default class App {
     'Kevs Plasma',
     'Oscilloscope',
     'Plasma Field',
+    'Pulse Waves',
     'Reactive Particles',
     'Random Flowers',
     'Simple Plasma',
     'Sphere Lines',
     'Water',
     'Waveform Visualizer',
-    'WebGL Blob'
+    'WebGL Blob',
+    ...SHADER_VISUALIZER_NAMES,
   ]
 
   constructor() {
@@ -505,7 +521,11 @@ export default class App {
     this.renderer.clear()
     
     // Create new visualizer
-    switch (type) {
+    const shaderVisualizer = createShaderVisualizerByName(type)
+    if (shaderVisualizer) {
+      App.currentVisualizer = shaderVisualizer
+    } else {
+      switch (type) {
       case 'Reactive Particles':
         App.currentVisualizer = new ReativeParticles()
         break
@@ -533,6 +553,9 @@ export default class App {
       case 'Circular Wave':
         App.currentVisualizer = new CircularWave()
         break
+      case 'Circular Audio Wave':
+        App.currentVisualizer = new CircularAudioWave()
+        break
       case 'Audio Fabric':
         App.currentVisualizer = new AudioFabric()
         break
@@ -554,6 +577,9 @@ export default class App {
       case 'Animated Blob':
         App.currentVisualizer = new AnimatedBlob()
         break
+      case '3D Audio Visualizer':
+        App.currentVisualizer = new ThreeDAudioVisualizer()
+        break
       case 'WebGL Blob':
         App.currentVisualizer = new WebGLBlob()
         break
@@ -572,11 +598,23 @@ export default class App {
       case 'Frequency Bars':
         App.currentVisualizer = new FrequencyBars()
         break
+      case 'Frequency Visualization':
+        App.currentVisualizer = new FrequencyVisualization()
+        break
       case 'Oscilloscope':
         App.currentVisualizer = new AudioOscilloscope()
         break
       case 'Deep Particles':
         App.currentVisualizer = new DeepParticles()
+        break
+      case 'Fireworks':
+        App.currentVisualizer = new Fireworks()
+        break
+      case 'Fireworks Night':
+        App.currentVisualizer = new FireworksNight()
+        break
+      case 'Fireworks Shader':
+        App.currentVisualizer = new FireworksShader()
         break
       case 'Deep Lights':
         App.currentVisualizer = new DeepLights()
@@ -593,8 +631,12 @@ export default class App {
       case 'Simple Plasma':
         App.currentVisualizer = new SimplePlasma()
         break
+      case 'Pulse Waves':
+        App.currentVisualizer = new PulseWaves()
+        break
       default:
         App.currentVisualizer = new ReativeParticles()
+      }
     }
     
     App.currentVisualizer.init()
