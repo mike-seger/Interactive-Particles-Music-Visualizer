@@ -586,9 +586,20 @@ export default class App {
 
     this.updateVisualizerToast(type)
 
-    // Sync GUI dropdown if available
-    if (this.visualizerController && this.visualizerController.getValue() !== type) {
-      this.visualizerController.setValue(type)
+    // Keep the GUI dropdown in sync with the active visualizer.
+    // Important: the controller is bound to `this.visualizerSwitcherConfig.visualizer`,
+    // not `App.visualizerType`, so we must update the bound property and refresh display.
+    if (this.visualizerSwitcherConfig) {
+      this.visualizerSwitcherConfig.visualizer = type
+    }
+
+    if (this.visualizerController) {
+      // Avoid setValue() here to prevent triggering onChange -> switchVisualizer() recursion.
+      if (typeof this.visualizerController.updateDisplay === 'function') {
+        this.visualizerController.updateDisplay()
+      } else if (typeof this.visualizerController.setValue === 'function' && this.visualizerController.getValue?.() !== type) {
+        this.visualizerController.setValue(type)
+      }
     }
 
     console.log('Switched to visualizer:', type)
@@ -778,6 +789,7 @@ export default class App {
     this.visualizerController = visualizerFolder
       .add(this.visualizerSwitcherConfig, 'visualizer', App.visualizerList)
       .name('Select Visualizer')
+      .listen()
       .onChange((value) => {
         this.switchVisualizer(value)
       })

@@ -321,7 +321,7 @@ export default class DeepLights {
     this.visConnectors = null
     this.bounds = null
     this.distances = null
-    this.baseParticleSize = 0.5
+    this.baseParticleSize = 0.6
   }
 
   init() {

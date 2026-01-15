@@ -10,19 +10,21 @@ export default class Fluid extends THREE.Object3D {
     constructor() {
         super();
         this.name = 'Fluid';
-        
-        // Create canvas for fluid simulation
+
+        // Create canvas for fluid simulation.
+        // IMPORTANT: mount inside `.content` so it stays behind UI overlays
+        // like dat.GUI and `#player-controls`.
         this.canvas = document.createElement('canvas');
-        this.canvas.style.position = 'absolute';
-        this.canvas.style.top = '0';
-        this.canvas.style.left = '0';
+        this.canvas.style.position = 'fixed';
+        this.canvas.style.inset = '0';
         this.canvas.style.width = '100%';
         this.canvas.style.height = '100%';
         this.canvas.style.pointerEvents = 'none';
-        this.canvas.style.zIndex = '1';
-        
-        // Add canvas to document
-        document.body.appendChild(this.canvas);
+        this.canvas.style.zIndex = '0';
+
+        // Add canvas to app container (fallback to body).
+        this.canvasHost = document.querySelector('.content') || document.body;
+        this.canvasHost.appendChild(this.canvas);
         
         // Configuration
         this.config = {
@@ -710,5 +712,6 @@ export default class Fluid extends THREE.Object3D {
         if (this.canvas && this.canvas.parentNode) {
             this.canvas.parentNode.removeChild(this.canvas);
         }
+        this.canvasHost = null;
     }
 }
