@@ -172,53 +172,6 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     fragColor = vec4(color, audioSignal);
 }
 
-// # Buffer A
-
-float spatializeAudio(in float dist) {
-    float fftDomain = pow(dist, 2.0);
-    float fft = texture(iChannel1, vec2(fftDomain * .09, .25)).r;
-    fft = pow(fft, 4.0);
-    return fft;
-}
-
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = fragCoord / iResolution.xy;
-    vec2 st =
-        (2. * fragCoord - iResolution.xy)
-        / min(iResolution.x, iResolution.y);
-    float dist = length(st);
-    
-    float audioSignal = spatializeAudio(dist);
-    float zucconiDomain = ZUCCONI_OFFSET - dist;    
-    vec3 color = spectral_zucconi6(zucconiDomain) * audioSignal * .2;
-    //float rotationDomain = (color.r + color.g + color.b) * 1.0;
-    //vec2 stShift = vec2(color.r - .005, color.g - .005) * vec2(sin(rotationDomain), cos(rotationDomain));
-    //stShift *= st * .5;
-    
-    vec3 mixedColor = texture(iChannel0, fragCoord / iResolution.xy - st * 0.09
-                             * iResolution.y / iResolution.xy
-                              //,.99
-                             ).rgb;
-    float angle = atan(st.x, st.y);
-
-    float noiseScale = 1.0;
-
-    vec2 offset = uv //+ vec2((mixedColor.g - .5) * 0.01, (mixedColor.r - .5) * 0.01) 
-    
-    + (vec2(
-        snoise(vec3(st * noiseScale, iTime * .3)),
-        snoise(vec3(st * noiseScale+ vec2(1000.0), iTime * .3))
-     ) - .5) * .04;
-    //* vec2(sin(angle * 1.0 + iTime * .5), cos(angle * 1.0 + iTime * .7));
-
-    //vec3 prevColor = texture(iChannel0, uv - stShift).rgb;
-    vec3 prevColor = texture(iChannel0, offset).rgb;
-    color += prevColor * 0.95;
-    //vec3 color = prevColor * 0. + spectral_zucconi6(dist * 1.3 - .3) * audioSignal * 2.0;
-
-    fragColor = vec4(color, audioSignal);
-}
-
 // # Image
 
 // Fork of "Julie's Dunes study" by morisil. https://shadertoy.com/view/dllSWj

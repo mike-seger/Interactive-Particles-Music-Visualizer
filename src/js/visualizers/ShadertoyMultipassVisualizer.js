@@ -251,6 +251,68 @@ function inferChannelSamplerTypes(source) {
   return types
 }
 
+/**
+ * Heuristically infer what each iChannel is intended to represent.
+ * This helps multipass shaders that expect:
+ * - buffer textures on iChannel0..2
+ * - a small noise/LUT texture on some channel (often iChannel1)
+ * - audio FFT on a channel (often iChannel0 on Shadertoy)
+ *
+ * Returns an array of 4 hints: 'buffer' | 'noise' | 'audio' | 'unknown'.
+ */
+function inferChannelHints(source) {
+  const src = String(source || '')
+  const hints = ['unknown', 'unknown', 'unknown', 'unknown']
+
+  for (let ch = 0; ch < 4; ch++) {
+    const name = `iChannel${ch}`
+
+    // AUDIO heuristics:
+    // - texelFetch on row 0/1 (our texelFetch transform maps row 0 -> y=0.25)
+    // - texture sampling at y~=0.25 or y~=0.75
+    const usesTexelFetch = new RegExp(`\\btexelFetch\\s*\\(\\s*${name}\\b`).test(src)
+    const audioRowTexture = new RegExp(
+      // Allow both `0.25` and `.25` (many Shadertoy shaders omit the leading 0).
+      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\([^)]*,\\s*0?\\.(?:25|75)\\s*\\)`
+    ).test(src)
+    if (usesTexelFetch || audioRowTexture) {
+      hints[ch] = 'audio'
+      continue
+    }
+
+    // NOISE / LUT heuristics:
+    // - common dither patterns: mod(fragCoord/8.,1.), mod(frag/8.,1.)
+    // - sampling with mod/fract wrapping but without iResolution normalization
+    const noisePattern = new RegExp(
+      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*(?:mod|fract)\\s*\\(`
+    ).test(src)
+    const ditherPattern = new RegExp(
+      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*mod\\s*\\(\\s*(?:fragCoord|gl_FragCoord\\.xy|frag)\\s*/\\s*\\d+\\.?\\d*\\s*,\\s*1\\.?0*\\s*\\)`
+    ).test(src)
+    // Sampling a constant vec2 (especially with y=0) is usually a LUT/noise, not a full-res buffer.
+    const constUv = new RegExp(
+      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\(\\s*[0-9.+\-eE]+\\s*,\\s*[0-9.+\-eE]+\\s*\\)`
+    ).test(src)
+    if (noisePattern || ditherPattern || constUv) {
+      hints[ch] = 'noise'
+      continue
+    }
+
+    // BUFFER heuristics:
+    // If the shader samples with screen-space coords (fragCoord/iResolution, uv derived from that)
+    // it likely expects a full-resolution buffer.
+    const bufferPattern = new RegExp(
+      `\\btexture\\s*\\(\\s*${name}\\s*,[\\s\\S]{0,140}?\\b(?:fragCoord|gl_FragCoord\\.xy|iResolution)\\b`
+    ).test(src)
+    if (bufferPattern) {
+      hints[ch] = 'buffer'
+      continue
+    }
+  }
+
+  return hints
+}
+
 function transformTexelFetch(source) {
   // WebGL1 doesn't support texelFetch; approximate via texture2D + iChannelResolution.
   // Use a small parser so nested parentheses in the ivec2() args don't break replacement.
@@ -907,6 +969,7 @@ function buildFragmentSource(common, passCode, opts = {}) {
   if (!/\buniform\s+vec3\s+iResolution\b/.test(body)) prelude.push('uniform vec3 iResolution;')
   if (!/\buniform\s+float\s+iTime\b/.test(body)) prelude.push('uniform float iTime;')
   if (!/\buniform\s+float\s+iTimeDelta\b/.test(body)) prelude.push('uniform float iTimeDelta;')
+  if (!/\buniform\s+float\s+iFrameRate\b/.test(body)) prelude.push('uniform float iFrameRate;')
   if (!/\buniform\s+int\s+iFrame\b/.test(body)) prelude.push('uniform int iFrame;')
   if (!/\buniform\s+vec4\s+iMouse\b/.test(body)) prelude.push('uniform vec4 iMouse;')
   if (!/\buniform\s+vec4\s+iDate\b/.test(body)) prelude.push('uniform vec4 iDate;')
@@ -1480,6 +1543,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
 
       const combinedSrc = `${parsed.common ? `${parsed.common}\n` : ''}${pass.code}`
       const channelTypes = inferChannelSamplerTypes(combinedSrc)
+      const channelHints = inferChannelHints(combinedSrc)
       const usedChannels = detectUsedChannels(combinedSrc)
 
       const frag = buildFragmentSource(parsed.common, pass.code, { caps: this._caps, channelTypes, forceOpaqueOutput: false })
@@ -1506,6 +1570,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
         ping: 0,
         chanIndex,
         channelTypes,
+        channelHints,
         usedChannels,
       })
     }
@@ -1514,6 +1579,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     {
       const combinedSrc = `${parsed.common ? `${parsed.common}\n` : ''}${imagePass.code}`
       this._imageChannelTypes = inferChannelSamplerTypes(combinedSrc)
+      this._imageChannelHints = inferChannelHints(combinedSrc)
       this._imageUsedChannels = detectUsedChannels(combinedSrc)
 
       const frag = buildFragmentSource(parsed.common, imagePass.code, { caps: this._caps, channelTypes: this._imageChannelTypes, forceOpaqueOutput: true })
@@ -1556,6 +1622,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       iResolution: { value: res },
       iTime: { value: 0 },
       iTimeDelta: { value: 0 },
+      iFrameRate: { value: 0 },
       iFrame: { value: 0 },
       iMouse: { value: this._mouse },
       iDate: { value: new THREE.Vector4(0, 0, 0, 0) },
@@ -1720,6 +1787,9 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
   _applyCommonUniforms(mat, t, dt, audioTime) {
     mat.uniforms.iTime.value = t
     mat.uniforms.iTimeDelta.value = dt
+    // Shadertoy's iFrameRate is frames-per-second. Use the inverse of iTimeDelta.
+    // Clamp to avoid huge spikes on tab-switch / timer hiccups.
+    mat.uniforms.iFrameRate.value = dt > 0 ? Math.min(240, 1 / dt) : 0
     mat.uniforms.iFrame.value = this._frame
 
     // Mouse: use z sign to indicate down
@@ -1751,67 +1821,166 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     return pass.rts[prevIndex].texture
   }
 
+  _setChannel(mat, ch, tex, kind) {
+    const uniformName = `iChannel${ch}`
+    if (!mat?.uniforms?.[uniformName] || !mat?.uniforms?.iChannelResolution) return
+
+    mat.uniforms[uniformName].value = tex
+
+    const res = mat.uniforms.iChannelResolution.value
+    if (!Array.isArray(res) || !res[ch]) return
+
+    if (kind === 'audio') {
+      res[ch].set(512, 2, 1)
+      return
+    }
+
+    if (kind === 'noise') {
+      const w = this._noiseTex?.image?.width || 1
+      const h = this._noiseTex?.image?.height || 1
+      res[ch].set(w, h, 1)
+      return
+    }
+
+    if (kind === 'cube') {
+      const w = this._cubeTex?.image?.[0]?.width || 1
+      const h = this._cubeTex?.image?.[0]?.height || 1
+      res[ch].set(w, h, 1)
+      return
+    }
+
+    if (kind === 'buffer') {
+      const r = this._getResolutionVec3()
+      res[ch].set(r.x, r.y, 1)
+      return
+    }
+
+    // black/unknown
+    res[ch].set(1, 1, 1)
+  }
+
   _applyChannelUniformsForPass(pass, selfPrevTex) {
     const mat = pass.mat
+    const hints = pass.channelHints || ['unknown', 'unknown', 'unknown', 'unknown']
+    const types = pass.channelTypes || ['sampler2D', 'sampler2D', 'sampler2D', 'sampler2D']
 
-    // Channel 0: audio unless shader expects a cubemap
-    if (pass.channelTypes?.[0] === 'samplerCube') {
-      mat.uniforms.iChannel0.value = this._cubeTex || this._blackTex
-    } else {
-      mat.uniforms.iChannel0.value = this._audio?.tex || this._blackTex
-    }
+    for (let ch = 0; ch < 4; ch++) {
+      if (!mat.uniforms[`iChannel${ch}`]) continue
 
-    // Buffer A/B/C mapping (with self-feedback by exposing previous texture on its own channel)
-    for (let ch = 1; ch <= 3; ch++) {
-      const uniformName = `iChannel${ch}`
-      if (!mat.uniforms[uniformName]) continue
+      // Cubemap expectation always wins.
+      if (types[ch] === 'samplerCube') {
+        this._setChannel(mat, ch, this._cubeTex || this._blackTex, this._cubeTex ? 'cube' : 'black')
+        continue
+      }
 
-      if (ch === pass.chanIndex) {
-        // Self channel = previous frame
-        mat.uniforms[uniformName].value = selfPrevTex || this._blackTex
-      } else {
-        // Earlier buffers use current frame; later buffers use previous frame
-        if (ch < pass.chanIndex) {
-          mat.uniforms[uniformName].value = this._getBufferTexture(ch)
-        } else {
-          mat.uniforms[uniformName].value = this._getBufferPrevTexture(ch)
+      const hint = hints[ch]
+      if (hint === 'noise') {
+        this._setChannel(mat, ch, this._noiseTex || this._blackTex, this._noiseTex ? 'noise' : 'black')
+        continue
+      }
+      if (hint === 'audio') {
+        this._setChannel(mat, ch, this._audio?.tex || this._blackTex, this._audio?.tex ? 'audio' : 'black')
+        continue
+      }
+
+      // Buffer channels: map iChannel0..2 -> Buffer A/B/C (with self-feedback)
+      if (ch <= 2) {
+        const bufIndex = ch + 1 // 1..3
+        const hasBuf = !!this._passes[bufIndex - 1]
+        if (hasBuf) {
+          if (bufIndex === pass.chanIndex) {
+            this._setChannel(mat, ch, selfPrevTex || this._blackTex, selfPrevTex ? 'buffer' : 'black')
+          } else if (bufIndex < pass.chanIndex) {
+            this._setChannel(mat, ch, this._getBufferTexture(bufIndex), 'buffer')
+          } else {
+            this._setChannel(mat, ch, this._getBufferPrevTexture(bufIndex), 'buffer')
+          }
+          continue
         }
       }
-    }
 
-    // iChannel3 is always Buffer C if exists
-    mat.uniforms.iChannel3.value = mat.uniforms.iChannel3.value || this._blackTex
+      // Fallback channel (often used for audio)
+      if (ch === 3 && this._audio?.tex) {
+        this._setChannel(mat, ch, this._audio.tex, 'audio')
+      } else {
+        this._setChannel(mat, ch, this._blackTex, 'black')
+      }
+    }
   }
 
   _applyChannelUniformsForImage(mat) {
     const chTypes = this._imageChannelTypes || ['sampler2D', 'sampler2D', 'sampler2D', 'sampler2D']
+    const hints = this._imageChannelHints || ['unknown', 'unknown', 'unknown', 'unknown']
     const used = this._imageUsedChannels || [true, false, false, false]
 
-    // Channel 0
-    if (chTypes[0] === 'samplerCube') {
-      mat.uniforms.iChannel0.value = this._cubeTex || this._blackTex
-    } else if (this._imageChannel0Mode === 'noise') {
-      mat.uniforms.iChannel0.value = this._noiseTex || this._blackTex
-    } else {
-      mat.uniforms.iChannel0.value = this._audio?.tex || this._blackTex
-    }
+    const bufferCount = this._passes.length
+    const lastBufferTex = bufferCount ? this._getBufferTexture(bufferCount) : this._blackTex
 
-    // Channels 1-3
-    for (let ch = 1; ch <= 3; ch++) {
+    for (let ch = 0; ch < 4; ch++) {
       const uniformName = `iChannel${ch}`
       if (!mat.uniforms[uniformName]) continue
 
       if (chTypes[ch] === 'samplerCube') {
-        mat.uniforms[uniformName].value = this._cubeTex || this._blackTex
+        this._setChannel(mat, ch, this._cubeTex || this._blackTex, this._cubeTex ? 'cube' : 'black')
         continue
       }
 
-      const bufTex = this._getBufferTexture(ch)
-      if (bufTex === this._blackTex && used[ch]) {
-        // If shader references this channel but we have no buffers wired, give it noise.
-        mat.uniforms[uniformName].value = this._noiseTex || this._blackTex
+      const hint = hints[ch]
+      if (hint === 'noise') {
+        this._setChannel(mat, ch, this._noiseTex || this._blackTex, this._noiseTex ? 'noise' : 'black')
+        continue
+      }
+      if (hint === 'audio') {
+        this._setChannel(mat, ch, this._audio?.tex || this._blackTex, this._audio?.tex ? 'audio' : 'black')
+        continue
+      }
+
+      if (ch === 0) {
+        // If we have buffers, default Image iChannel0 to the last buffer unless
+        // shader also looks like it expects A/B mapping (iChannel1 as buffer).
+        if (bufferCount > 0) {
+          const wantsABMapping = hints[1] === 'buffer'
+          if (wantsABMapping) {
+            this._setChannel(mat, 0, this._getBufferTexture(1), 'buffer')
+          } else {
+            this._setChannel(mat, 0, lastBufferTex, lastBufferTex !== this._blackTex ? 'buffer' : 'black')
+          }
+          continue
+        }
+
+        // Single-pass behavior
+        if (this._imageChannel0Mode === 'noise') {
+          this._setChannel(mat, 0, this._noiseTex || this._blackTex, this._noiseTex ? 'noise' : 'black')
+        } else {
+          this._setChannel(mat, 0, this._audio?.tex || this._blackTex, this._audio?.tex ? 'audio' : 'black')
+        }
+        continue
+      }
+
+      // Channels 0..2 map to buffers A/B/C when present
+      if (ch <= 2) {
+        const bufIndex = ch + 1
+        const bufTex = this._getBufferTexture(bufIndex)
+        if (bufTex !== this._blackTex) {
+          this._setChannel(mat, ch, bufTex, 'buffer')
+        } else if (used[ch]) {
+          this._setChannel(mat, ch, this._noiseTex || this._blackTex, this._noiseTex ? 'noise' : 'black')
+        } else {
+          this._setChannel(mat, ch, this._blackTex, 'black')
+        }
+        continue
+      }
+
+      // Channel 3 fallback
+      if (used[ch]) {
+        this._setChannel(
+          mat,
+          ch,
+          this._audio?.tex || (this._noiseTex || this._blackTex),
+          this._audio?.tex ? 'audio' : (this._noiseTex ? 'noise' : 'black')
+        )
       } else {
-        mat.uniforms[uniformName].value = bufTex
+        this._setChannel(mat, ch, this._blackTex, 'black')
       }
     }
   }
