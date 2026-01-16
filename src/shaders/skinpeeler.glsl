@@ -8,8 +8,11 @@
 #define time iTime
 vec3 ligt;
 
-// Audio level (computed once per pixel and reused during raymarch).
+// Audio levels (computed once per pixel and reused during raymarch).
 float gAudio = 0.0;
+float gBass = 0.0;
+float gMid = 0.0;
+float gHigh = 0.0;
 
 float _fft(float x)
 {
@@ -17,9 +20,9 @@ float _fft(float x)
     return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).x;
 }
 
-float getAudioLevel()
+void computeAudio()
 {
-    // Emphasize bass/low-mids for a pleasant “breathing” pulse.
+    // Bass/low-mids for the big “breathing” motion.
     float bass = 0.0;
     bass += _fft(0.01);
     bass += _fft(0.02);
@@ -33,10 +36,24 @@ float getAudioLevel()
     mid += _fft(0.18);
     mid *= 0.3333;
 
-    float a = bass * 1.2 + mid * 0.4;
-    // Shape and clamp.
-    a = pow(max(a, 0.0), 1.25);
-    return clamp(a, 0.0, 1.0);
+    // Highs for surface ripples / sharper deformation.
+    float high = 0.0;
+    high += _fft(0.28);
+    high += _fft(0.40);
+    high += _fft(0.62);
+    high *= 0.3333;
+
+    // Shape bands (compress dynamics so it doesn't overreact).
+    bass = clamp(pow(max(bass, 0.0), 1.45), 0.0, 1.0);
+    mid  = clamp(pow(max(mid, 0.0), 1.25), 0.0, 1.0);
+    high = clamp(pow(max(high, 0.0), 1.15), 0.0, 1.0);
+
+    gBass = bass;
+    gMid  = mid;
+    gHigh = high;
+
+    float a = bass * 1.00 + mid * 0.35 + high * 0.08;
+    gAudio = clamp(pow(max(a, 0.0), 1.35), 0.0, 1.0);
 }
 
 /*
@@ -86,11 +103,13 @@ vec2 hash22(vec2 p)
 
 float vine(vec3 p, in float c, in float h)
 {
-    p.y += sin(p.z*.5625+1.3)*1.5-.5;
-    p.x += cos(p.z*.4575)*1.;
+    float swell = 0.95 + 0.35 * gMid;
+    p.y += sin(p.z*.5625+1.3)*1.5*swell-.5;
+    p.x += cos(p.z*.4575)*1.0*swell;
     //p.z -=.3;
     vec2 q = vec2(mod(p.x, c)-c/2., p.y);
-    return length(q) - h -sin(p.z*3.+sin(p.x*7.)*0.5+time)*0.13;
+    float wig = 0.13 * (1.0 + 0.35 * gHigh);
+    return length(q) - h - sin(p.z*3.+sin(p.x*7.)*0.5+time)*wig;
 }
 
 float map(vec3 p)
@@ -105,12 +124,37 @@ float map(vec3 p)
     p.y -= hs.x*0.4-0.15;
     p.zx += hs*1.3;
 
-    // Egg/bubble pulsing driven by audio.
-    // Shrink/grow by modulating radius + slight anisotropic scaling.
-    float pulse = mix(0.75, 1.35, gAudio);
-    vec3 ep = p;
-    ep.y *= mix(1.20, 0.90, gAudio);
-    d = smin(d, length(ep) - (hs.x * 0.4 * pulse));
+    // Droplets: now driven by bass/mid/high.
+    // Keep it cheap: no extra FFT fetches inside the raymarch.
+    float pulse = 0.85 + 0.65 * gBass + 0.15 * gMid;
+    float wob   = (0.03 + 0.07 * hs.y) * (0.30 + 0.90 * gBass + 0.40 * gMid);
+    float tw    = (0.25 + 0.90 * hs.x) * (0.20 + 0.80 * gHigh);
+
+    vec3 wp = p;
+    float tt = time * (1.05 + 0.4 * gMid);
+    wp.x += sin(wp.z * 3.2 + tt + hs.y * 6.2831) * wob;
+    wp.y += sin(wp.x * 2.4 - tt * 1.3 + hs.x * 6.2831) * wob * 0.65;
+    wp.z += cos(wp.y * 2.8 + tt * 0.9 + hs.x * 6.2831) * wob;
+
+    // High-frequency twist (adds “skin peel” writhing).
+    float cs = cos(tw * (wp.y + 0.25));
+    float sn = sin(tw * (wp.y + 0.25));
+    wp.zx = mat2(cs, -sn, sn, cs) * wp.zx;
+
+    // Anisotropic scaling + rippled surface to deform the droplet silhouette.
+    vec3 ep = wp;
+    ep.y *= mix(1.25, 0.75, gBass);
+    ep.x *= mix(0.95, 1.25, gMid);
+    ep.z *= mix(1.05, 0.80, gMid);
+
+    float r = hs.x * 0.4 * pulse;
+    float ripple = 0.0;
+    ripple += sin(ep.x * 9.0 + tt * 2.6 + hs.y * 9.0);
+    ripple += sin(ep.z * 7.0 - tt * 3.1 + hs.x * 11.0);
+    ripple *= 0.5;
+    ripple *= (0.006 + 0.025 * gHigh) * (0.25 + 0.55 * gAudio);
+
+    d = smin(d, length(ep) - r + ripple);
     
     d = smin(d, vine(bp+vec3(1.8,0.,0),15.,.8) );
     d = smin(d, vine(bp.zyx+vec3(0.,0,17.),20.,0.75) );
@@ -233,13 +277,13 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	mo.x *= iResolution.x/iResolution.y;
 
     // Compute audio once (used in map() during march).
-    gAudio = getAudioLevel();
+    computeAudio();
 	
 	vec3 ro = vec3(smoothstep(0.,1.,tri(time*.6)*2.)*0.1, smoothstep(0.,1.,tri(time*1.2)*2.)*0.05, -time*0.6);
     ro.y -= height(ro.zx)+0.07;
     mo.x += smoothstep(0.7,1.,sin(time*.35))-1.5 - smoothstep(-.7,-1.,sin(time*.35));
 
-    // Small audio-driven camera “breath” (subtle; main reactivity is bubble pulse).
+    // Small audio-driven camera “breath” (subtle; main reactivity is droplet deformation).
     mo.y += (gAudio - 0.2) * 0.06;
  
     vec3 eyedir = normalize(vec3(cos(mo.x),mo.y*2.-0.2+sin(time*.75*1.37)*0.15,sin(mo.x)));
