@@ -316,6 +316,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord)
 // Created by Dmitry Andreev - and'2016
 // License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
 
+/*
 float drawLogo(in vec2 fragCoord)
 {
     // pixel-screen
@@ -334,6 +335,7 @@ float drawLogo(in vec2 fragCoord)
 
     return bit != floor(bit / 2.0) * 2.0 ? 1.0 : 0.0;
 }
+*/
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
@@ -389,8 +391,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     fragColor.rgb *= wx * wy;
 
     // Add logo when side screen are on.
-    fragColor.rgb += 0.1 * mag * drawLogo(fragCoord) *
-        (1.0 - clamp((sin((iTime + 10.0) / 9.6) - 0.5) * 10.0, 0.0, 1.0));
+    //fragColor.rgb += 0.1 * mag * drawLogo(fragCoord) *
+    //    (1.0 - clamp((sin((iTime + 10.0) / 9.6) - 0.5) * 10.0, 0.0, 1.0));
 
     // Apply anamorphic flare.
     float flare = base_clr.z;
