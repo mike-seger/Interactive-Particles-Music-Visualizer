@@ -70,10 +70,18 @@ struct Object
 
 Object objects[OBJECT_COUNT];
 
+float audioFFT(float x)
+{
+    // App convention: iChannel0 is a 512x2 audio texture; FFT is on row 0 (sample at y≈0.25)
+    float u = clamp(x, 0.0, 1.0);
+    u = mix(0.5 / 512.0, 1.0 - 0.5 / 512.0, u);
+    return texture(iChannel0, vec2(u, 0.25)).r;
+}
+
 float dist(vec3 position)
 {
     float m = 9999.0;
-    vec4 audio = texture(iChannel0, vec2(0.0, 0.0));
+    float bass = pow(audioFFT(0.03), 2.0);
     vec2 uv = vec2(position.x, position.y) * 1.0;
     vec4 col = texture(iChannel0, uv).rgba;
 
@@ -85,7 +93,7 @@ float dist(vec3 position)
 
     float a = sdBox(p, o.size);
     float b = sdSphere(p, o.size.x);
-    float au = audio.x;
+    float au = bass;
 
     f = au * a + (1.0 - au) * b;
     f -= sdSphere(p, o.size.x) * (0.3 + au * 0.4);
@@ -155,7 +163,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     vec2 uv = vec2(fragCoord.x / iResolution.x, fragCoord.y / iResolution.x);
     uv.y += (iResolution.y / iResolution.x) * 0.4;
 
-    vec4 audio = texture(iChannel0, vec2(1.0, 0.0));
+    float audio = pow(audioFFT(0.15), 2.0);
 
     objects[0] = getObject(vec3(0.0), TYPE_CUBE);
     objects[0].size = vec3(0.1, 0.1, 0.1);
@@ -192,7 +200,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     }
     else
     {
-        color = aColor * pow(length(uv - vec2(0.5, 0.5)) * (1.0 + p * audio.x * 5.0), 1.4) * 1.5;
+        color = aColor * pow(length(uv - vec2(0.5, 0.5)) * (1.0 + p * audio * 5.0), 1.4) * 1.5;
     }
 
     float d = (1.0 - m * 75.0) * 15.0 * p;
