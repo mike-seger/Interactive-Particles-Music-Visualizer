@@ -2,6 +2,14 @@
 
 #define PI 3.14159265
 
+float audioFFT(float x)
+{
+  // App convention: iChannel0 is a 512x2 audio texture; FFT is row 0 sampled at y≈0.25
+  float u = clamp(x, 0.0, 1.0);
+  u = mix(0.5 / 512.0, 1.0 - 0.5 / 512.0, u);
+  return texture(iChannel0, vec2(u, 0.25)).r;
+}
+
 float orenNayarDiffuse(
   vec3 lightDirection,
   vec3 viewDirection,
@@ -207,8 +215,8 @@ vec3 doBackground( void )
 //------------------------------------------------------------------------
 float doModel( vec3 p )
 {
-    float r = texture(iChannel0, vec2(0.8, 0.)).r + 0.5;
-    float n = max(0., texture(iChannel0, vec2(0.05, 0.)).r * 3.5 - 1.);
+  float r = audioFFT(0.8) + 0.5;
+  float n = max(0., audioFFT(0.05) * 3.5 - 1.);
     
     n = n * exp(snoise(vec4(p * 2.1, iTime * 2.3)));
     

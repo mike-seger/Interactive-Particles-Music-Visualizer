@@ -272,10 +272,18 @@ function inferChannelHints(source) {
     // - texture sampling at y~=0.25 or y~=0.75
     const usesTexelFetch = new RegExp(`\\btexelFetch\\s*\\(\\s*${name}\\b`).test(src)
     const audioRowTexture = new RegExp(
-      // Allow both `0.25` and `.25` (many Shadertoy shaders omit the leading 0).
-      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\([^)]*,\\s*0?\\.(?:25|75)\\s*\\)`
+      // Allow both `texture()` and `texture2D()`; allow both `0.25` and `.25`.
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\([^)]*,\\s*0?\\.(?:25|75)\\s*\\)`
+    ).test(src)
+    // Many Shadertoy audio shaders sample the top/bottom row using y=0/1.
+    const audioLegacyRowTexture = new RegExp(
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\([^)]*,\\s*(?:0(?:\\.0*)?|\\.0+|1(?:\\.0*)?)\\s*\\)`
     ).test(src)
     if (usesTexelFetch || audioRowTexture) {
+      hints[ch] = 'audio'
+      continue
+    }
+    if (audioLegacyRowTexture) {
       hints[ch] = 'audio'
       continue
     }
@@ -284,16 +292,26 @@ function inferChannelHints(source) {
     // - common dither patterns: mod(fragCoord/8.,1.), mod(frag/8.,1.)
     // - sampling with mod/fract wrapping but without iResolution normalization
     const noisePattern = new RegExp(
-      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*(?:mod|fract)\\s*\\(`
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,\\s*(?:mod|fract)\\s*\\(`
     ).test(src)
     const ditherPattern = new RegExp(
-      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*mod\\s*\\(\\s*(?:fragCoord|gl_FragCoord\\.xy|frag)\\s*/\\s*\\d+\\.?\\d*\\s*,\\s*1\\.?0*\\s*\\)`
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,\\s*mod\\s*\\(\\s*(?:fragCoord|gl_FragCoord\\.xy|frag)\\s*/\\s*\\d+\\.?\\d*\\s*,\\s*1\\.?0*\\s*\\)`
     ).test(src)
-    // Sampling a constant vec2 (especially with y=0) is usually a LUT/noise, not a full-res buffer.
-    const constUv = new RegExp(
-      `\\btexture\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\(\\s*[0-9.+\-eE]+\\s*,\\s*[0-9.+\-eE]+\\s*\\)`
-    ).test(src)
-    if (noisePattern || ditherPattern || constUv) {
+    // Sampling a constant vec2 is often a LUT/noise, but many Shadertoy audio shaders
+    // sample the audio texture with constant y (0/1) and varying x.
+    const constUvMatch = new RegExp(
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,\\s*vec2\\s*\\(\\s*([0-9.+\-eE]+)\\s*,\\s*([0-9.+\-eE]+)\\s*\\)`
+    ).exec(src)
+    const constUvLooksLikeNoise = (() => {
+      if (!constUvMatch) return false
+      const y = Number.parseFloat(constUvMatch[2])
+      if (!Number.isFinite(y)) return true
+      // Keep LUT/noise for mid-row constants (e.g. 0.5), but don't override audio for y=0/1.
+      const isLegacyRow = Math.abs(y - 0) < 1e-6 || Math.abs(y - 1) < 1e-6
+      return !isLegacyRow
+    })()
+
+    if (noisePattern || ditherPattern || constUvLooksLikeNoise) {
       hints[ch] = 'noise'
       continue
     }
@@ -302,7 +320,7 @@ function inferChannelHints(source) {
     // If the shader samples with screen-space coords (fragCoord/iResolution, uv derived from that)
     // it likely expects a full-resolution buffer.
     const bufferPattern = new RegExp(
-      `\\btexture\\s*\\(\\s*${name}\\s*,[\\s\\S]{0,140}?\\b(?:fragCoord|gl_FragCoord\\.xy|iResolution)\\b`
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,[\\s\\S]{0,140}?\\b(?:fragCoord|gl_FragCoord\\.xy|iResolution)\\b`
     ).test(src)
     if (bufferPattern) {
       hints[ch] = 'buffer'
@@ -311,6 +329,125 @@ function inferChannelHints(source) {
   }
 
   return hints
+}
+
+function transformAudioLegacyRowSampling(source, channelHints) {
+  const hints = Array.isArray(channelHints) ? channelHints : null
+  if (!hints || hints.length !== 4) return String(source)
+
+  const isAudioCh = (ch) => hints[ch] === 'audio'
+  if (![0, 1, 2, 3].some(isAudioCh)) return String(source)
+
+  const src = String(source)
+
+  const findMatchingParen = (text, openIndex) => {
+    let depth = 0
+    for (let i = openIndex; i < text.length; i++) {
+      const ch = text[i]
+      if (ch === '(') depth++
+      else if (ch === ')') {
+        depth--
+        if (depth === 0) return i
+      }
+    }
+    return -1
+  }
+
+  const splitTopLevelArgs = (text) => {
+    /** @type {string[]} */
+    const out = []
+    let depth = 0
+    let start = 0
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]
+      if (ch === '(') depth++
+      else if (ch === ')') depth--
+      else if (ch === ',' && depth === 0) {
+        out.push(text.slice(start, i).trim())
+        start = i + 1
+      }
+    }
+    out.push(text.slice(start).trim())
+    return out
+  }
+
+  const rewriteCall = (fnName, callArgs) => {
+    const args = splitTopLevelArgs(callArgs)
+    if (args.length < 2) return null
+
+    const chan = args[0]
+    const m = chan.match(/^iChannel([0-3])$/)
+    if (!m) return null
+    const idx = Number(m[1])
+    if (!isAudioCh(idx)) return null
+
+    const coord = args[1]
+    const coordMatch = coord.match(/^vec2\s*\((.*)\)$/)
+    if (!coordMatch) return null
+    const uvArgs = splitTopLevelArgs(coordMatch[1])
+    if (uvArgs.length < 2) return null
+
+    const xExpr = uvArgs[0]
+    const yExpr = uvArgs[1].trim()
+
+    // Only rewrite literal 0/1 (including 0., .0, 0.0, 1., 1.0).
+    const yIsZero = /^(?:0(?:\.0*)?|\.0+)$/.test(yExpr)
+    const yIsOne = /^1(?:\.0*)?$/.test(yExpr)
+    if (!yIsZero && !yIsOne) return null
+
+    const newY = yIsZero ? '0.25' : '0.75'
+    const newCoord = `vec2(${xExpr}, ${newY})`
+    const rest = args.slice(2)
+    const newArgs = [chan, newCoord, ...rest]
+    return `${fnName}(${newArgs.join(', ')})`
+  }
+
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    const jTex = src.indexOf('texture', i)
+    const jTex2D = src.indexOf('texture2D', i)
+    let j = -1
+    let fnName = 'texture'
+    if (jTex2D !== -1 && (jTex === -1 || jTex2D < jTex)) {
+      j = jTex2D
+      fnName = 'texture2D'
+    } else {
+      j = jTex
+      fnName = 'texture'
+    }
+
+    if (j === -1) {
+      out += src.slice(i)
+      break
+    }
+
+    const openParen = src.indexOf('(', j + fnName.length)
+    if (openParen === -1) {
+      out += src.slice(i)
+      break
+    }
+    const between = src.slice(j + fnName.length, openParen)
+    if (/\S/.test(between)) {
+      out += src.slice(i, j + fnName.length)
+      i = j + fnName.length
+      continue
+    }
+
+    const closeParen = findMatchingParen(src, openParen)
+    if (closeParen === -1) {
+      out += src.slice(i)
+      break
+    }
+
+    out += src.slice(i, j)
+    const inner = src.slice(openParen + 1, closeParen)
+    const rewritten = rewriteCall(fnName, inner)
+    out += rewritten || `${fnName}(${inner})`
+    i = closeParen + 1
+  }
+
+  return out
 }
 
 function transformTexelFetch(source) {
@@ -923,6 +1060,7 @@ function buildFragmentSource(common, passCode, opts = {}) {
   body = transformFloatLiteralSuffix(body)
   body = transformVec2Array3x3Fill(body)
   body = transformTexelFetch(body)
+  body = transformAudioLegacyRowSampling(body, opts?.channelHints)
 
   const loopResult = transformDynamicForLoops(body)
   body = loopResult.source
@@ -1546,7 +1684,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       const channelHints = inferChannelHints(combinedSrc)
       const usedChannels = detectUsedChannels(combinedSrc)
 
-      const frag = buildFragmentSource(parsed.common, pass.code, { caps: this._caps, channelTypes, forceOpaqueOutput: false })
+      const frag = buildFragmentSource(parsed.common, pass.code, { caps: this._caps, channelTypes, channelHints, forceOpaqueOutput: false })
       const mat = new THREE.RawShaderMaterial({
         vertexShader: FULLSCREEN_VERT,
         fragmentShader: frag,
@@ -1582,7 +1720,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       this._imageChannelHints = inferChannelHints(combinedSrc)
       this._imageUsedChannels = detectUsedChannels(combinedSrc)
 
-      const frag = buildFragmentSource(parsed.common, imagePass.code, { caps: this._caps, channelTypes: this._imageChannelTypes, forceOpaqueOutput: true })
+      const frag = buildFragmentSource(parsed.common, imagePass.code, { caps: this._caps, channelTypes: this._imageChannelTypes, channelHints: this._imageChannelHints, forceOpaqueOutput: true })
       const mat = new THREE.RawShaderMaterial({
         vertexShader: FULLSCREEN_VERT,
         fragmentShader: frag,
