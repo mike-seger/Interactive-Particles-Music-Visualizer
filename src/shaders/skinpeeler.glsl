@@ -8,6 +8,37 @@
 #define time iTime
 vec3 ligt;
 
+// Audio level (computed once per pixel and reused during raymarch).
+float gAudio = 0.0;
+
+float _fft(float x)
+{
+    // Shadertoy-style audio texture: FFT row at y ~= 0.25
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).x;
+}
+
+float getAudioLevel()
+{
+    // Emphasize bass/low-mids for a pleasant “breathing” pulse.
+    float bass = 0.0;
+    bass += _fft(0.01);
+    bass += _fft(0.02);
+    bass += _fft(0.03);
+    bass += _fft(0.05);
+    bass *= 0.25;
+
+    float mid = 0.0;
+    mid += _fft(0.10);
+    mid += _fft(0.14);
+    mid += _fft(0.18);
+    mid *= 0.3333;
+
+    float a = bass * 1.2 + mid * 0.4;
+    // Shape and clamp.
+    a = pow(max(a, 0.0), 1.25);
+    return clamp(a, 0.0, 1.0);
+}
+
 /*
 	Believable animated volumetric dust storm in 7 samples,
 	blending each layer in based on geometry distance allows to
@@ -73,7 +104,13 @@ float map(vec3 p)
     float d = p.y+0.5;
     p.y -= hs.x*0.4-0.15;
     p.zx += hs*1.3;
-    d = smin(d, length(p)-hs.x*0.4);
+
+    // Egg/bubble pulsing driven by audio.
+    // Shrink/grow by modulating radius + slight anisotropic scaling.
+    float pulse = mix(0.75, 1.35, gAudio);
+    vec3 ep = p;
+    ep.y *= mix(1.20, 0.90, gAudio);
+    d = smin(d, length(ep) - (hs.x * 0.4 * pulse));
     
     d = smin(d, vine(bp+vec3(1.8,0.,0),15.,.8) );
     d = smin(d, vine(bp.zyx+vec3(0.,0,17.),20.,0.75) );
@@ -190,13 +227,20 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	vec2 p = fragCoord.xy/iResolution.xy-0.5;
     vec2 q = fragCoord.xy/iResolution.xy;
 	p.x*=iResolution.x/iResolution.y;
-    vec2 mo = iMouse.xy / iResolution.xy-.5;
-    mo = (mo==vec2(-.5))?mo=vec2(-0.1,0.07):mo;
+
+    // No mouse interaction: keep a stable camera with gentle procedural drift.
+    vec2 mo = vec2(-0.1, 0.07);
 	mo.x *= iResolution.x/iResolution.y;
+
+    // Compute audio once (used in map() during march).
+    gAudio = getAudioLevel();
 	
 	vec3 ro = vec3(smoothstep(0.,1.,tri(time*.6)*2.)*0.1, smoothstep(0.,1.,tri(time*1.2)*2.)*0.05, -time*0.6);
     ro.y -= height(ro.zx)+0.07;
     mo.x += smoothstep(0.7,1.,sin(time*.35))-1.5 - smoothstep(-.7,-1.,sin(time*.35));
+
+    // Small audio-driven camera “breath” (subtle; main reactivity is bubble pulse).
+    mo.y += (gAudio - 0.2) * 0.06;
  
     vec3 eyedir = normalize(vec3(cos(mo.x),mo.y*2.-0.2+sin(time*.75*1.37)*0.15,sin(mo.x)));
     vec3 rightdir = normalize(vec3(cos(mo.x+1.5708),0.,sin(mo.x+1.5708)));
