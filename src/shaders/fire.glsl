@@ -76,66 +76,49 @@ float snoise(vec2 v)
 
 // # Buffer A
 
-// Forked from "Draw with mouse [antialiased]"
-// https://www.shadertoy.com/view/wlKfDm
-// Customizations by Ruud Helderman
+// Feedback buffer that seeds the fire from audio (no mouse input).
+// Uses iChannel0 for feedback (previous frame buffer) and iChannel3 for audio.
 
-const float blur = 16.0;
-const float glow = 10.0;
-const float fade = 0.95;
-const vec2 rise = vec2(0, 4);
+const float fade = 0.96;
+const vec2 rise = vec2(0.0, 6.0);
 
-#define S(d,r,pix) smoothstep(blur, -blur, (d)/(pix)-(r))
-float line(vec2 p, vec2 a,vec2 b) {
-    p -= a, b -= a;
-    float h = clamp(dot(p, b) / dot(b, b), 0., 1.);
-    return length(p - b * h);
+float audioFFT(float x)
+{
+  // App convention: iChannel3 is bound to the 512x2 audio texture.
+  x = clamp(x, 0.0, 0.999);
+  return texture(iChannel3, vec2(x, 0.25)).r;
 }
 
+float audioVol()
+{
+  float a = 0.0;
+  const int N = 16;
+  for (int i = 0; i < N; i++) a += audioFFT(float(i) / float(N));
+  return a / float(N);
+}
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
-    vec2 ouv = (fragCoord.xy)/iResolution.y;
-       
-    vec2 pos1 = iMouse.xy/iResolution.y;
-    vec4 prevMouse = texture(iChannel1, ouv).rgba;
-    vec2 pos2 = prevMouse.rg;
-       
-    vec3 backCol = fade * texture(iChannel0, (fragCoord - rise)/iResolution.xy).rgb;
-                
-    float d = 0.;
-    if(prevMouse.w > 0.){
-        // d = clamp(drawLine(pos2, pos1, ouv, 3., 1.), 0., 1.);
-        d = S( line( ouv,pos2, pos1), 3., glow/iResolution.x);
-    }  
-    
-    d += max(0.0, 0.8 * texture(iChannel2, fragCoord/iResolution.xy).r - 0.3);
-    
-    // vec3 col = backCol + vec3(d);
-    
-    vec3 col = max(backCol, vec3(d));
-    
-    fragColor = vec4(col, 1.);    
-}
+  vec2 uv = fragCoord / iResolution.xy;
 
-// # Buffer B
+  float vol = audioVol();
+  float bass = pow(audioFFT(0.03), 2.0);
+  float mid  = pow(audioFFT(0.12), 2.0);
+  float energy = clamp(bass * 1.8 + mid * 1.2 + vol * 0.8, 0.0, 1.0);
 
-// Forked from "Draw with mouse [antialiased]"
-// https://www.shadertoy.com/view/wlKfDm
+  // Freeze the feedback advection + noise animation when silent.
+  float motion = smoothstep(0.02, 0.10, energy);
+  float fadeAmt = mix(0.995, fade, motion);
+  vec3 backCol = fadeAmt * texture(iChannel0, (fragCoord - rise * motion) / iResolution.xy).rgb;
 
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
-{
-    fragColor = vec4(iMouse.xy/iResolution.y,1.0,iMouse.z);    
-}
+  // Seed near the bottom, driven by audio.
+  float seedMask = smoothstep(0.16, 0.0, uv.y);
+  float n = snoise(uv * vec2(iResolution.x / iResolution.y, 1.0) * 7.0 + vec2(0.0, iTime * 1.3 * motion));
+  float spark = smoothstep(0.15, 1.0, n * 0.5 + 0.5);
+  float d = seedMask * (0.08 + 0.9 * spark) * (0.3 + 1.7 * energy);
 
-// # Buffer B
-
-// Forked from "Draw with mouse [antialiased]"
-// https://www.shadertoy.com/view/wlKfDm
-
-void mainImage( out vec4 fragColor, in vec2 fragCoord )
-{
-    fragColor = vec4(iMouse.xy/iResolution.y,1.0,iMouse.z);    
+  vec3 col = max(backCol, vec3(d));
+  fragColor = vec4(col, 1.0);
 }
 
 // # Image
@@ -149,14 +132,48 @@ const vec2 grain = vec2(9, 6);
 const float oven = 3.2;
 const vec2 rise = vec2(0, 8);
 const vec2 slide = vec2(0.5);
-const vec4 color = vec4(-1, -2, -3, 0);
+
+vec3 firePalette(float heat)
+{
+  heat = clamp(heat, 0.0, 1.0);
+  vec3 c1 = vec3(0.02, 0.0, 0.0);
+  vec3 c2 = vec3(0.85, 0.08, 0.02);
+  vec3 c3 = vec3(1.00, 0.55, 0.08);
+  // Keep the hottest range warm (yellow/orange) instead of blowing out to white.
+  vec3 c4 = vec3(1.00, 0.80, 0.25);
+
+  vec3 col = mix(c1, c2, smoothstep(0.00, 0.35, heat));
+  col = mix(col, c3, smoothstep(0.35, 0.75, heat));
+  // Delay the final blend so only extreme peaks reach c4.
+  col = mix(col, c4, smoothstep(0.86, 1.00, heat));
+  return col;
+}
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     vec2 uv = fragCoord / iResolution.xy;
-    vec2 pos = grain * fragCoord / iResolution.y - iTime * rise;
-    float octave1 = 0.2 * (snoise(pos + iTime * slide) + snoise(pos - iTime * slide));
+  float vol = texture(iChannel3, vec2(0.05, 0.25)).r;
+  float motion = smoothstep(0.02, 0.10, vol);
+
+  vec2 pos = grain * fragCoord / iResolution.y - (iTime * motion) * rise;
+  float octave1 = 0.2 * (snoise(pos + (iTime * motion) * slide) + snoise(pos - (iTime * motion) * slide));
     float octave2 = 0.9 * snoise(pos * 0.45);
-    float obstacles = 7.0 * texture(iChannel0, uv).r;
-    fragColor = octave1 + length(vec2(oven * (1.0 - uv.y) + octave2, obstacles)) + color;
+  float obstacles = texture(iChannel0, uv).r;
+
+  // Audio boosts intensity but keep it bounded to avoid white blowout.
+  float audioBoost = 0.6 + 2.2 * smoothstep(0.02, 0.18, vol);
+  float intensity = octave1 + length(vec2(oven * (1.0 - uv.y) + octave2, (4.0 + 6.0 * audioBoost) * obstacles));
+
+  // Convert to a "heat" value for palette mapping.
+  float heat = 0.0;
+  heat += obstacles * (0.9 + 0.9 * audioBoost);
+  heat += 0.12 * (octave1 + octave2);
+  heat += 0.10 * (1.0 - uv.y);
+  heat += 0.06 * smoothstep(1.5, 3.2, intensity);
+  heat = clamp(heat, 0.0, 1.0);
+
+  vec3 rgb = firePalette(heat);
+  // Mild exposure for punch, but keep hue.
+  rgb = 1.0 - exp(-rgb * (1.1 + 1.2 * heat));
+  fragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }

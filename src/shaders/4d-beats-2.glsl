@@ -7,11 +7,26 @@
 
 #define DISTORT 3.
 
+// App convention: iChannel0 is a 512x2 audio texture; FFT row sampled at y≈0.25
+float stAudio(float x) {
+  x = clamp(x, 0.0, 0.999);
+  return texture(iChannel0, vec2(x, 0.25)).r;
+}
+
+float stVol() {
+  float a = 0.0;
+  const int N = 12;
+  for (int i = 0; i < N; i++) a += stAudio(float(i) / float(N));
+  return a / float(N);
+}
+
 void mainImage(out vec4 O, vec2 C) {
   vec4 o,p,U=vec4(1,2,3,0);
   
   // Musical timing: beat-synced animation
-  float i,z,d,k,P,T=iChannelTime[0]*1.9,F=sqrt(fract(T)),t=floor(T)+F;
+  float vol = stVol();
+  float motion = smoothstep(0.02, 0.08, vol);
+  float i,z,d,k,P,T=iTime*1.9*motion,F=sqrt(fract(T)),t=floor(T)+F;
   
   // 2D rotation matrix that spins based on musical beats
   mat2 R=mat2(cos(t*.1+11.*U.wxzw));

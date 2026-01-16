@@ -316,6 +316,17 @@ function inferChannelHints(source) {
       continue
     }
 
+    // Some Shadertoy shaders sample a tiny repeating noise texture with a scaled
+    // screen-space coordinate like: vec2(k)*fragCoord/iResolution.yy + ...
+    // This commonly indicates NOISE rather than a full-resolution buffer.
+    const scaledFragCoordNoise = new RegExp(
+      `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,[\\s\\S]{0,260}?vec2\\s*\\([^)]*\\)\\s*\\*\\s*(?:fragCoord|gl_FragCoord\\.xy)[\\s\\S]{0,120}?/\\s*iResolution\\.(?:y|yy)\\b`
+    ).test(src)
+    if (scaledFragCoordNoise) {
+      hints[ch] = 'noise'
+      continue
+    }
+
     // BUFFER heuristics:
     // If the shader samples with screen-space coords (fragCoord/iResolution, uv derived from that)
     // it likely expects a full-resolution buffer.
@@ -1398,6 +1409,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     this._waveBytes = null
     this._audio = null // {tex,data,width,height}
     this._audioStartAt = performance.now()
+    this._wasPlaying = false
 
     // Time
     this._startAt = performance.now()
@@ -1674,8 +1686,8 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     // If there are multiple Image sections, we just take the last one.
     const imagePass = imagePasses.length ? imagePasses[imagePasses.length - 1] : { name: 'Image', code: '' }
 
-    // Build buffer passes (A->iChannel1, B->iChannel2, C->iChannel3)
-    for (let i = 0; i < Math.min(3, bufferPasses.length); i++) {
+    // Build buffer passes (Buffer A..D)
+    for (let i = 0; i < Math.min(4, bufferPasses.length); i++) {
       const pass = bufferPasses[i]
       const chanIndex = i + 1
 
@@ -1825,7 +1837,30 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     }
 
     const isPlaying = !!App.audioManager?.isPlaying || !!App.audioManager?.isUsingMicrophone
-    if (!isPlaying || !this._analyser || !this._fftBytes || !this._waveBytes) return
+
+    // If audio is not active, clear the texture so shaders truly see silence.
+    // Many shaders gate behavior by sampling iChannel0 or checking iChannelTime[0].
+    if (!isPlaying || !this._analyser || !this._fftBytes || !this._waveBytes) {
+      if (this._wasPlaying && this._audio?.data && this._audio?.tex) {
+        const data = this._audio.data
+        // Zero RGB; keep alpha = 255.
+        for (let i = 0; i < data.length; i += 4) {
+          data[i + 0] = 0
+          data[i + 1] = 0
+          data[i + 2] = 0
+          data[i + 3] = 255
+        }
+        this._audio.tex.needsUpdate = true
+      }
+      this._wasPlaying = false
+      return
+    }
+
+    // Transition: (re)start audio time when playback resumes.
+    if (!this._wasPlaying) {
+      this._audioStartAt = performance.now()
+    }
+    this._wasPlaying = true
 
     this._analyser.getByteFrequencyData(this._fftBytes)
     this._analyser.getByteTimeDomainData(this._waveBytes)
@@ -1882,7 +1917,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       iDate.set(d.getFullYear(), d.getMonth() + 1, d.getDate(), seconds)
     }
 
-    const audioTime = (now - this._audioStartAt) / 1000
+    const audioTime = this._wasPlaying ? (now - this._audioStartAt) / 1000 : 0
 
     // Render buffers sequentially
     for (let i = 0; i < this._passes.length; i++) {
@@ -1946,13 +1981,13 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     mat.uniforms.iChannelTime.value[3] = t
   }
 
-  _getBufferTexture(channelIndex /* 1..3 */) {
+  _getBufferTexture(channelIndex /* 1..4 */) {
     const pass = this._passes[channelIndex - 1]
     if (!pass || !pass.rts) return this._blackTex
     return pass.rts[pass.ping].texture
   }
 
-  _getBufferPrevTexture(channelIndex /* 1..3 */) {
+  _getBufferPrevTexture(channelIndex /* 1..4 */) {
     const pass = this._passes[channelIndex - 1]
     if (!pass || !pass.rts) return this._blackTex
     const prevIndex = pass.ping === 0 ? 1 : 0
@@ -2002,6 +2037,10 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     const hints = pass.channelHints || ['unknown', 'unknown', 'unknown', 'unknown']
     const types = pass.channelTypes || ['sampler2D', 'sampler2D', 'sampler2D', 'sampler2D']
 
+    // Reduction-chain buffers often only use iChannel0 and expect it to be the previous
+    // buffer output (e.g., B reads A, C reads B, D reads C).
+    const onlyUsesChannel0 = !!(pass.usedChannels?.[0] && !pass.usedChannels?.[1] && !pass.usedChannels?.[2] && !pass.usedChannels?.[3])
+
     for (let ch = 0; ch < 4; ch++) {
       if (!mat.uniforms[`iChannel${ch}`]) continue
 
@@ -2018,6 +2057,31 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       }
       if (hint === 'audio') {
         this._setChannel(mat, ch, this._audio?.tex || this._blackTex, this._audio?.tex ? 'audio' : 'black')
+        continue
+      }
+
+      // Explicit buffer hints.
+      // - Buffer A commonly uses iChannel1 for self-feedback.
+      // - Reduction-chain buffers (B/C/D) often use only iChannel0 for previous output.
+      if (hint === 'buffer') {
+        if (pass.chanIndex === 1 && ch === 1) {
+          this._setChannel(mat, ch, selfPrevTex || this._blackTex, selfPrevTex ? 'buffer' : 'black')
+          continue
+        }
+
+        if (onlyUsesChannel0 && pass.chanIndex > 1 && ch === 0) {
+          const prevBufIndex = pass.chanIndex - 1
+          const tex = this._getBufferTexture(prevBufIndex)
+          this._setChannel(mat, ch, tex, tex !== this._blackTex ? 'buffer' : 'black')
+          continue
+        }
+      }
+
+      // Implicit reduction-chain fallback (helps when hints don't detect buffer usage).
+      if (onlyUsesChannel0 && pass.chanIndex > 1 && ch === 0) {
+        const prevBufIndex = pass.chanIndex - 1
+        const tex = this._getBufferTexture(prevBufIndex)
+        this._setChannel(mat, ch, tex, tex !== this._blackTex ? 'buffer' : 'black')
         continue
       }
 
@@ -2095,8 +2159,8 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
         continue
       }
 
-      // Channels 0..2 map to buffers A/B/C when present
-      if (ch <= 2) {
+      // Channels 1..3 map to buffers B/C/D when present (iChannel0 is handled above)
+      if (ch >= 1 && ch <= 3) {
         const bufIndex = ch + 1
         const bufTex = this._getBufferTexture(bufIndex)
         if (bufTex !== this._blackTex) {
