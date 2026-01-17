@@ -165,6 +165,9 @@ vec3 renderAt(vec2 fragCoord) {
   vec2 uv = fc.xy / iResolution.xy;
   vec3 col = vec3(0.0);
   
+  // Distortion vector for floor reflections, shared with spectrum
+  vec2 distort = vec2(0.0);
+
   // --- CONFIG ---
   float horizon = 0.40;
   
@@ -195,7 +198,7 @@ vec3 renderAt(vec2 fragCoord) {
       
       // -- Reflection Logic --
       // Apply distortion from slate normal
-      vec2 distort = N.xy * (100.0 * (1.0 - dy * 2.0)); 
+      distort = N.xy * (100.0 * (1.0 - dy * 2.0)); 
 
       // Calculate mirrored position relative to the circle's contact point (circleBottom)
       // We mirror the pixel Y coordinate around the contact line.
@@ -305,7 +308,9 @@ vec3 renderAt(vec2 fragCoord) {
       radius = min(radius, min(halfSize.x, halfSize.y));
 
       float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
-      float distDn = sdRoundBox(vec2(cx, cyDn), halfSize, radius);
+      
+      // Apply water distortion to the reflection lookup
+      float distDn = sdRoundBox(vec2(cx, cyDn) + distort, halfSize, radius);
 
       float aa = 2.0;
       float fillUp = smoothstep(aa, -aa, distUp);
