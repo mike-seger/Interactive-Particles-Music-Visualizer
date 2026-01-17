@@ -87,41 +87,46 @@ float getSlateHeight(vec2 uv) {
    float time = iTime * 0.25; 
    
    // --- Surf / Random Wave Logic ---
-   // Direction: Bottom-Left to Top-Right
-   vec2 dir = normalize(vec2(1.0, 0.7)); 
-   float d = dot(uv, dir);
-   
-   // Irregular timing (waves come in sets)
-   // Modulate time to vary spacing and speed
-   // Reduced speed (0.2x)
-   float tSurf = iTime * 0.2; 
-   
-   // Organic warping (Breaks straight lines)
-   // Distort the domain to bend the wavefronts
-   float warp = noise(uv * 0.6 + vec2(tSurf * 0.5)) * 3.5;
-   float dWarped = d + warp;
+   float tSurf = iTime * 0.2; // Reduced speed
 
-   // Irregular wave train (Interference pattern for "sets")
-   // Combine varying frequencies to break the regular cadence
-   float surge = tSurf; 
-   float w1 = sin(dWarped * 0.8 - surge * 3.0);
-   float w2 = sin(dWarped * 0.53 - surge * 2.1 + 2.0); // mismatched freq
-   
-   // Composite wave: Constructive interference creates "sets"
-   float surf = (w1 + 0.8 * w2) * 0.6; // Scale to ~ -1..1 range
-   
-   // Sharpen peaks: High threshold ensures only strongest overlaps are visible
-   // This results in sparse waves (approx 1-2 active sets)
-   surf = exp(surf * 5.0 - 4.0); 
-   
-   // Doubled amplitude
-   float swell = surf * 24.0;
+   // 3 Distinct Wave Components with varying angles (Bottom-Left to Top-Right general flow)
+   // Wave 1: Main diagonal swell
+   vec2 d1 = normalize(vec2(1.0, 0.4));
+   float p1 = dot(uv, d1) + noise(uv * 0.5 + tSurf)*0.5; // warped
+   float w1 = sin(p1 * 0.9 - tSurf * 3.2);
 
+   // Wave 2: Steeper angle
+   vec2 d2 = normalize(vec2(0.4, 1.0));
+   float p2 = dot(uv, d2) + noise(uv * 0.6 - tSurf)*0.5;
+   float w2 = sin(p2 * 1.1 - tSurf * 2.8 + 1.0);
+
+   // Wave 3: Shallower angle
+   vec2 d3 = normalize(vec2(1.0, 0.1));
+   float p3 = dot(uv, d3) + noise(uv * 0.7 + tSurf*0.8)*0.5;
+   float w3 = sin(p3 * 0.8 - tSurf * 3.5 + 2.0);
+
+   // Composite: Interference of 3 waves
+   // Averaging them keeps range checkable
+   float composite = (w1 + w2 + w3) * 0.333; 
+
+   // Peak sharpening:
+   // Lower threshold slightly to allow more peaks (up to 3 active)
+   // exp(composite * Sharpness - Threshold)
+   float surf = exp(composite * 4.5 - 2.5); 
+
+   // Amplitude
+   float swell = surf * 16.0; // Slightly reduced max amp to prevent clipping/artifacts
+
+   // Composite Height:
+   // Add FBM *on top* of swell, but also scale FBM by swell derivative approximation?
+   // Actually, just simple addition is correct for height maps.
+   // To ensure FBM is visible, we boost it slightly.
    float h = swell;
-   // Add existing detail layers
-   h += fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
-   h += 0.5 * fbm(uv * 12.0 - vec2(time * 0.3));
-   h += 0.25 * fbm(uv * 48.0 + vec2(0.0, time * 0.1));
+   
+   // Apply FBM detail
+   h += 1.2 * fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
+   h += 0.6 * fbm(uv * 12.0 - vec2(time * 0.3));
+   h += 0.3 * fbm(uv * 48.0 + vec2(0.0, time * 0.1));
    return h;
 }
 
