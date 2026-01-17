@@ -24,6 +24,7 @@ export default class KevsPlasma {
         this.midReactivity = 0;
         this.highReactivity = 0;
         this.animationMomentum = 1.0; // Gradually decreases when no audio
+        this.beatPulse = 0.0;
         
         this.palettes = [];
         this.generatePalettes();
@@ -106,6 +107,10 @@ export default class KevsPlasma {
             this.bassReactivity = frequencies.bass || 0;
             this.midReactivity = frequencies.mid || 0;
             this.highReactivity = frequencies.high || 0;
+
+            // Quick beat envelope for visible "breathing".
+            if (isBeat) this.beatPulse = 1.0;
+            else this.beatPulse = Math.max(0.0, this.beatPulse * 0.88 - 0.02);
             
             // Calculate overall audio intensity
             const audioIntensity = (this.bassReactivity + this.midReactivity + this.highReactivity) / 3;
@@ -130,6 +135,7 @@ export default class KevsPlasma {
             this.animationMomentum = Math.max(0.0, this.animationMomentum - 0.01);
             this.cycleSpeed = 0.01 * this.animationMomentum;
             this.timeFunction = 66.67 / Math.max(0.1, this.animationMomentum);
+            this.beatPulse = Math.max(0.0, this.beatPulse * 0.88 - 0.02);
         }
         
         this.render();
@@ -141,8 +147,10 @@ export default class KevsPlasma {
         const pw = this.plasmaDensity;
         const ph = Math.floor(pw * (h / w));
         
-        // Bass affects blob size (up to 3% scaling)
-        const sizeScale = 1.0 + (this.bassReactivity * 0.03);
+        // Bass + beat affects bubble size (keep subtle so more individual bubbles remain visible)
+        const bass = Math.max(0, this.bassReactivity);
+        const bassPow = Math.pow(Math.min(1.0, bass), 1.35);
+        const sizeScale = 1.0 + (bassPow * 0.06) + (this.beatPulse * 0.04);
         const vpx = (w / pw) * sizeScale;  // virtual pixel width
         const vpy = (h / ph) * sizeScale;  // virtual pixel height
         
@@ -156,6 +164,9 @@ export default class KevsPlasma {
         const randomOffset2 = Math.cos(time * 0.4) * 30;
         const randomOffset3 = Math.sin(time * 0.5) * 40;
         const colorNoise = Math.sin(time * 2.1) * 20;
+
+        // Bass influences bubble size mostly via slight frequency change (avoid global zoom)
+        const freqScale = 1.0 - 0.15 * bassPow;
         
         const dist = (a, b, c, d) => {
             return Math.sqrt((a - c) * (a - c) + (b - d) * (b - d));
@@ -171,10 +182,10 @@ export default class KevsPlasma {
                     ) * 32;
                 case 1:
                     return (
-                        128 + 128 * Math.sin(x * 0.0625 + randomOffset1 * 0.01) +
-                        128 + 128 * Math.sin(y * 0.03125 + randomOffset2 * 0.01) +
-                        128 + 128 * Math.sin(dist(x + time + randomOffset3, y - time, w, h) * 0.125) +
-                        128 + 128 * Math.sin(Math.sqrt(x * x + y * y) * 0.125 + time * 0.2)
+                        128 + 128 * Math.sin(x * (0.0625 * freqScale) + randomOffset1 * 0.01) +
+                        128 + 128 * Math.sin(y * (0.03125 * freqScale) + randomOffset2 * 0.01) +
+                        128 + 128 * Math.sin(dist(x + time + randomOffset3, y - time, w, h) * (0.125 * freqScale)) +
+                        128 + 128 * Math.sin(Math.sqrt(x * x + y * y) * (0.125 * freqScale) + time * (0.2 + 0.6*bassPow))
                     ) * 0.25 + colorNoise;
                 default:
                     return 0;

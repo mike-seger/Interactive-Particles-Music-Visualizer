@@ -11,6 +11,20 @@ vec2 z,v,e=vec2(.0035,-.0035);float t,tt,g,g2; vec3 np,bp,pp,po,no,al,ld;
 float bo(vec3 p,vec3 r){p=abs(p)-r;return max(max(p.x,p.y),p.z);}
 mat2 r2(float r){return mat2(cos(r),sin(r),-sin(r),cos(r));}
 
+float sampleFFT(float x)
+{
+  return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioBass()
+{
+  float b = 0.0;
+  b = max(b, sampleFFT(0.015));
+  b = max(b, sampleFFT(0.030));
+  b = max(b, sampleFFT(0.060));
+  return b;
+}
+
 // Shadertoy version expects iChannel0 to be a random/noise texture.
 // In this app, iChannel0 is often bound to the 512x2 audio texture, which makes
 // the original texture-based noise return almost-constant values (black output).
@@ -105,12 +119,18 @@ vec2 tr( vec3 ro, vec3 rd )
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
   vec2 uv=(fragCoord.xy/iResolution.xy-0.5)/vec2(iResolution.y/iResolution.x,1);
-  tt=mod(iTime,62.82);
-  vec3 ro=mix(vec3(sin(tt*.5)*5.,-cos(tt*.5)*50.,5.),vec3(cos(tt*.5-.5)*5.,35.,sin(tt*.5-.5)*45.),ceil(sin(tt*.5))),
+  float beat = pow(audioBass(), 2.2);
+  float ttCam = mod(iTime,62.82);
+  // Drive sweep time strongly with audio, but keep camera time stable.
+  tt = mod(iTime * (1.0 + 2.2*beat), 62.82);
+  float lightBoost = 0.65 + 2.2*beat;
+  float beamBoost = 0.70 + 4.0*beat;
+
+  vec3 ro=mix(vec3(sin(ttCam*.5)*5.,-cos(ttCam*.5)*50.,5.),vec3(cos(ttCam*.5-.5)*5.,35.,sin(ttCam*.5-.5)*45.),ceil(sin(ttCam*.5))),
   cw=normalize(vec3(0)-ro), cu=normalize(cross(cw,normalize(vec3(0,1,0)))),cv=normalize(cross(cu,cw)),
   rd=mat3(cu,cv,cw)*normalize(vec3(uv,.5)),co,fo;
-  ld=normalize(vec3(.2,.5,.0));
-  v=vec2(abs(atan(rd.x,rd.z)),rd.y-tt*.2);  
+  ld=normalize(vec3(.2,.5,.0) + vec3(0.0, 0.35*beat, 0.15*beat));
+  v=vec2(abs(atan(rd.x,rd.z)),rd.y-tt*.2*(1.0+2.0*beat));  
   co=fo=(vec3(.1)-length(uv)*.1-rd.y*.1)*3.*texNoise(v*.4).r;
   z=tr(ro,rd);t=z.x;
   if(z.y>0.){ 
@@ -122,8 +142,15 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     if(z.y>6.) al=vec3(.7,.2,.1);
     float dif=max(0.,dot(no,ld)),
     fr=pow(1.+dot(no,rd),4.);    
+    dif *= lightBoost;
     co=mix(mix(vec3(.8),vec3(1),abs(rd))*al*(a(.1)*a(.3)+.2)*(dif+s(25.)),fo,min(fr,.2));
     co=mix(fo,co,exp(-.000005*t*t*t)); 
-  }pp=co+g*.2*mix(vec3(.7,.1,0),vec3(.5,.2,.1),.5+.5*sin(np.z*.2));
-  fragColor = vec4(pow(pp+g2*.2*vec3(.1,.2,.5),vec3(0.55)),1);
+  }
+  // Boost the 6 beams intensity with audio
+  g *= beamBoost;
+  g2 *= beamBoost;
+  pp=co+(g*.2*mix(vec3(.7,.1,0),vec3(.5,.2,.1),.5+.5*sin(np.z*.2)))*lightBoost;
+  vec3 outCol = pow(pp+g2*.2*vec3(.1,.2,.5)*lightBoost,vec3(0.55));
+  outCol *= 0.90 + 0.65*beat;
+  fragColor = vec4(outCol,1);
 } 
