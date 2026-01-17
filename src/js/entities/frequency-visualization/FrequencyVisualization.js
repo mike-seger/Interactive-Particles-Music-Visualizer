@@ -75,12 +75,15 @@ vec3 renderAt(vec2 fragCoord) {
   float binsAll = max(1.0, floor(uVBars + 0.5));
   float skip = max(0.0, floor(uSkipLowBars + 0.5));
   float bins = max(1.0, binsAll - skip);
+  // Allow min 0.1 spacing
   float fill = clamp(uHSpacing, 0.10, 0.98);
 
-  // Choose an integer pitch in pixels so the grid is perfectly regular.
-  float pitch = max(1.0, floor(iResolution.x / bins));
+  float targetWidth = floor(iResolution.x * 0.55);
+  float pitch = max(1.0, floor(targetWidth / bins));
+  
   float totalW = pitch * bins;
-  float xOffset = floor((iResolution.x - totalW) * 0.5);
+  float rightMargin = floor(iResolution.x * 0.04);
+  float xOffset = floor(iResolution.x - totalW - rightMargin);
   float xLocal = fc.x - xOffset;
 
   // Outside the bar area.
@@ -92,28 +95,33 @@ vec3 renderAt(vec2 fragCoord) {
   float localX = xLocal - binIdx * pitch;
 
   // Keep a visible gap between bars (AE has distinct columns).
-  float pad = max(2.0, floor((pitch * (1.0 - fill)) * 0.5));
+  // Allow tighter gaps (1px pad = 2px total gap).
+  float pad = max(1.0, floor((pitch * (1.0 - fill)) * 0.5));
   float barW = max(1.0, (pitch - 2.0 * pad));
 
   // Bin position across visible bars (0..1).
   float x = (binIdx + 0.5) / bins;
 
-  // Cut off the highest portion of bars.
-  if (x > clamp(uCutHi, 0.0, 1.0)) {
-    return vec3(0.0);
-  }
-
-  // Compress highs so the top end effectively has fewer unique bars (AE-like).
+  // Map visual X (0..1) to freq range (start..cutHi) to eliminate empty right-side gap.
+  // This ensures the visual block is fully filled with the selected freq band.
+  float uStart = skip / max(1.0, binsAll);
+  float uEnd = clamp(uCutHi, 0.0, 1.0);
+  
+  // AE-like non-linear distribution (logGamma) applied to the mapping.
   float logGamma = 1.55;
-  float sampleX = pow(clamp(x, 0.0, 1.0), logGamma);
+  float t = pow(clamp(x, 0.0, 1.0), logGamma);
+  float sampleX = mix(uStart, uEnd, t);
+  
   float fSample = texture2D(iChannel0, vec2(sampleX, 0.25)).x;
 
   // Bar baseline and height in pixels (closer to AE reference: lower + shorter).
-  float baseY = floor(iResolution.y * 0.14);
+  // Baseline raised to 30% from bottom.
+  float baseY = floor(iResolution.y * 0.30);
   float maxH = floor(iResolution.y * 0.26);
 
   float s = pow(clamp(fSample, 0.0, 1.0), 1.10);
-  float heightPx = floor(maxH * s);
+  // Reduce max height scalar to avoid massive bass blocks.
+  float heightPx = floor((maxH * 0.9) * s);
 
   // Minimum bar height is a square (use bar width as min height).
   float minHPx = barW;
@@ -129,26 +137,41 @@ vec3 renderAt(vec2 fragCoord) {
   float cyDn = (yLocalDown - heightPx * 0.5);
 
   vec2 halfSize = vec2(barW * 0.5, max(0.5, heightPx * 0.5));
-  // Larger corner radius (AE-like).
-  float radius = min(8.0, 0.85 * barW);
+  // Keep roundness high, even for thin bars -> capsule look.
+  float radius = min(8.0, 0.5 * barW);
   radius = min(radius, min(halfSize.x, halfSize.y));
 
   float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
   float distDn = sdRoundBox(vec2(cx, cyDn), halfSize, radius);
 
-  // Constant AA width (WebGL1-safe).
+  // Soft edges (AE-like blur).
+  // Reduced AA width to bring back gaps.
   float aa = 2.0;
   float fillUp = smoothstep(aa, -aa, distUp);
   float fillDn = smoothstep(aa, -aa, distDn);
 
-  // Glow: tight edge glow + wider soft halo (AE-like unsharp/foggy look).
-  float dUp = max(distUp, 0.0);
-  float dDn = max(distDn, 0.0);
-  // Tight glow near edge + medium halo + very soft outer fog + ultra-soft bloom.
-  float glowUp = 0.45 * exp(-dUp * 0.32) + 0.30 * exp(-dUp * 0.09) + 0.22 * exp(-dUp * 0.03) + 0.12 * exp(-dUp * 0.012);
-  float glowDn = 0.40 * exp(-dDn * 0.34) + 0.26 * exp(-dDn * 0.10) + 0.18 * exp(-dDn * 0.035) + 0.10 * exp(-dDn * 0.014);
+  // Glow: limit to close proximity of the bars.
+  // Anisotropic bloom: Horizontal only (spreads used X distance, restricted Y distance).
+  // Calculate axis-aligned distances outside the box for glow shaping.
+  vec2 qUp = abs(vec2(cx, cyUp)) - halfSize;
+  float dxUp = max(qUp.x, 0.0);
+  float dyUp = max(qUp.y, 0.0);
+  
+  vec2 qDn = abs(vec2(cx, cyDn)) - halfSize;
+  float dxDn = max(qDn.x, 0.0);
+  float dyDn = max(qDn.y, 0.0);
 
-  float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.22));
+  // Glow falls off very fast on X to protect the black gaps.
+  // X decay coeff increased to 3.0 to ensure gaps remain black.
+  float glowUp = 1.0 * exp(-dxUp * 3.0 - dyUp * 2.0) + 0.5 * exp(-dxUp * 4.0 - dyUp * 3.0);
+  float glowDn = 0.8 * exp(-dxDn * 3.0 - dyDn * 2.0) + 0.4 * exp(-dxDn * 4.0 - dyDn * 3.0);
+  
+  // Make reflections much more subtle and blurry
+  float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.08));
+  
+  // Reflection blur simulation: increase AA for the reflection part
+  float aaRefl = 6.0;
+  fillDn = smoothstep(aaRefl, -aaRefl, distDn);
 
   // Palette: AE-like red→orange→yellow ramp, shaped with a non-linear curve.
   // The ramp is controlled in JS via uColorStart/uColorEnd/uColorGamma.
@@ -176,13 +199,17 @@ vec3 renderAt(vec2 fragCoord) {
   // Keep bar tops the same hue (no white caps). Only subtle brightness lift.
   float yInBar = (heightPx > 0.0) ? clamp(yLocalUp / max(1.0, heightPx), 0.0, 1.0) : 0.0;
   float tip = smoothstep(0.92, 1.0, yInBar);
-  vec3 tipCol = min(vec3(1.0), baseCol * (1.0 + 0.10 * tip));
+  // Add boost for bloom core
+  vec3 tipCol = min(vec3(1.0), baseCol * (1.2 + 0.30 * tip));
 
   vec3 col = vec3(0.0);
-  col += tipCol * fillUp;
-  col += tipCol * (0.65 * glowUp);
+  // Stronger core
+  col += tipCol * fillUp * 0.95;
+  // Tighter glow
+  col += tipCol * (1.1 * glowUp);
+  
   col += tipCol * (0.18 * fillDn * reflFade);
-  col += tipCol * (0.12 * glowDn * reflFade);
+  col += tipCol * (0.22 * glowDn * reflFade); // Increased reflection glow
 
   return col;
 }
@@ -219,7 +246,8 @@ export default class FrequencyVisualization extends THREE.Object3D {
     // Visual bins (bars) count.
     this._vBars = 140
     // Bar fill ratio (0..1). Lower means thinner bars / larger gaps.
-    this._hSpacing = 0.92
+    // AE reference shows much larger gaps (thin bars).
+    this._hSpacing = 0.40
 
     // Cutoff for the highest frequency bars (0..1).
     this._cutHi = 0.80
@@ -276,15 +304,15 @@ export default class FrequencyVisualization extends THREE.Object3D {
         uCutHi: { value: this._cutHi },
 
         // Color ramp (tweak to match AE reference)
-        // Yellow should be fully reached by ~65% across.
-        uColorStart: { value: 0.32 },
-        uColorEnd: { value: 0.65 },
-        uColorGamma: { value: 1.10 },
-        // Yellow influence begins around ~40% (shifted left).
-        uYellowStart: { value: 0.40 },
+        // Yellow should be fully reached later to allow orange to breathe.
+        uColorStart: { value: 0.15 },
+        uColorEnd: { value: 0.85 },
+        uColorGamma: { value: 1.60 },
+        // Yellow influence begins later.
+        uYellowStart: { value: 0.55 },
 
         // Drop the first 2 low-frequency bars.
-        uSkipLowBars: { value: 2.0 },
+        uSkipLowBars: { value: 0.0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -313,16 +341,20 @@ export default class FrequencyVisualization extends THREE.Object3D {
       const available = this._analyser.frequencyBinCount || 0
 
       // Choose a bar count that keeps bars thin/consistent in pixels.
+      // But now we try to fit into 55% of the viewport width.
       const viewportW = Math.max(1, window.innerWidth || 1)
-      const desiredPitchPx = 7 // ~AE look: narrow columns
-      const fromViewport = Math.floor(viewportW / desiredPitchPx)
+      const targetW = viewportW * 0.55
+      const desiredPitchPx = 6 // Slightly thinner to fit more bars in 55%
+      const fromViewport = Math.floor(targetW / desiredPitchPx)
 
       // Cap by analyser bins and maxBars.
       const upper = Math.max(1, Math.min(maxBars, available || maxBars))
       this._vBars = Math.max(40, Math.min(upper, fromViewport))
 
       // Slightly thinner bars when there are fewer bins.
-      this._hSpacing = this._vBars < 90 ? 0.78 : 0.92
+      // this._hSpacing = this._vBars < 90 ? 0.78 : 0.92
+      // Using fixed 0.50 for distinct detached bars.
+      this._hSpacing = 0.50
 
       if (this._mat?.uniforms?.uVBars) this._mat.uniforms.uVBars.value = this._vBars
       if (this._mat?.uniforms?.uHSpacing) this._mat.uniforms.uHSpacing.value = this._hSpacing

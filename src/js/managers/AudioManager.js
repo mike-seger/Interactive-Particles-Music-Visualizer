@@ -33,7 +33,7 @@ export default class AudioManager {
       audioElement.src = this.song.url
       audioElement.crossOrigin = 'anonymous'
       audioElement.loop = true
-      audioElement.volume = 0.5
+      audioElement.volume = 1.0
       
       // Create Web Audio API context
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)()

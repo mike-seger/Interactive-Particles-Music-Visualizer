@@ -282,6 +282,32 @@
           }
         }
       };
+
+      window.AnalyserNode.prototype.getFloatFrequencyData = function(array) {
+        // Use the most current data source available
+        const activeData = (window.App && window.App.audioManager && window.App.audioManager.audioAnalyser && window.App.audioManager.audioAnalyser.data)
+          ? window.App.audioManager.audioAnalyser.data
+          : bridgeDataArray;
+
+        if (activeData && array) {
+          const length = Math.min(activeData.length, array.length);
+          // Convert byte (0..255) to float dB (typically -100..-30)
+          // Optimization: If minDb is default (-100), lift it to -90.
+          // This ensures that low-amplitude movements (visible in byte mode) 
+          // don't get gated out by visualizers with -90dB thresholds.
+          let minDb = this.minDecibels !== undefined ? this.minDecibels : -100;
+          if (minDb < -90) minDb = -90;
+          
+          const maxDb = this.maxDecibels !== undefined ? this.maxDecibels : -30;
+          const range = maxDb - minDb;
+          
+          for (let i = 0; i < length; i++) {
+            // activeData is 0-255 representing signal strength
+            const norm = activeData[i] / 255;
+            array[i] = minDb + (norm * range);
+          }
+        }
+      };
       
       console.log('[Visualizer] ✓ Patched AnalyserNode.getByteFrequencyData');
     }
