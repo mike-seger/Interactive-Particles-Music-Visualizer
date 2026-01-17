@@ -4,6 +4,21 @@ float rand(vec2 co){
     return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
 }
 
+float sampleFFT(float x)
+{
+  return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+  float a = 0.0;
+  a += sampleFFT(0.02);
+  a += sampleFFT(0.06);
+  a += sampleFFT(0.12);
+  a += sampleFFT(0.25);
+  return a * 0.25;
+}
+
 float hermite(float t)
 {
   return t * t * (3.0 - 2.0 * t);
@@ -43,12 +58,15 @@ float pnoise(vec2 co, float freq, int steps, float persistence)
 }
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
+	float a = audioLevel();
+	float ap = pow(a, 1.5);
+
 	vec2 uv = fragCoord.xy / iResolution.xy;
     float gradient = 1.0 - uv.y;
-    float gradientStep = 0.2;
+  float gradientStep = 0.2 + 0.08*ap;
     
     vec2 pos = fragCoord.xy / iResolution.x;
-    pos.y -= iTime * 0.3125;
+    pos.y -= iTime * (0.3125 + 0.8*ap);
     
     vec4 brighterColor = vec4(1.0, 0.65, 0.1, 0.25);
     vec4 darkerColor = vec4(1.0, 0.0, 0.15, 0.0625);
@@ -65,6 +83,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
     
     color = mix(color, middleColor, darkerColorStep - middleColorStep);
     color = mix(vec4(0.0), color, firstStep);
+  color.rgb *= 0.9 + 2.0*ap;
 	fragColor = color;
 }
 

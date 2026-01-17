@@ -36,6 +36,21 @@ float sat(float v){
   return clamp(v,0.,1.);
 }
 
+float sampleFFT(float x)
+{
+  return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+  float a = 0.0;
+  a += sampleFFT(0.02);
+  a += sampleFFT(0.06);
+  a += sampleFFT(0.12);
+  a += sampleFFT(0.25);
+  return a * 0.25;
+}
+
 vec3 nrand3( vec2 co )
 {
     vec3 a = fract( cos( co.x*8.3e-3 + co.y )*vec3(1.3e5, 4.7e5, 2.9e5) );
@@ -511,9 +526,13 @@ vec3 draw_planets(vec2 uv,vec3 v,vec3 planet_to_be_attacked_position,float plane
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
+  float a = audioLevel();
+  float ap = pow(a, 1.4);
+  float fireBoost = 1.0 + 1.8*ap;
+
   vec2 uv=fragCoord.xy/resolution.xy-.5;
   uv.y*=resolution.y/resolution.x;
-  vec3 v=starnest(uv);
+  vec3 v=starnest(uv) * (1.0 + 0.6*ap);
 
   vec3 planet_to_be_attacked_position=vec3(cos(time*0.6),sin(time*0.6),0.)*0.25;  
   float planet_to_be_attacked_radius=.05;
@@ -535,7 +554,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     float rocket_offset=float(i)*0.5;
     vec3 fireball_traectory=dir_fireball*dist_fireball*sin(mod(time*1.1+rocket_offset,3.14159*0.5));
     vec3 fireball_pos=attacker_1_pos+fireball_traectory;
-    v+=fireball(uv,time*4.,fireball_pos,0.035+0.155*pow(clamp(sin(mod(time*1.1+rocket_offset,3.14159*0.5))-0.9,0.,1.),0.25));
+    v+=fireball(uv,time*4.,fireball_pos,(0.035+0.155*pow(clamp(sin(mod(time*1.1+rocket_offset,3.14159*0.5))-0.9,0.,1.),0.25))*fireBoost);
   }
 
   #define NUM_GUIDED_ROCKETS 7
@@ -553,8 +572,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     vec2 rocket_pos=planet_to_be_attacked_position.xy+0.87*(ndir*dist+left_dir*sin_amp*sin(pow(t,0.25)*3.14159))*t;
     vec2 rocket_pos_next=planet_to_be_attacked_position.xy+0.87*(ndir*dist+left_dir*sin_amp*sin(pow((t+0.01),0.25)*3.14159))*(t+0.01);
     vec2 dir_d_rocket_pos=normalize(rocket_pos_next-rocket_pos);
-    v+=3.*flame_rocket(uv,rocket_pos.xy,0.075,ndir,dir_d_rocket_pos);
-    v+=fireball(uv,time*4.,vec3(rocket_pos,0.),0.015+0.155*pow(clamp(sin(t-0.87),0.,1.),0.25));      
+    v+=3.*flame_rocket(uv,rocket_pos.xy,0.075,ndir,dir_d_rocket_pos) * fireBoost;
+    v+=fireball(uv,time*4.,vec3(rocket_pos,0.),(0.015+0.155*pow(clamp(sin(t-0.87),0.,1.),0.25))*fireBoost);      
     float laser_attack_time=sat(mod(time*0.05,1.)-0.90);
     vec2 laser_target_xy=attacker_1_pos.xy+(planet_to_be_attacked_position.xy-attacker_1_pos.xy)*sat(1.*laser_attack_time)*0.7;
     v+=vec3(0.5,1.,0.1)*laser(uv,planet_to_be_attacked_position.xy,laser_target_xy.xy,0.002)*sat(10.*laser_attack_time);
@@ -563,5 +582,6 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
   v+=clamp(eye(uv-attacker_1_pos.xy,uv,0.075).rgb,0.,1.);
   v+=clamp(0.2*worly_star_blue(attacker_1_pos.xy,uv,uv,0.1,time),0.,1.);
   
-  fragColor = vec4(v,1.);
+  v *= 1.0 + 0.8*ap;
+  fragColor = vec4(clamp(v, 0.0, 1.0), 1.);
 }

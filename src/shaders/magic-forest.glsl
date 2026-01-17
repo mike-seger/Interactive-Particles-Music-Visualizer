@@ -34,6 +34,97 @@ const int MUSHROOMS = 3;
 const int FLIES = 4;
 
 float time;
+float gAudio;
+float gBeat;
+
+float sampleFFT(float x)
+{
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+    float a = 0.0;
+    a += sampleFFT(0.02);
+    a += sampleFFT(0.06);
+    a += sampleFFT(0.12);
+    a += sampleFFT(0.25);
+    return a * 0.25;
+}
+
+float audioBeat()
+{
+    // Emphasize bass/low-mids for stronger synchronized pulsing.
+    float b = 0.0;
+    b = max(b, sampleFFT(0.015));
+    b = max(b, sampleFFT(0.030));
+    b = max(b, sampleFFT(0.060));
+    b = max(b, sampleFFT(0.120));
+    return b;
+}
+
+// Forward declarations (some GLSL ES 1.00 compilers are single-pass).
+float hash12(vec2 p);
+vec2 hash22(vec2 p);
+vec3 hash32(vec2 p);
+float noise12(vec2 p);
+float noise12(vec2 p, float t);
+
+// Per-mushroom pulse factor (asynchronous) driven by per-id FFT bins.
+float mushroomPulseAt(vec3 worldP)
+{
+    vec3 c = worldP;
+    float shift = c.x > 0. ? 1.5 : -1.5;
+    c.x = c.x > 0. ? max(c.x-shift,0.) : min(c.x-shift,0.);
+    vec2 cell = 2.0*round(.5*c.xz);
+    float h = hash12(cell + vec2(19.3, 71.7));
+
+    // Choose a stable FFT bin per mushroom.
+    float bin = fract(h*0.83 + 0.11);
+    float a = pow(sampleFFT(bin), 1.6);
+
+    // Add a little per-mushroom phase so they don't pulse in unison.
+    float phase = 6.2831853*h;
+    float wob = 0.4 + 0.6*(0.5 + 0.5*sin(2.2*iTime + phase));
+
+    // Scale factor for SDF scaling.
+    return 1.0 + 0.30*a*wob;
+}
+
+// Per-firefly pulse driven by low-frequency bins. Keeps motion smooth (position uses time),
+// but makes brightness react individually to bass.
+float fireflyPulseAt(vec3 worldP)
+{
+    const mat2 m = mat2(.8,.6,-.6,.8);
+
+    vec2 shift0 = .3*mix(vec2(.5,-1.8),vec2(-.3,-.4),0.)*time;
+    vec2 id0 = floor(m*(worldP.xz-shift0));
+    vec3 c0;
+    c0.xz = mat2(.8,-.6,.6,.8)*(id0+.5)+shift0;
+    c0.y = .5+hash12(id0+123.4)+.2*noise12(id0,time);
+    float d0 = length(worldP-c0);
+
+    vec2 shift1 = .3*mix(vec2(.5,-1.8),vec2(-.3,-.4),1.)*time;
+    vec2 id1 = floor(m*(worldP.xz-shift1));
+    vec3 c1;
+    c1.xz = mat2(.8,-.6,.6,.8)*(id1+.5)+shift1;
+    c1.y = .5+hash12(id1+123.4)+.2*noise12(id1,time);
+    float d1 = length(worldP-c1);
+
+    vec2 fid = (d0 < d1) ? id0 : id1;
+    float h = hash12(fid + vec2(11.7, 43.9));
+
+    // Bias bins toward bass: ~[0.01..0.10]
+    float bin = mix(0.01, 0.10, fract(h*0.91 + 0.07));
+    float bass = sampleFFT(bin);
+    bass = pow(bass, 2.6);
+
+    // Add a tiny per-firefly tremble so equal bins still don't look identical.
+    float phase = 6.2831853*h;
+    float trem = 0.85 + 0.15*sin(6.0*time + phase);
+
+    return bass * trem;
+}
 
 // ---- Hash / noise helpers (missing in original port) ----
 float hash12(vec2 p)
@@ -168,13 +259,16 @@ vec3 closestMushroom(vec3 p) {
     return c;
 }
 float sdMushrooms(vec3 p) {
+    vec3 wp = p;
+    float k = mushroomPulseAt(wp);
     p -= closestMushroom(p);
+    vec3 ps = p / k;
     p.y *= .5;
-    
-    float head = max(length(p)-.2,.1-p.y);
-    float r = .02+.02*sin(20.*p.y);
-    float foot = max(length(p.xz)-r,p.y-.11);
-    return min(foot,head);
+
+    float head = max(length(ps)-.2,.1-ps.y);
+    float r = .02+.02*sin(20.*ps.y);
+    float foot = max(length(ps.xz)-r,ps.y-.11);
+    return min(foot,head) * k;
 }
 
 // The same functions, also providing the closest mushroom's color
@@ -184,19 +278,23 @@ vec3 closestMushroom(vec3 p, out vec3 color) {
     c.x = c.x > 0. ? max(c.x-shift,0.) : min(c.x-shift,0.);
     c.xz = 2.*round(.5*c.xz);
     c.x += shift;
-    color = vec3(.7,.8,.9)+vec3(.1,.2,.1)*(2.*hash32(c.xz)-1.);
+    // Less bright/white; keep some subtle variation.
+    color = vec3(0.38, 0.26, 0.16) + vec3(0.08, 0.10, 0.05) * (2.0*hash32(c.xz)-1.0);
     c.xz += hash22(c.xz)-.5;
     c.y = floorHeight(p.xz);
     return c;
 }
 float sdMushrooms(vec3 p, out vec3 color) {
+    vec3 wp = p;
+    float k = mushroomPulseAt(wp);
     p -= closestMushroom(p, color);
+    vec3 ps = p / k;
     p.y *= .5;
-    
-    float head = max(length(p)-.2,.1-p.y);
-    float r = .02+.02*sin(20.*p.y);
-    float foot = max(length(p.xz)-r,p.y-.11);
-    return min(foot,head);
+
+    float head = max(length(ps)-.2,.1-ps.y);
+    float r = .02+.02*sin(20.*ps.y);
+    float foot = max(length(ps.xz)-r,ps.y-.11);
+    return min(foot,head) * k;
 }
 
 
@@ -247,9 +345,17 @@ float march(vec3 start, vec3 dir, out int id, out vec3 glow) {
         d = sd(p,id);
         if(d<epsilon*total || total>FAR) { reachedMax = false; break; }
         float dm = sdMushrooms(p,color);
-        glow += color*exp(-10.*dm);//1./(1.+500.*dm*dm);
+        // Individual mushroom pulsing (mostly geometry); add a mild per-mushroom emissive pulse.
+        float k = mushroomPulseAt(p);
+        float mGlow = 0.8 + 1.2*(k - 1.0)/0.30;
+        float beatBoostM = 0.35 + 3.2*gBeat;
+        glow += color*(mGlow*beatBoostM)*exp(-10.*dm);//1./(1.+500.*dm*dm);
         dm = sdFlies(p,color);
-        glow += color*exp(-18.*dm);
+        // Yellow lights: keep motion smooth (position uses time), but pulse individually to bass.
+        float fly = fireflyPulseAt(p);
+        // Lower baseline brightness, stronger pulse.
+        float flyBoost = 0.08 + 1.35*fly;
+        glow += color*flyBoost*exp(-18.*dm);
         total += d;
     }
     if(total>FAR || reachedMax) id = -100;
@@ -268,7 +374,8 @@ vec3 rayColor(vec3 start, vec3 dir) {
     
     if(id==MUSHROOMS) {
         closestMushroom(p,c);
-        color += c;
+        // Slightly dimmer mushroom albedo contribution.
+        color += 0.65*c;
     } else if(id==FLIES) {
         sdFlies(p,c);
        color += c;
@@ -284,7 +391,11 @@ mat3 setupCamera(vec3 forward, vec3 up) {
     return mat3(u,v,w);
 }
 void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
+    float a = audioLevel();
+    gAudio = pow(a, 1.5);
+    gBeat = pow(audioBeat(), 2.2);
     time = iTime;
+
     vec3 forward = vec3(0,0,-1);
     vec3 cam = vec3(0,1,-.5*time);
     cam.y += .02*pow(abs(cos(4.*time)),3.);
@@ -329,6 +440,9 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
      
     // Gamma
     color = sqrt(color);
+
+    // Subtle global beat-linked bloom (keeps things feeling synced).
+    color *= 0.85 + 0.85*gBeat;
     
     // Vignette
     uv = fragCoord.xy / iResolution.xy;

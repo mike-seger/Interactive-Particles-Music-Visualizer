@@ -21,6 +21,23 @@ vec2 camPath(float t) {
 // generate a number between 0 and 1
 float hash(float n) {return fract(sin(n)*43758.5453123);}
 
+float gAudio;
+
+float sampleFFT(float x)
+{
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+    float a = 0.0;
+    a += sampleFFT(0.02);
+    a += sampleFFT(0.06);
+    a += sampleFFT(0.12);
+    a += sampleFFT(0.25);
+    return a * 0.25;
+}
+
 float hash13(vec3 p)
 {
     // Simple, fast hash -> [0,1)
@@ -77,7 +94,7 @@ float map(vec3 p) {
     q.xy -= camPath(q.z);
     f = smin(f, .1-length(q.xy), -.4);
     
-    return -256.*f;
+    return -256.0*(1.0 + 0.6*gAudio)*f;
 }
 
 #if LOOK==0
@@ -139,10 +156,12 @@ mat3 setCamera(vec3 ro, vec3 ta) {
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
+	gAudio = pow(audioLevel(), 1.5);
+
     // pixel coordinates centered at the origin
     vec2 p = (fragCoord - .5*iResolution.xy) / iResolution.y;
         
-    vec3 ro = vec3(0,0,iTime); // ray origin
+    vec3 ro = vec3(0,0,iTime*(1.0 + 0.2*gAudio)); // ray origin
     vec3 ta = ro + vec3(0,0,1); // target
     
     ro.xy += camPath(ro.z);
@@ -152,6 +171,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     vec3 rd = ca * normalize(vec3(p,1.5)); // ray direction
     
     vec3 col = render(ro, rd); // render
+
+    col *= 0.9 + 1.3*gAudio;
     
     col = ACES(col); // tonemapping
     col = pow(col, vec3(.4545)); // gamma correction

@@ -53,9 +53,10 @@ vec2 turbulence(vec2 p)
     //Turbulence rotation matrix
     mat2 rot = mat2(0.6, -0.8, 0.8, 0.6);
     
-    //Loop through turbulence octaves
-    for(float i=0.0; i<TURB_NUM; i++)
+    //Loop through turbulence octaves (use int loop for WebGL1 compatibility)
+    for (int ii = 0; ii < 10; ii++)
     {
+        float i = float(ii);
         //Scroll along the rotated y coordinate
         float phase = freq * (p * rot).y + TURB_SPEED*iTime + i;
         //Add a perpendicular sine wave offset
@@ -70,8 +71,26 @@ vec2 turbulence(vec2 p)
     return p;
 }
 
+float sampleFFT(float x)
+{
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+    float a = 0.0;
+    a += sampleFFT(0.02);
+    a += sampleFFT(0.06);
+    a += sampleFFT(0.12);
+    a += sampleFFT(0.25);
+    return a * 0.25;
+}
+
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
+    float a = audioLevel();
+    float ap = pow(a, 1.5);
+
     //Screen coordinates, centered and aspect corrected
     vec2 p = (fragCoord.xy*2.0-iResolution.xy) / iResolution.y;
     vec2 screen = p;
@@ -86,7 +105,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     p *= stretch;
     
     //Scroll upward
-    float scroll = SCROLL*iTime;
+    float scroll = SCROLL*iTime*(1.0 + 0.45*ap);
     p.y -= scroll;
     
     p = turbulence(p);
@@ -106,17 +125,18 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     //Flicker animation time
     float ft = FLICKER_SPEED * iTime;
     //Flicker brightness
-    float flicker = 1.0+FLICKER*cos(ft+sin(ft*1.618-p.y));
+    float flicker = 1.0 + (FLICKER*(1.0 + 2.2*ap))*cos(ft+sin(ft*1.618-p.y));
     //Ambient lighting
     vec3 amb = 16.0*flicker/(1.0+dot(screen,screen))*grad;
     
     //Scrolling texture uvs
     vec2 uv = (p - SCROLL*vec2(0,iTime)) / 1e2 * TURB_FREQ;
     //Sample texture for fire
-    vec3 tex = texture(iChannel0,uv).rgb;
+    vec3 tex = texture(iChannel1,uv).rgb;
     
     //Combine ambient light and fire
     vec3 col = amb + light*grad*tex;
+    col *= 0.9 + 1.6*ap;
     //Exponential tonemap
     //https://mini.gmshaders.com/p/tonemaps
     col = 1.0 - exp(-col);

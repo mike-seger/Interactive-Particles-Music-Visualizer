@@ -5,11 +5,39 @@
 
 #define saturate(oo) clamp(oo, 0.0, 1.0)
 
+float gAudio;
+float gBass;
+float gRadius;
+
+float sampleFFT(float x)
+{
+	return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+	float a = 0.0;
+	a += sampleFFT(0.02);
+	a += sampleFFT(0.06);
+	a += sampleFFT(0.12);
+	a += sampleFFT(0.25);
+	return a * 0.25;
+}
+
+float audioBass()
+{
+	float b = 0.0;
+	b = max(b, sampleFFT(0.015));
+	b = max(b, sampleFFT(0.030));
+	b = max(b, sampleFFT(0.060));
+	return b;
+}
+
 // Quality Settings
 #define MarchSteps 8
 // Scene Settings
 #define ExpPosition vec3(0.0)
-#define Radius 2.0
+#define BaseRadius 2.0
 #define Background vec4(0.1, 0.0, 0.0, 1.0)
 // Noise Settings
 #define NoiseSteps 1
@@ -107,7 +135,7 @@ float Turbulence(vec3 position, float minFreq, float maxFreq, float qWidth)
 
 float SphereDist(vec3 position)
 {
-	return length(position - ExpPosition) - Radius;
+	return length(position - ExpPosition) - gRadius;
 }
 
 vec4 Shade(float distance)
@@ -123,7 +151,10 @@ vec4 Shade(float distance)
 // Draws the scene
 float RenderScene(vec3 position, out float distance)
 {
-	float noise = Turbulence(position * NoiseFrequency + Animation*iTime, 0.1, 1.5, 0.03) * NoiseAmplitude;
+	float evoT = iTime * (1.0 + 1.25*gAudio);
+	float evoF = NoiseFrequency * (1.0 + 0.25*gAudio);
+	float amp = NoiseAmplitude * (1.0 + 2.0*gAudio);
+	float noise = Turbulence(position * evoF + Animation*evoT, 0.1, 1.5 + 0.35*gAudio, 0.03) * amp;
 	noise = saturate(abs(noise));
 	distance = SphereDist(position) - noise;
 	return noise;
@@ -156,10 +187,19 @@ bool IntersectSphere(vec3 ro, vec3 rd, vec3 pos, float radius, out vec3 intersec
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
+	float a = audioLevel();
+	gAudio = pow(a, 1.5);
+	gBass = pow(audioBass(), 2.2);
+
+	// Bass-driven diameter (via radius) but keep it in-frame.
+	float rScale = 0.85 + 0.35*gBass;
+	gRadius = BaseRadius * rScale;
+
 	vec2 p = (gl_FragCoord.xy / iResolution.xy) * 2.0 - 1.0;
 	p.x *= iResolution.x/iResolution.y;
-	float rotx = iMouse.y * 0.01;
-	float roty = -iMouse.x * 0.01;
+	// No mouse. Keep a gentle auto-rotate (not audio-driven).
+	float rotx = 0.25*sin(iTime*0.22);
+	float roty = iTime * 0.25;
 	float zoom = 5.0;
 	// camera
 	vec3 ro = zoom * normalize(vec3(cos(roty), cos(rotx), sin(roty)));
@@ -169,9 +209,11 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
 	vec3 rd = normalize(p.x*uu + p.y*vv + 1.5*ww);
 	vec4 col = Background;
 	vec3 origin;
-	if(IntersectSphere(ro, rd, ExpPosition, Radius + NoiseAmplitude*6.0, origin))
+	float amp = NoiseAmplitude * (1.0 + 2.0*gAudio);
+	if(IntersectSphere(ro, rd, ExpPosition, gRadius + amp*6.0, origin))
 	{
 		col = March(origin, rd);
 	}
+	col.rgb *= 0.85 + 1.15*gAudio;
 	fragColor = col;
 }

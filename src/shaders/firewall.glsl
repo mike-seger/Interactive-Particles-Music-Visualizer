@@ -4,10 +4,27 @@
     A different perspective on Accretion.
 */
 
+float sampleFFT(float x)
+{
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+    float a = 0.0;
+    a += sampleFFT(0.02);
+    a += sampleFFT(0.06);
+    a += sampleFFT(0.12);
+    a += sampleFFT(0.25);
+    return a * 0.25;
+}
+
 
 void mainImage(out vec4 O, vec2 I)
 {
-    float t = iTime;
+    float a = audioLevel();
+    float ap = pow(a, 1.5);
+    float t = iTime * (1.0 + 0.25*ap);
     float z = 0.0;
     O = vec4(0.0);
 
@@ -38,5 +55,6 @@ void mainImage(out vec4 O, vec2 I)
         O += (1.0 + cos(p.y + fi * 0.4 + vec4(6.0, 1.0, 2.0, 0.0))) / max(dStep, 1e-3);
     }
     //Tanh tonemap
+    O *= 1.0 + 1.6*ap;
     O = tanh(O*O/6e3);
 }

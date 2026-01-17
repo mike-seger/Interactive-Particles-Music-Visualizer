@@ -37,6 +37,23 @@ vec3 RotateZ(vec3 v, float rad)
   return vec3(cos * v.x + sin * v.y, -sin * v.x + cos * v.y, v.z);
 }
 
+float gAudio;
+
+float sampleFFT(float x)
+{
+    return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+    float a = 0.0;
+    a += sampleFFT(0.02);
+    a += sampleFFT(0.06);
+    a += sampleFFT(0.12);
+    a += sampleFFT(0.25);
+    return a * 0.25;
+}
+
 
 // noise functions
 float Hash2d(vec2 uv)
@@ -91,7 +108,7 @@ float noiseTex(in vec3 x)
     vec3 fr = fract(x);
 	fr = fr * fr * (3.0 - 2.0 * fr);
 	vec2 uv = (fl.xy + vec2(37.0, 17.0) * fl.z) + fr.xy;
-	vec2 rg = textureLod(iChannel0, (uv + 0.5) * 0.00390625, 0.0 ).xy;
+    vec2 rg = textureLod(iChannel1, (uv + 0.5) * 0.00390625, 0.0 ).xy;
 	return mix(rg.y, rg.x, fr.z);
 }
 // 2 components returned
@@ -101,7 +118,7 @@ vec2 noiseTex2(in vec3 x)
     vec3 fr = fract(x);
 	fr = fr * fr * (3.0 - 2.0 * fr);
 	vec2 uv = (fl.xy + vec2(37.0, 17.0) * fl.z) + fr.xy;
-	vec4 rgba = textureLod(iChannel0, (uv + 0.5) * 0.00390625, 0.0 ).xyzw;
+    vec4 rgba = textureLod(iChannel1, (uv + 0.5) * 0.00390625, 0.0 ).xyzw;
 	return mix(rgba.yw, rgba.xz, fr.z);
 }
 
@@ -135,8 +152,8 @@ vec2 DistanceToObject(in vec3 p)
     //p.xyz = RotateZ(p, length(p.z) + iTime);
     p.y += noiseTex(p*0.5)*0.5;
     // multiple frequencies of noise, with time added for animation
-    float n = noiseTex(p*2.0+iTime*0.6);
-    n += noiseTex(p*4.0+iTime*0.7)*0.5;
+    float n = noiseTex(p*2.0+localTime*0.6);
+    n += noiseTex(p*4.0+localTime*0.7)*0.5;
     n += noiseTex(p*8.0)*0.25;
     n += noiseTex(p*16.0)*0.125;
     n += noiseTex(p*32.0)*0.0625;
@@ -155,7 +172,9 @@ vec2 DistanceToObject(in vec3 p)
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
-    localTime = iTime - 0.0;
+    float a = audioLevel();
+    gAudio = pow(a, 1.5);
+    localTime = iTime * (1.0 + 0.10*gAudio);
 	// ---------------- First, set up the camera rays for ray marching ----------------
 	vec2 uv = fragCoord.xy/iResolution.xy * 2.0 - 1.0;
     float zoom = 1.7;
@@ -171,8 +190,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     float mx=(iMouse.x/iResolution.x+0.375)*PI*2.0-0.7 + localTime*3.1415 * 0.0625*0.666*0.0;
 	float my=-iMouse.y*0.0/iResolution.y*10.0 - sin(localTime * 0.31)*0.5*0.0;//*PI/2.01;
 	camPos += vec3(cos(my)*cos(mx),sin(my),cos(my)*sin(mx))*(3.2);
-    camPos.z -= iTime * 0.5;
-    camLookat.z -= iTime * 0.5;
+    camPos.z -= localTime * 0.5;
+    camLookat.z -= localTime * 0.5;
 
     // add randomness to camera for depth-of-field look close up.
     // Reduces the banding the the marchcount glow causes
@@ -237,16 +256,16 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     {
     }
     // This is the glow
-    finalColor += marchCount * vec3(4.2, 1.0, 0.41) * 0.0001;
+    finalColor += marchCount * vec3(4.2, 1.0, 0.41) * (0.0001 * (1.0 + 2.5*gAudio));
     // fog
 	finalColor = mix(vec3(0.91, 0.81, 0.99)*1.75, finalColor, exp(-t*0.15));
 
-    if (t <= nearClip) finalColor = vec3(1.9, 1.1, 0.9)*0.25 * noiseTex(vec3(iTime*8.0));
+    if (t <= nearClip) finalColor = vec3(1.9, 1.1, 0.9)*0.25 * noiseTex(vec3(localTime*8.0)) * (1.0 + 1.5*gAudio);
 
     // vignette?
     finalColor *= vec3(1.0) * pow(saturate(1.0 - length(uv/2.5)), 2.0);
     finalColor *= 1.2;
-    finalColor *= 0.85;
+    finalColor *= 0.85 + 0.35*gAudio;
 
 	// output the final color with sqrt for "gamma correction"
 	fragColor = vec4(sqrt(clamp(finalColor, 0.0, 1.0)),1.0);

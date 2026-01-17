@@ -9,6 +9,21 @@ vec4 quat_rotation( float half_angr, vec3 unitVec );
 vec2 screen_uv;
 vec4 quat;
 
+float sampleFFT(float x)
+{
+	return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
+}
+
+float audioLevel()
+{
+	float a = 0.0;
+	a += sampleFFT(0.02);
+	a += sampleFFT(0.06);
+	a += sampleFFT(0.12);
+	a += sampleFFT(0.25);
+	return a * 0.25;
+}
+
 float Checker2(vec2 uv)
 {
 	float s = sin(uv.x)*cos(uv.y);
@@ -135,20 +150,24 @@ vec3 FlameColour(float f)
 
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
+	float a = audioLevel();
+	float ap = pow(a, 1.4);
+
 	vec2 uv = fragCoord.xy / iResolution.xy;
 
 	uv.x *= iResolution.x/iResolution.y;	
 	uv.y = 1. - uv.y;
 	screen_uv = uv;
 	
-	float t = iTime*0.8;
+	float t = iTime*0.8*(1.0 + 0.35*ap);
 	vec3 uvw = vec3(uv*1.15+vec2(0.,t),t*0.5);
 
 
 	vec4 d = FlowNoise(uvw,uv);
 	float de = d.w;
 	de = length(d.xyz)*.15+.2-d.w*.2;
-	vec3 n = FlameColour(de);
+	vec3 n = FlameColour(de + 0.08*ap);
+	n *= 0.9 + 2.2*ap;
 
 	
 	fragColor = vec4(vec3(n),1.0);
