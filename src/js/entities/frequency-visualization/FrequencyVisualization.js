@@ -47,6 +47,61 @@ uniform float uSkipLowBars;
 // Post softness/bloom controls (AE-like unsharp/soft look).
 // (disabled)
 
+// --- Slate / Noise Functions ---
+
+float hash12(vec2 p) {
+  vec3 p3  = fract(vec3(p.xyx) * .1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+// 2D Noise based on IQ
+float noise(vec2 x) {
+    vec2 i = floor(x);
+    vec2 f = fract(x);
+    float a = hash12(i);
+    float b = hash12(i + vec2(1.0, 0.0));
+    float c = hash12(i + vec2(0.0, 1.0));
+    float d = hash12(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}
+
+// FBM for slate texture
+float fbm(vec2 x) {
+    float v = 0.0;
+    float a = 0.5;
+    vec2 shift = vec2(100);
+    // Rotate to reduce axial bias
+    mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.50));
+    for (int i = 0; i < 5; ++i) {
+        v += a * noise(x);
+        x = rot * x * 2.0 + shift;
+        a *= 0.5;
+    }
+    return v;
+}
+
+// Height map for slate: layering noise for ridges
+float getSlateHeight(vec2 uv) {
+   // Primary large ridges
+   float h = fbm(uv * 3.0);
+   // Fine grain
+   h += 0.5 * fbm(uv * 12.0);
+   // Micro detail
+   h += 0.25 * fbm(uv * 48.0);
+   return h;
+}
+
+vec3 getSlateNormal(vec2 p) {
+    vec2 e = vec2(0.005, 0.0);
+    // Finite difference for normal
+    float dX = getSlateHeight(p + e.xy) - getSlateHeight(p - e.xy);
+    float dY = getSlateHeight(p + e.yx) - getSlateHeight(p - e.yx);
+    // Scale normal strength
+    return normalize(vec3(-dX * 3.0, -dY * 3.0, 1.0));
+}
+
 vec3 B2_spline(vec3 x) {
   vec3 t = 3.0 * x;
   vec3 b0 = step(0.0, t) * step(0.0, 1.0 - t);
@@ -71,7 +126,82 @@ vec3 renderAt(vec2 fragCoord) {
   // Use pixel coordinates for perfectly regular tiles.
   vec2 fc = floor(fragCoord);
   vec2 uv = fc.xy / iResolution.xy;
+  vec3 col = vec3(0.0);
+  
+  // --- CONFIG ---
+  float horizon = 0.40;
+  
+  // --- Circle Config ---
+  // Reduced diameter (approx 70% of previous size)
+  float circleRadius = iResolution.y * 0.245; 
+  // Positioned slightly below spectrum baseline (0.30)
+  float circleBottom = 0.29 * iResolution.y;
+  float circleY = circleBottom + circleRadius;
+  // Moved more to the left
+  float circleX = iResolution.x * 0.18; 
+  vec2 circleCenter = vec2(circleX, circleY);
+  vec3 cyan = vec3(0.02, 1.0, 0.99);
 
+  // --- Floor Rendering ---
+  if (uv.y < horizon) {
+      // SLATE FLOOR
+      // Fake perspective projection
+      float dy = horizon - uv.y;
+      float depth = 0.3 / max(0.001, dy);
+      
+      // Texture coordinates 
+      vec2 planeUV = vec2((uv.x - 0.5) * depth * 2.0, depth);
+      planeUV.x *= (iResolution.x / iResolution.y);
+      
+      // Bump map from FBM (Slate ridges)
+      vec3 N = getSlateNormal(planeUV * 1.5);
+      
+      // -- Reflection Logic --
+      // Apply distortion from slate normal
+      vec2 distort = N.xy * (100.0 * (1.0 - dy * 2.0)); 
+
+      // Calculate mirrored position relative to the circle's contact point (circleBottom)
+      // We mirror the pixel Y coordinate around the contact line.
+      float mirrorYPixels = circleBottom + (circleBottom - fc.y); 
+      vec2 reflPos = vec2(fc.x, mirrorYPixels);
+      // Determine distance to center in the reflected space 
+      reflPos += distort;
+
+      // Circle Reflection
+      float dRefl = length(reflPos - circleCenter) - circleRadius;
+      float ringRefl = 1.0 - smoothstep(0.0, 5.0, abs(dRefl));
+      float glowRefl = exp(-0.012 * abs(dRefl));
+      
+      // Mask reflection: visible only adjacent (below) the contact point
+      float contactUV = circleBottom / iResolution.y;
+      // Cut off reflection sharply above the contact point
+      float maskRefl = smoothstep(contactUV + 0.01, contactUV, uv.y);
+      // Fade at very bottom of screen
+      maskRefl *= smoothstep(0.0, 0.1, uv.y);
+
+      vec3 lightRefl = cyan * (ringRefl * 1.5 + glowRefl * 0.5) * maskRefl;
+
+      // Floor Base + Lighting
+      vec3 slateBase = vec3(0.02, 0.025, 0.03); 
+      col = slateBase + lightRefl;
+      
+      // Vignette / Fog
+      float fog = smoothstep(0.0, 0.15, dy);
+      col *= fog;
+      col *= smoothstep(0.0, 0.2, uv.y);
+  } else {
+      col = vec3(0.0);
+  }
+
+  // --- Foreground Circle (Draw on top of scene) ---
+  {
+      float dCircle = length(fc - circleCenter) - circleRadius;
+      float ring = 1.0 - smoothstep(0.0, 3.0, abs(dCircle));
+      float glow = exp(-0.02 * abs(dCircle));
+      col += cyan * (ring * 2.5 + glow * 0.6);
+  }
+
+  // --- Spectrum Logic ---
   float binsAll = max(1.0, floor(uVBars + 0.5));
   float skip = max(0.0, floor(uSkipLowBars + 0.5));
   float bins = max(1.0, binsAll - skip);
@@ -86,138 +216,102 @@ vec3 renderAt(vec2 fragCoord) {
   float xOffset = floor(iResolution.x - totalW - rightMargin);
   float xLocal = fc.x - xOffset;
 
-  // Outside the bar area.
-  if (xLocal < 0.0 || xLocal >= totalW) {
-    return vec3(0.0);
+  // Only calc bars if inside horiz area
+  if (xLocal >= 0.0 && xLocal < totalW) {
+      float binIdx = floor(xLocal / pitch);
+      float localX = xLocal - binIdx * pitch;
+
+      float pad = max(1.0, floor((pitch * (1.0 - fill)) * 0.5));
+      float barW = max(1.0, (pitch - 2.0 * pad));
+
+      float x = (binIdx + 0.5) / bins;
+      float uStart = skip / max(1.0, binsAll);
+      float uEnd = clamp(uCutHi, 0.0, 1.0);
+      
+      float logGamma = 1.55;
+      float t = pow(clamp(x, 0.0, 1.0), logGamma);
+      float sampleX = mix(uStart, uEnd, t);
+      
+      float fSample = texture2D(iChannel0, vec2(sampleX, 0.25)).x;
+
+      float baseY = floor(iResolution.y * 0.30);
+      float maxH = floor(iResolution.y * 0.26);
+
+      float s = pow(clamp(fSample, 0.0, 1.0), 1.10);
+      
+      // Smoothen left edge onset: specific dampening
+      if (binIdx < 0.5) s *= 0.33;
+      else if (binIdx < 1.5) s *= 0.66;
+
+      float heightPx = floor((maxH * 0.9) * s);
+      float minHPx = barW;
+      heightPx = max(heightPx, minHPx);
+
+      float yLocalUp = fc.y - baseY;
+      float yLocalDown = baseY - fc.y;
+
+      float cx = (localX - pitch * 0.5);
+      float cyUp = (yLocalUp - heightPx * 0.5);
+      float cyDn = (yLocalDown - heightPx * 0.5);
+
+      vec2 halfSize = vec2(barW * 0.5, max(0.5, heightPx * 0.5));
+      float radius = min(8.0, 0.5 * barW);
+      radius = min(radius, min(halfSize.x, halfSize.y));
+
+      float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
+      float distDn = sdRoundBox(vec2(cx, cyDn), halfSize, radius);
+
+      float aa = 2.0;
+      float fillUp = smoothstep(aa, -aa, distUp);
+      
+      float aaRefl = 6.0;
+      float fillDn = smoothstep(aaRefl, -aaRefl, distDn);
+
+      vec2 qUp = abs(vec2(cx, cyUp)) - halfSize;
+      float dxUp = max(qUp.x, 0.0);
+      float dyUp = max(qUp.y, 0.0);
+      
+      vec2 qDn = abs(vec2(cx, cyDn)) - halfSize;
+      float dxDn = max(qDn.x, 0.0);
+      float dyDn = max(qDn.y, 0.0);
+
+      // Consistent glow params
+      float glowUp = 1.0 * exp(-dxUp * 3.0 - dyUp * 2.0) + 0.5 * exp(-dxUp * 4.0 - dyUp * 3.0);
+      float glowDn = 0.8 * exp(-dxDn * 3.0 - dyDn * 2.0) + 0.4 * exp(-dxDn * 4.0 - dyDn * 3.0);
+      
+      float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.08));
+
+      vec3 redCol = vec3(1.0, 0.05, 0.00);
+      vec3 orgCol = vec3(1.0, 0.34, 0.02);
+      vec3 yelCol = vec3(1.0, 0.98, 0.12);
+
+      float rampEnd = min(uColorEnd, clamp(uCutHi, 0.0, 1.0));
+      float rampStart = min(uColorStart, rampEnd - 1e-4);
+      float denom = max(1e-4, (rampEnd - rampStart));
+      float tRamp = clamp((x - rampStart) / denom, 0.0, 1.0);
+      tRamp = pow(tRamp, max(0.10, uColorGamma));
+
+      float toOrange = smoothstep(0.0, 0.58, tRamp);
+      float yStart = clamp(uYellowStart, 0.0, 1.0);
+      float yStartTRamp = clamp((yStart - rampStart) / denom, 0.0, 1.0);
+      float toYellow = smoothstep(yStartTRamp, 1.0, tRamp);
+      vec3 baseCol = mix(redCol, orgCol, toOrange);
+      baseCol = mix(baseCol, yelCol, toYellow);
+
+      float yInBar = (heightPx > 0.0) ? clamp(yLocalUp / max(1.0, heightPx), 0.0, 1.0) : 0.0;
+      float tip = smoothstep(0.92, 1.0, yInBar);
+      vec3 tipCol = min(vec3(1.0), baseCol * (1.2 + 0.30 * tip));
+
+      // Composite Bars (Opaque Body)
+      // Mix the solid bar color over the background based on fillUp mask.
+      col = mix(col, tipCol, fillUp);
+      // Additive blending for glow/light
+      col += tipCol * (1.1 * glowUp);
+      
+      // Composite Reflection (Additive on floor)
+      col += tipCol * (0.18 * fillDn * reflFade);
+      col += tipCol * (0.22 * glowDn * reflFade);
   }
-
-  float binIdx = floor(xLocal / pitch);
-  float localX = xLocal - binIdx * pitch;
-
-  // Keep a visible gap between bars (AE has distinct columns).
-  // Allow tighter gaps (1px pad = 2px total gap).
-  float pad = max(1.0, floor((pitch * (1.0 - fill)) * 0.5));
-  float barW = max(1.0, (pitch - 2.0 * pad));
-
-  // Bin position across visible bars (0..1).
-  float x = (binIdx + 0.5) / bins;
-
-  // Map visual X (0..1) to freq range (start..cutHi) to eliminate empty right-side gap.
-  // This ensures the visual block is fully filled with the selected freq band.
-  float uStart = skip / max(1.0, binsAll);
-  float uEnd = clamp(uCutHi, 0.0, 1.0);
-  
-  // AE-like non-linear distribution (logGamma) applied to the mapping.
-  float logGamma = 1.55;
-  float t = pow(clamp(x, 0.0, 1.0), logGamma);
-  float sampleX = mix(uStart, uEnd, t);
-  
-  float fSample = texture2D(iChannel0, vec2(sampleX, 0.25)).x;
-
-  // Bar baseline and height in pixels (closer to AE reference: lower + shorter).
-  // Baseline raised to 30% from bottom.
-  float baseY = floor(iResolution.y * 0.30);
-  float maxH = floor(iResolution.y * 0.26);
-
-  float s = pow(clamp(fSample, 0.0, 1.0), 1.10);
-  
-  // Smoothen left edge onset: specific dampening for the first two bars.
-  if (binIdx < 0.5) {
-    s *= 0.33;
-  } else if (binIdx < 1.5) {
-    s *= 0.66;
-  }
-
-  // Reduce max height scalar to avoid massive bass blocks.
-  float heightPx = floor((maxH * 0.9) * s);
-
-  // Minimum bar height is a square (use bar width as min height).
-  float minHPx = barW;
-  heightPx = max(heightPx, minHPx);
-
-  // Signed-distance rounded boxes for soft edges.
-  float yLocalUp = fc.y - baseY;
-  float yLocalDown = baseY - fc.y;
-
-  // Center bar in its pitch cell.
-  float cx = (localX - pitch * 0.5);
-  float cyUp = (yLocalUp - heightPx * 0.5);
-  float cyDn = (yLocalDown - heightPx * 0.5);
-
-  vec2 halfSize = vec2(barW * 0.5, max(0.5, heightPx * 0.5));
-  // Keep roundness high, even for thin bars -> capsule look.
-  float radius = min(8.0, 0.5 * barW);
-  radius = min(radius, min(halfSize.x, halfSize.y));
-
-  float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
-  float distDn = sdRoundBox(vec2(cx, cyDn), halfSize, radius);
-
-  // Soft edges (AE-like blur).
-  // Reduced AA width to bring back gaps.
-  float aa = 2.0;
-  float fillUp = smoothstep(aa, -aa, distUp);
-  float fillDn = smoothstep(aa, -aa, distDn);
-
-  // Glow: limit to close proximity of the bars.
-  // Anisotropic bloom: Horizontal only (spreads used X distance, restricted Y distance).
-  // Calculate axis-aligned distances outside the box for glow shaping.
-  vec2 qUp = abs(vec2(cx, cyUp)) - halfSize;
-  float dxUp = max(qUp.x, 0.0);
-  float dyUp = max(qUp.y, 0.0);
-  
-  vec2 qDn = abs(vec2(cx, cyDn)) - halfSize;
-  float dxDn = max(qDn.x, 0.0);
-  float dyDn = max(qDn.y, 0.0);
-
-  // Glow falls off very fast on X to protect the black gaps.
-  // X decay coeff increased to 3.0 to ensure gaps remain black.
-  float glowUp = 1.0 * exp(-dxUp * 3.0 - dyUp * 2.0) + 0.5 * exp(-dxUp * 4.0 - dyUp * 3.0);
-  float glowDn = 0.8 * exp(-dxDn * 3.0 - dyDn * 2.0) + 0.4 * exp(-dxDn * 4.0 - dyDn * 3.0);
-  
-  // Make reflections much more subtle and blurry
-  float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.08));
-  
-  // Reflection blur simulation: increase AA for the reflection part
-  float aaRefl = 6.0;
-  fillDn = smoothstep(aaRefl, -aaRefl, distDn);
-
-  // Palette: AE-like red→orange→yellow ramp, shaped with a non-linear curve.
-  // The ramp is controlled in JS via uColorStart/uColorEnd/uColorGamma.
-  vec3 redCol = vec3(1.0, 0.05, 0.00);
-  vec3 orgCol = vec3(1.0, 0.34, 0.02);
-  vec3 yelCol = vec3(1.0, 0.98, 0.12);
-
-  // Make sure the ramp finishes within the visible bar range.
-  float rampEnd = min(uColorEnd, clamp(uCutHi, 0.0, 1.0));
-  float rampStart = min(uColorStart, rampEnd - 1e-4);
-  float denom = max(1e-4, (rampEnd - rampStart));
-  float tRamp = clamp((x - rampStart) / denom, 0.0, 1.0);
-  tRamp = pow(tRamp, max(0.10, uColorGamma));
-
-  // Two smooth blends so mid-range leans orange before reaching yellow.
-  float toOrange = smoothstep(0.0, 0.58, tRamp);
-
-  // Start yellow influence at a specific screen position.
-  float yStart = clamp(uYellowStart, 0.0, 1.0);
-  float yStartTRamp = clamp((yStart - rampStart) / denom, 0.0, 1.0);
-  float toYellow = smoothstep(yStartTRamp, 1.0, tRamp);
-  vec3 baseCol = mix(redCol, orgCol, toOrange);
-  baseCol = mix(baseCol, yelCol, toYellow);
-
-  // Keep bar tops the same hue (no white caps). Only subtle brightness lift.
-  float yInBar = (heightPx > 0.0) ? clamp(yLocalUp / max(1.0, heightPx), 0.0, 1.0) : 0.0;
-  float tip = smoothstep(0.92, 1.0, yInBar);
-  // Add boost for bloom core
-  vec3 tipCol = min(vec3(1.0), baseCol * (1.2 + 0.30 * tip));
-
-  vec3 col = vec3(0.0);
-  // Stronger core
-  col += tipCol * fillUp * 0.95;
-  // Tighter glow
-  col += tipCol * (1.1 * glowUp);
-  
-  col += tipCol * (0.18 * fillDn * reflFade);
-  col += tipCol * (0.22 * glowDn * reflFade); // Increased reflection glow
 
   return col;
 }
