@@ -85,8 +85,13 @@ float fbm(vec2 x) {
 // Height map for water/slate: layering noise for ridges with movement
 float getSlateHeight(vec2 uv) {
    float time = iTime * 0.25; // Slow wavy movement
+   
+   // Large Swell: higher amplitude, slower, diagonal (BL to TR)
+   float swellInput = dot(uv, vec2(0.4, 0.6)) - time * 0.8;
+   float swell = 2.0 * sin(swellInput); 
+
    // Primary large ridges
-   float h = fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
+   float h = swell + fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
    // Fine grain
    h += 0.5 * fbm(uv * 12.0 - vec2(time * 0.3));
    // Micro detail
