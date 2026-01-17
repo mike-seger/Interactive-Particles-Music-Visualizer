@@ -270,7 +270,8 @@ vec3 renderAt(vec2 fragCoord) {
       float binIdx = floor(xLocal / pitch);
       float localX = xLocal - binIdx * pitch;
 
-      float pad = max(1.0, floor((pitch * (1.0 - fill)) * 0.5));
+      // Double the gap size: (1.0 - fill) * 2.0 * 0.5 = (1.0 - fill)
+      float pad = max(1.0, floor(pitch * (1.0 - fill)));
       float barW = max(1.0, (pitch - 2.0 * pad));
 
       float x = (binIdx + 0.5) / bins;
@@ -307,22 +308,33 @@ vec3 renderAt(vec2 fragCoord) {
       float radius = min(8.0, 0.5 * barW);
       radius = min(radius, min(halfSize.x, halfSize.y));
 
-      // Simulate blurring glass (Defocused look)
-      // Removed noisy jitter to fix grainy artifacts.
-      // Just use a wide smoothstep for optical soften/blur.
+      // --- EXTEND BAR DOWNWARD for flat base look ---
+      // We extend the geometry below the baseline so the bottom corners don't round off/point
+      float extendDown = 30.0;
+      vec2 halfSizeExt = halfSize;
+      halfSizeExt.y += extendDown * 0.5;
+      float cyUpExt = cyUp + extendDown * 0.5;
+
+      // Calculate SDF with extended geometry
+      float distUp = sdRoundBox(vec2(cx, cyUpExt), halfSizeExt, radius);
       
-      // Calculate SDF (clean coordinates)
-      float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
-      
-      // Apply water distortion to the reflection lookup
+      // Apply water distortion to the reflection lookup (Use original size logic for reflection)
       float distDn = sdRoundBox(vec2(cx, cyDn) + distort, halfSize, radius);
 
       // Wide smoothstep for optical defocus/scattering
-      // Reduced to prevent closing gaps between bars
-      float blurAmt = 3.0; 
+      // Stack blur simulation (radius 7)
+      float blurAmt = 7.0; 
       float fillUp = smoothstep(blurAmt, -blurAmt, distUp);
       
-      float aaRefl = 6.0;
+      // Mask the extended bottom part below the baseline
+      // Hard cut or slight feather at the very bottom
+      float baseMask = smoothstep(baseY - 1.0, baseY + 1.0, fc.y); 
+      fillUp *= baseMask;
+      
+      // Boost alpha curve to maintain core brightness despite heavy blur
+      fillUp = pow(fillUp, 0.7);
+
+      float aaRefl = 7.0;
       float fillDn = smoothstep(aaRefl, -aaRefl, distDn);
 
       vec2 qUp = abs(vec2(cx, cyUp)) - halfSize;
@@ -359,7 +371,10 @@ vec3 renderAt(vec2 fragCoord) {
 
       float yInBar = (heightPx > 0.0) ? clamp(yLocalUp / max(1.0, heightPx), 0.0, 1.0) : 0.0;
       float tip = smoothstep(0.92, 1.0, yInBar);
-      vec3 tipCol = min(vec3(1.0), baseCol * (1.2 + 0.30 * tip));
+      
+      // Increased brightness to compensate for blur spreading
+      // Removed min(1.0) clamp to allow over-driving brightness
+      vec3 tipCol = baseCol * (1.8 + 0.6 * tip);
 
       // Composite Bars (Opaque Body)
       // Mix the solid bar color over the background based on fillUp mask.
