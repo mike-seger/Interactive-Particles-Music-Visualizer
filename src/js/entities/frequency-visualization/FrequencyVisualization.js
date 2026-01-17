@@ -82,14 +82,15 @@ float fbm(vec2 x) {
     return v;
 }
 
-// Height map for slate: layering noise for ridges
+// Height map for water/slate: layering noise for ridges with movement
 float getSlateHeight(vec2 uv) {
+   float time = iTime * 0.25; // Slow wavy movement
    // Primary large ridges
-   float h = fbm(uv * 3.0);
+   float h = fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
    // Fine grain
-   h += 0.5 * fbm(uv * 12.0);
+   h += 0.5 * fbm(uv * 12.0 - vec2(time * 0.3));
    // Micro detail
-   h += 0.25 * fbm(uv * 48.0);
+   h += 0.25 * fbm(uv * 48.0 + vec2(0.0, time * 0.1));
    return h;
 }
 
@@ -187,10 +188,10 @@ vec3 renderAt(vec2 fragCoord) {
       
       // -- Masking Floor inside the Circle --
       // Occlude the floor where it would be seen "through" the bottom of the ring.
-      // This effectively makes the area inside the ring opaque black at the bottom.
+      // Increased radius to cover the ring's stroke width better.
       float distToCenter = length(fc - circleCenter);
-      float innerRadius = circleRadius - 4.0; // Slightly inside the glowing ring
-      if (distToCenter < innerRadius) {
+      float maskRadius = circleRadius + 2.0; // Extend slightly outside to prevent edge bleeding
+      if (distToCenter < maskRadius) {
           col *= 0.0; // Mask out completely
       }
       
