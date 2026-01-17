@@ -175,7 +175,7 @@ vec3 renderAt(vec2 fragCoord) {
 
   // Keep bar tops the same hue (no white caps). Only subtle brightness lift.
   float yInBar = (heightPx > 0.0) ? clamp(yLocalUp / max(1.0, heightPx), 0.0, 1.0) : 0.0;
-  float tip = smoothstep(0.82, 1.0, yInBar);
+  float tip = smoothstep(0.92, 1.0, yInBar);
   vec3 tipCol = min(vec3(1.0), baseCol * (1.0 + 0.10 * tip));
 
   vec3 col = vec3(0.0);
@@ -219,7 +219,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
     // Visual bins (bars) count.
     this._vBars = 140
     // Bar fill ratio (0..1). Lower means thinner bars / larger gaps.
-    this._hSpacing = 0.62
+    this._hSpacing = 0.92
 
     // Cutoff for the highest frequency bars (0..1).
     this._cutHi = 0.80
@@ -322,7 +322,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
       this._vBars = Math.max(40, Math.min(upper, fromViewport))
 
       // Slightly thinner bars when there are fewer bins.
-      this._hSpacing = this._vBars < 90 ? 0.58 : 0.62
+      this._hSpacing = this._vBars < 90 ? 0.78 : 0.92
 
       if (this._mat?.uniforms?.uVBars) this._mat.uniforms.uVBars.value = this._vBars
       if (this._mat?.uniforms?.uHSpacing) this._mat.uniforms.uHSpacing.value = this._hSpacing
