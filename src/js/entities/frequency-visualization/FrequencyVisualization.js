@@ -310,16 +310,18 @@ vec3 renderAt(vec2 fragCoord) {
 
       // --- EXTEND BAR DOWNWARD for flat base look ---
       // We extend the geometry below the baseline so the bottom corners don't round off/point
-      float extendDown = 30.0;
+      float extendDown = 60.0;
       vec2 halfSizeExt = halfSize;
       halfSizeExt.y += extendDown * 0.5;
+      
       float cyUpExt = cyUp + extendDown * 0.5;
+      float cyDnExt = cyDn + extendDown * 0.5; // Extend reflection geometry upwards into sky
 
       // Calculate SDF with extended geometry
       float distUp = sdRoundBox(vec2(cx, cyUpExt), halfSizeExt, radius);
       
-      // Apply water distortion to the reflection lookup (Use original size logic for reflection)
-      float distDn = sdRoundBox(vec2(cx, cyDn) + distort, halfSize, radius);
+      // Mirror extension for reflection so they meet flat at the baseline
+      float distDn = sdRoundBox(vec2(cx, cyDnExt) + distort, halfSizeExt, radius);
 
       // Wide smoothstep for optical defocus/scattering
       // Stack blur simulation (radius 7)
@@ -327,7 +329,6 @@ vec3 renderAt(vec2 fragCoord) {
       float fillUp = smoothstep(blurAmt, -blurAmt, distUp);
       
       // Mask the extended bottom part below the baseline
-      // Hard cut or slight feather at the very bottom
       float baseMask = smoothstep(baseY - 1.0, baseY + 1.0, fc.y); 
       fillUp *= baseMask;
       
@@ -336,6 +337,9 @@ vec3 renderAt(vec2 fragCoord) {
 
       float aaRefl = 7.0;
       float fillDn = smoothstep(aaRefl, -aaRefl, distDn);
+      
+      // Mask extended reflection part bleeding into sky
+      fillDn *= (1.0 - baseMask);
 
       vec2 qUp = abs(vec2(cx, cyUp)) - halfSize;
       float dxUp = max(qUp.x, 0.0);
