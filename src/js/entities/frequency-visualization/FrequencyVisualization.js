@@ -31,6 +31,21 @@ uniform sampler2D iChannel0;
 
 uniform float uVBars;
 uniform float uHSpacing; // treated as bar fill ratio (0..1)
+uniform float uCutHi;    // 0..1, cutoff for highest frequency bars
+
+// Color ramp controls (x across spectrum):
+// - uColorStart/uColorEnd define where red transitions toward yellow.
+// - uColorGamma shapes how fast the hue shifts (AE-like non-linear ramp).
+uniform float uColorStart;
+uniform float uColorEnd;
+uniform float uColorGamma;
+uniform float uYellowStart;
+
+// Skip the first N low-frequency bars (e.g. if first bins are redundant).
+uniform float uSkipLowBars;
+
+// Post softness/bloom controls (AE-like unsharp/soft look).
+// (disabled)
 
 vec3 B2_spline(vec3 x) {
   vec3 t = 3.0 * x;
@@ -52,37 +67,43 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
-void main() {
+vec3 renderAt(vec2 fragCoord) {
   // Use pixel coordinates for perfectly regular tiles.
-  vec2 fragCoord = floor(gl_FragCoord.xy);
-  vec2 uv = fragCoord.xy / iResolution.xy;
+  vec2 fc = floor(fragCoord);
+  vec2 uv = fc.xy / iResolution.xy;
 
-  float bins = max(1.0, floor(uVBars + 0.5));
+  float binsAll = max(1.0, floor(uVBars + 0.5));
+  float skip = max(0.0, floor(uSkipLowBars + 0.5));
+  float bins = max(1.0, binsAll - skip);
   float fill = clamp(uHSpacing, 0.10, 0.98);
 
   // Choose an integer pitch in pixels so the grid is perfectly regular.
   float pitch = max(1.0, floor(iResolution.x / bins));
   float totalW = pitch * bins;
   float xOffset = floor((iResolution.x - totalW) * 0.5);
-  float xLocal = fragCoord.x - xOffset;
+  float xLocal = fc.x - xOffset;
 
   // Outside the bar area.
   if (xLocal < 0.0 || xLocal >= totalW) {
-    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-    return;
+    return vec3(0.0);
   }
 
   float binIdx = floor(xLocal / pitch);
   float localX = xLocal - binIdx * pitch;
 
-  // Uniform gaps in both axes.
   // Keep a visible gap between bars (AE has distinct columns).
   float pad = max(2.0, floor((pitch * (1.0 - fill)) * 0.5));
   float barW = max(1.0, (pitch - 2.0 * pad));
 
-  // Sample spectrum at the center of the bin.
-  // Compress highs so the top end effectively has fewer unique bars (AE-like).
+  // Bin position across visible bars (0..1).
   float x = (binIdx + 0.5) / bins;
+
+  // Cut off the highest portion of bars.
+  if (x > clamp(uCutHi, 0.0, 1.0)) {
+    return vec3(0.0);
+  }
+
+  // Compress highs so the top end effectively has fewer unique bars (AE-like).
   float logGamma = 1.55;
   float sampleX = pow(clamp(x, 0.0, 1.0), logGamma);
   float fSample = texture2D(iChannel0, vec2(sampleX, 0.25)).x;
@@ -91,18 +112,16 @@ void main() {
   float baseY = floor(iResolution.y * 0.14);
   float maxH = floor(iResolution.y * 0.26);
 
-  // The audio texture is already shaped/leveled in JS; keep mapping gentle.
   float s = pow(clamp(fSample, 0.0, 1.0), 1.10);
   float heightPx = floor(maxH * s);
 
   // Minimum bar height is a square (use bar width as min height).
   float minHPx = barW;
-  // Always draw at least a square so there are no missing bins.
   heightPx = max(heightPx, minHPx);
 
-  // Signed-distance boxes for soft edges + glow.
-  float yLocalUp = fragCoord.y - baseY;
-  float yLocalDown = baseY - fragCoord.y;
+  // Signed-distance rounded boxes for soft edges.
+  float yLocalUp = fc.y - baseY;
+  float yLocalDown = baseY - fc.y;
 
   // Center bar in its pitch cell.
   float cx = (localX - pitch * 0.5);
@@ -110,50 +129,65 @@ void main() {
   float cyDn = (yLocalDown - heightPx * 0.5);
 
   vec2 halfSize = vec2(barW * 0.5, max(0.5, heightPx * 0.5));
-  // More obvious rounding, especially on the minimum-height squares.
-  float radius = min(4.0, 0.42 * barW);
+  // Larger corner radius (AE-like).
+  float radius = min(8.0, 0.85 * barW);
   radius = min(radius, min(halfSize.x, halfSize.y));
 
   float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
   float distDn = sdRoundBox(vec2(cx, cyDn), halfSize, radius);
 
-  // NOTE: Avoid fwidth/dFdx/dFdy to keep compatibility with WebGL1 without
-  // OES_standard_derivatives. Use a constant AA width in pixel-space.
+  // Constant AA width (WebGL1-safe).
   float aa = 1.0;
   float fillUp = smoothstep(aa, -aa, distUp);
   float fillDn = smoothstep(aa, -aa, distDn);
 
-  // Glow extends outside the bar, but keep it tight so gaps remain visible.
-  float glowUp = exp(-max(distUp, 0.0) * 0.38);
-  float glowDn = exp(-max(distDn, 0.0) * 0.42);
+  // Glow: combine a tight edge glow + a wider halo (bloom-like).
+  float dUp = max(distUp, 0.0);
+  float dDn = max(distDn, 0.0);
+  float glowUp = 0.70 * exp(-dUp * 0.42) + 0.22 * exp(-dUp * 0.11);
+  float glowDn = 0.65 * exp(-dDn * 0.46) + 0.18 * exp(-dDn * 0.12);
 
   float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.22));
 
-  // AE-like palette: red -> yellow across the spectrum.
-  // IMPORTANT: color should be based on screen bin position (x), not sampleX,
-  // otherwise high-end compression also shifts colors toward red.
-  vec3 lowCol = vec3(1.0, 0.06, 0.00);
-  vec3 highCol = vec3(1.0, 0.98, 0.08);
-  float colorX = pow(clamp(x, 0.0, 1.0), 0.55);
-  vec3 baseCol = mix(lowCol, highCol, colorX);
+  // Palette: AE-like red→orange→yellow ramp, shaped with a non-linear curve.
+  // The ramp is controlled in JS via uColorStart/uColorEnd/uColorGamma.
+  vec3 redCol = vec3(1.0, 0.05, 0.00);
+  vec3 orgCol = vec3(1.0, 0.34, 0.02);
+  vec3 yelCol = vec3(1.0, 0.98, 0.12);
 
-  // Keep bar tops the same hue (no white caps). Only add a subtle brightness lift.
+  // Make sure the ramp finishes within the visible bar range.
+  float rampEnd = min(uColorEnd, clamp(uCutHi, 0.0, 1.0));
+  float rampStart = min(uColorStart, rampEnd - 1e-4);
+  float denom = max(1e-4, (rampEnd - rampStart));
+  float tRamp = clamp((x - rampStart) / denom, 0.0, 1.0);
+  tRamp = pow(tRamp, max(0.10, uColorGamma));
+
+  // Two smooth blends so mid-range leans orange before reaching yellow.
+  float toOrange = smoothstep(0.0, 0.58, tRamp);
+
+  // Start yellow influence at a specific screen position.
+  float yStart = clamp(uYellowStart, 0.0, 1.0);
+  float yStartTRamp = clamp((yStart - rampStart) / denom, 0.0, 1.0);
+  float toYellow = smoothstep(yStartTRamp, 1.0, tRamp);
+  vec3 baseCol = mix(redCol, orgCol, toOrange);
+  baseCol = mix(baseCol, yelCol, toYellow);
+
+  // Keep bar tops the same hue (no white caps). Only subtle brightness lift.
   float yInBar = (heightPx > 0.0) ? clamp(yLocalUp / max(1.0, heightPx), 0.0, 1.0) : 0.0;
   float tip = smoothstep(0.82, 1.0, yInBar);
   vec3 tipCol = min(vec3(1.0), baseCol * (1.0 + 0.10 * tip));
 
-  // Uniform brightness: height encodes level, not intensity.
   vec3 col = vec3(0.0);
-
-  // Main bar: fill + glow.
   col += tipCol * fillUp;
-  col += tipCol * (0.45 * glowUp);
-
-  // Reflection: dimmer and faded.
+  col += tipCol * (0.72 * glowUp);
   col += tipCol * (0.16 * fillDn * reflFade);
-  col += tipCol * (0.08 * glowDn * reflFade);
+  col += tipCol * (0.10 * glowDn * reflFade);
 
-  gl_FragColor = vec4(col, 1.0);
+  return col;
+}
+
+void main() {
+  gl_FragColor = vec4(renderAt(gl_FragCoord.xy), 1.0);
 }
 `
 
@@ -185,6 +219,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
     this._vBars = 140
     // Bar fill ratio (0..1). Lower means thinner bars / larger gaps.
     this._hSpacing = 0.62
+
+    // Cutoff for the highest frequency bars (0..1).
+    this._cutHi = 0.80
+
+    this._lastLoggedBars = null
 
     // Slow auto-gain (AGC) to prevent per-frame pumping.
     this._agcGain = 1.0
@@ -233,6 +272,18 @@ export default class FrequencyVisualization extends THREE.Object3D {
         iChannel0: { value: this._audioTex },
         uVBars: { value: this._vBars },
         uHSpacing: { value: this._hSpacing },
+        uCutHi: { value: this._cutHi },
+
+        // Color ramp (tweak to match AE reference)
+        // Yellow should be fully reached by ~65% across.
+        uColorStart: { value: 0.32 },
+        uColorEnd: { value: 0.65 },
+        uColorGamma: { value: 1.10 },
+        // Yellow influence begins around ~40% (shifted left).
+        uYellowStart: { value: 0.40 },
+
+        // Drop the first 2 low-frequency bars.
+        uSkipLowBars: { value: 2.0 },
       },
       depthTest: false,
       depthWrite: false,
@@ -274,6 +325,12 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
       if (this._mat?.uniforms?.uVBars) this._mat.uniforms.uVBars.value = this._vBars
       if (this._mat?.uniforms?.uHSpacing) this._mat.uniforms.uHSpacing.value = this._hSpacing
+      if (this._mat?.uniforms?.uCutHi) this._mat.uniforms.uCutHi.value = this._cutHi
+
+      if (this._lastLoggedBars !== this._vBars) {
+        this._lastLoggedBars = this._vBars
+        console.info(`[FrequencyVisualization] displaying ${this._vBars} bars (cutHi=${this._cutHi})`)
+      }
     }
   }
 
