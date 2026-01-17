@@ -98,8 +98,8 @@ vec3 getSlateNormal(vec2 p) {
     // Finite difference for normal
     float dX = getSlateHeight(p + e.xy) - getSlateHeight(p - e.xy);
     float dY = getSlateHeight(p + e.yx) - getSlateHeight(p - e.yx);
-    // Scale normal strength
-    return normalize(vec3(-dX * 3.0, -dY * 3.0, 1.0));
+    // Scale normal strength (Rougher slate -> higher multiplier)
+    return normalize(vec3(-dX * 8.0, -dY * 8.0, 1.0));
 }
 
 vec3 B2_spline(vec3 x) {
@@ -184,6 +184,15 @@ vec3 renderAt(vec2 fragCoord) {
       // Floor Base + Lighting
       vec3 slateBase = vec3(0.02, 0.025, 0.03); 
       col = slateBase + lightRefl;
+      
+      // -- Masking Floor inside the Circle --
+      // Occlude the floor where it would be seen "through" the bottom of the ring.
+      // This effectively makes the area inside the ring opaque black at the bottom.
+      float distToCenter = length(fc - circleCenter);
+      float innerRadius = circleRadius - 4.0; // Slightly inside the glowing ring
+      if (distToCenter < innerRadius) {
+          col *= 0.0; // Mask out completely
+      }
       
       // Vignette / Fog
       float fog = smoothstep(0.0, 0.15, dy);
