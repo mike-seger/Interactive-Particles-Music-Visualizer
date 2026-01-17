@@ -372,6 +372,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const height = 1
     this._audioTexData = new Uint8Array(width * height * 4)
     this._audioSmooth = new Float32Array(width)
+    this._spatialBuf = new Float32Array(width)
 
     for (let i = 0; i < width; i++) {
       const o = i * 4
@@ -437,11 +438,13 @@ export default class FrequencyVisualization extends THREE.Object3D {
     if (!this._audioSmooth || this._audioSmooth.length !== width) {
       this._audioSmooth = new Float32Array(width)
     }
+    if (!this._spatialBuf || this._spatialBuf.length !== width) {
+      this._spatialBuf = new Float32Array(width)
+    }
 
     let peak = 0
 
-    // Pass 1: smooth + shape + histogram
-    this._hist.fill(0)
+    // Pass 1: smooth + shape (Temporal)
     for (let i = 0; i < width; i++) {
       const srcIdx = Math.min(n - 1, Math.floor((i / (width - 1)) * (n - 1)))
 
@@ -463,8 +466,22 @@ export default class FrequencyVisualization extends THREE.Object3D {
       const floored = Math.max(0, (next - noiseFloor) / (1 - noiseFloor))
       const shaped = Math.pow(Math.max(0, Math.min(1, floored)), peakCurve)
       this._audioSmooth[i] = shaped
+    }
+    
+    // Pass 1.5: Spatial Smoothing (envelope)
+    // 3-point weighted average to reduce single spikes
+    for (let i = 0; i < width; i++) {
+      const iL = Math.max(0, i - 1)
+      const iR = Math.min(width - 1, i + 1)
+      const val = (this._audioSmooth[iL] + 2.0 * this._audioSmooth[i] + this._audioSmooth[iR]) * 0.25
+      this._spatialBuf[i] = val
+    }
 
-      const b = Math.min(this._hist.length - 1, Math.floor(shaped * (this._hist.length - 1)))
+    // Pass 1.8: Histogram (from spatially smoothed data)
+    this._hist.fill(0)
+    for (let i = 0; i < width; i++) {
+      const s = this._spatialBuf[i]
+      const b = Math.min(this._hist.length - 1, Math.floor(s * (this._hist.length - 1)))
       this._hist[b]++
     }
 
@@ -483,7 +500,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     // Pass 2: baseline subtraction + LF weighting + peak for AGC
     for (let i = 0; i < width; i++) {
-      const shaped = this._audioSmooth[i] ?? 0
+      const shaped = this._spatialBuf[i] ?? 0
 
       // Subtract percentile baseline to keep the band from filling up.
       const deBiased = Math.max(0, shaped - baseline * baselineStrength)
@@ -507,7 +524,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     // Pass 3: baseline + weighting + AGC into texture
     for (let i = 0; i < width; i++) {
-      const shaped = this._audioSmooth[i] ?? 0
+      const shaped = this._spatialBuf[i] ?? 0
 
       const deBiased = Math.max(0, shaped - baseline * baselineStrength)
       const t = i / (width - 1)
