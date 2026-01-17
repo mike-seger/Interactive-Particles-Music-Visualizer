@@ -29,6 +29,9 @@ uniform vec3 iResolution;
 uniform float iTime;
 uniform sampler2D iChannel0;
 
+uniform float uVBars;
+uniform float uHSpacing; // treated as bar fill ratio (0..1)
+
 vec3 B2_spline(vec3 x) {
   vec3 t = 3.0 * x;
   vec3 b0 = step(0.0, t) * step(0.0, 1.0 - t);
@@ -42,25 +45,59 @@ vec3 B2_spline(vec3 x) {
 }
 
 void main() {
-  vec2 fragCoord = vUv * iResolution.xy;
-
+  // Use pixel coordinates for perfectly regular tiles.
+  vec2 fragCoord = floor(gl_FragCoord.xy);
   vec2 uv = fragCoord.xy / iResolution.xy;
 
-  float fVBars = 100.0;
-  float fHSpacing = 1.00;
+  float bins = max(1.0, floor(uVBars + 0.5));
+  float fill = clamp(uHSpacing, 0.10, 0.98);
 
-  float fHFreq = (uv.x * 3.14);
-  float squarewave = sign(sin(fHFreq * fVBars) + 1.0 - fHSpacing);
+  // Choose an integer pitch in pixels so the grid is perfectly regular.
+  float pitch = max(1.0, floor(iResolution.x / bins));
+  float totalW = pitch * bins;
+  float xOffset = floor((iResolution.x - totalW) * 0.5);
+  float xLocal = fragCoord.x - xOffset;
 
-  float x = floor(uv.x * fVBars) / fVBars;
+  // Outside the bar area.
+  if (xLocal < 0.0 || xLocal >= totalW) {
+    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+    return;
+  }
+
+  float binIdx = floor(xLocal / pitch);
+  float localX = xLocal - binIdx * pitch;
+
+  // Uniform gaps in both axes.
+  float pad = max(1.0, floor((pitch * (1.0 - fill)) * 0.5));
+  float inX = step(pad, localX) * step(localX, pitch - pad - 1.0);
+
+  // Sample spectrum at the center of the bin.
+  float x = (binIdx + 0.5) / bins;
   float fSample = texture2D(iChannel0, vec2(abs(2.0 * x - 1.0), 0.25)).x;
 
-  float fft = squarewave * fSample * 0.5;
+  // Bar baseline and height in pixels.
+  float baseY = floor(iResolution.y * 0.30);
+  float maxH = floor(iResolution.y * 0.55);
+  float heightPx = floor(maxH * clamp(fSample, 0.0, 1.0));
 
-  float fHBars = 100.0;
-  float fVSpacing = 0.180;
-  float fVFreq = (uv.y * 3.14);
-  fVFreq = sign(sin(fVFreq * fHBars) + 1.0 - fVSpacing);
+  // Square tiles: use the same pitch in Y.
+  float tilePitch = pitch;
+  float yLocalUp = fragCoord.y - baseY;
+  float localY = mod(yLocalUp, tilePitch);
+  float inY = step(pad, localY) * step(localY, tilePitch - pad - 1.0);
+
+  float above = step(0.0, yLocalUp) * step(yLocalUp, heightPx);
+
+  // Reflection below baseline (mirrored tiles) with a simple fade.
+  float yLocalDown = baseY - fragCoord.y;
+  float reflMirrorY = yLocalDown;
+  float reflLocalY = mod(reflMirrorY, tilePitch);
+  float inYRefl = step(pad, reflLocalY) * step(reflLocalY, tilePitch - pad - 1.0);
+  float below = step(0.0, yLocalDown) * step(yLocalDown, heightPx);
+  float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.22));
+
+  float tileMask = inX * inY;
+  float tileMaskRefl = inX * inYRefl;
 
   vec2 centered = vec2(1.0) * uv - vec2(1.0);
   float t = iTime / 100.0;
@@ -72,12 +109,11 @@ void main() {
   vec3 base_color = vec3(1.0, 1.0, 1.0) - f * spline;
   vec3 flame_color = pow(base_color, vec3(3.0));
 
-  float tt = 0.3 - uv.y;
-  float df = sign(tt);
-  df = (df + 1.0) / 0.5;
+  vec3 col = flame_color;
+  col *= tileMask * above;
 
-  vec3 col = flame_color * vec3(1.0 - step(fft, abs(0.3 - uv.y))) * vec3(fVFreq);
-  col -= col * df * 0.180;
+  // Reflection: dimmer and faded.
+  col += flame_color * tileMaskRefl * below * (0.28 * reflFade);
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -100,6 +136,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     this._audioTex = null
     this._audioTexData = null
+
+    // Visual bins (bars) count. Doubled when analyser provides enough bins.
+    this._vBars = 100
+    // Bar fill ratio (0..1). Lower means larger gaps.
+    this._hSpacing = 0.78
 
     this._onResize = () => this._syncResolution()
   }
@@ -143,6 +184,8 @@ export default class FrequencyVisualization extends THREE.Object3D {
         iResolution: { value: new THREE.Vector3(1, 1, 1) },
         iTime: { value: 0 },
         iChannel0: { value: this._audioTex },
+        uVBars: { value: this._vBars },
+        uHSpacing: { value: this._hSpacing },
       },
       depthTest: false,
       depthWrite: false,
@@ -165,6 +208,17 @@ export default class FrequencyVisualization extends THREE.Object3D {
     if (App.audioManager?.analyserNode) {
       this._analyser = App.audioManager.analyserNode
       this._fftBytes = new Uint8Array(this._analyser.frequencyBinCount)
+
+      const maxBars = 200
+      const available = this._analyser.frequencyBinCount || 0
+
+      // Use all bins up to 200.
+      this._vBars = Math.max(1, Math.min(maxBars, available || 0))
+      if (!available) this._vBars = 100
+      this._hSpacing = 0.78
+
+      if (this._mat?.uniforms?.uVBars) this._mat.uniforms.uVBars.value = this._vBars
+      if (this._mat?.uniforms?.uHSpacing) this._mat.uniforms.uHSpacing.value = this._hSpacing
     }
   }
 

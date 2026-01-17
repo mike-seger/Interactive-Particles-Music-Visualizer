@@ -127,15 +127,16 @@ export default class KevsPlasma {
             
             // Audio-reactive parameters
             // Mid affects cycle speed (very slow color cycling)
-            this.cycleSpeed = (0.01 + this.midReactivity * 0.05) * this.animationMomentum;
+            this.cycleSpeed = (0.003 + this.midReactivity * 0.010) * this.animationMomentum;
             
-            // Time function fixed (no audio reactivity)
-            this.timeFunction = 66.67 / Math.max(0.1, this.animationMomentum);
+            // Slow down motion when audio is present (avoid "speed-up" on loud sections)
+            const speedSlow = 1.0 + 0.60 * this.bassReactivity + 0.20 * this.midReactivity;
+            this.timeFunction = (190.0 * Math.min(1.8, speedSlow)) / Math.max(0.35, this.animationMomentum);
         } else {
             // No audio data - slow down
             this.animationMomentum = Math.max(0.0, this.animationMomentum - 0.01);
             this.cycleSpeed = 0.01 * this.animationMomentum;
-            this.timeFunction = 66.67 / Math.max(0.1, this.animationMomentum);
+            this.timeFunction = 190.0 / Math.max(0.35, this.animationMomentum);
             this.beatPulse = Math.max(0.0, this.beatPulse * 0.88 - 0.02);
         }
         

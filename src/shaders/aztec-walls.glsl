@@ -124,8 +124,8 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
   // Drive sweep time strongly with audio, but keep camera time stable.
   tt = mod(iTime * (1.0 + 2.2*beat), 62.82);
   // Reduce peak brightness (keep minimums intact)
-  float lightBoost = 0.65 + 1.35*beat;
-  float beamBoost = 0.70 + 2.60*beat;
+  float lightBoost = 0.65 + 0.85*beat;
+  float beamBoost = 0.70 + 1.30*beat;
 
   vec3 ro=mix(vec3(sin(ttCam*.5)*5.,-cos(ttCam*.5)*50.,5.),vec3(cos(ttCam*.5-.5)*5.,35.,sin(ttCam*.5-.5)*45.),ceil(sin(ttCam*.5))),
   cw=normalize(vec3(0)-ro), cu=normalize(cross(cw,normalize(vec3(0,1,0)))),cv=normalize(cross(cu,cw)),
@@ -150,8 +150,12 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
   // Boost the 6 beams intensity with audio
   g *= beamBoost;
   g2 *= beamBoost;
+  // Soft-cap only the peaks (keeps minimums/baseline intact)
+  g = min(g, 1.45 + 0.40*beat);
+  g2 = min(g2, 1.45 + 0.40*beat);
   pp=co+(g*.2*mix(vec3(.7,.1,0),vec3(.5,.2,.1),.5+.5*sin(np.z*.2)))*lightBoost;
   vec3 outCol = pow(pp+g2*.2*vec3(.1,.2,.5)*lightBoost,vec3(0.55));
-  outCol *= 0.90 + 0.55*beat;
+  outCol *= 0.86 + 0.32*beat;
+  outCol *= 0.88;
   fragColor = vec4(outCol,1);
 } 

@@ -3,6 +3,7 @@
 // Audio reactivity: in this app iChannel0 is a 512x2 audio texture.
 // We sample the FFT row at y ~= 0.25.
 float gAudio = 0.0;
+float gBass = 0.0;
 
 float sampleFFT(float x) {
     return texture(iChannel0, vec2(clamp(x, 0.0, 1.0), 0.25)).r;
@@ -19,6 +20,20 @@ float audioLevel() {
     // Shape: reduce noise floor, keep it subtle.
     a = clamp(a * 1.6, 0.0, 1.0);
     return clamp(pow(a, 1.15), 0.0, 1.0);
+}
+
+float audioBass() {
+    float b = 0.0;
+    b = max(b, sampleFFT(0.015));
+    b = max(b, sampleFFT(0.030));
+    b = max(b, sampleFFT(0.060));
+    b = clamp(b * 1.8, 0.0, 1.0);
+    return clamp(pow(b, 1.25), 0.0, 1.0);
+}
+
+mat2 rot2(float a) {
+    float c = cos(a), s = sin(a);
+    return mat2(c, -s, s, c);
 }
 
 
@@ -182,6 +197,12 @@ float torus( vec3 p, vec2 t )
 float model(vec3 p)
 {
     //p = opRep(p, vec3(10.));
+
+    // Smooth bass-driven rotation (-15°..+15°) with stable random phase.
+    float phase = 2.37;
+    float ang = radians(15.0) * sin(iTime * 1.35 + phase) * pow(gBass, 1.35);
+    p.xy = rot2(ang) * p.xy;
+
     // Audio-reactive size (subtle): bigger with louder audio.
     p *= 0.45 * (1.0 + gAudio * 0.22);
     p.y -= 1.25;
@@ -310,6 +331,7 @@ vec3 shade(vec3 pos, vec3 nor, vec3 rd, float dist, vec3 ro)
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     gAudio = audioLevel();
+    gBass = audioBass();
 
     vec2 p = (fragCoord - .5*iResolution.xy)/iResolution.y;
     // Audio adds a bit more shimmer/warp.
