@@ -395,15 +395,71 @@ de CastRay(ray r) {
     	
         vec3 rC = ((2.*step(0., r.d)-1.)*q.h-q.p)/r.d;	// ray to cell boundary
         dC = min(min(rC.x, rC.y), rC.z)+.01;		// distance to cell just past boundary
-        
-        float N = N3(q.id);
-        q.p += (N31(N)-.5)*grid*vec3(.5, .7, .5);
-        
-		if(Dist(q.p.xz, r.d.xz, vec2(0.))<1.1)
-        //if(DistRaySegment(q.p, r.d, vec3(0., -6., 0.), vec3(0., -3.3, 0)) <1.1) 
-        	s = map(q.p, q.id);
-        else
-            s.d = dC;
+
+        // Jitter jellyfish position within the cell.
+        // NOTE: Some jellyfish can overlap a cell boundary; if we only evaluate the current
+        // cell, they can appear "clipped" by the repeat grid (rectangular planes).
+        vec3 baseP = q.p;
+        vec3 baseId = q.id;
+
+        vec3 jitter0;
+        {
+            float N = N3(baseId);
+            jitter0 = (N31(N) - .5) * grid * vec3(.5, .7, .5);
+        }
+        vec3 p0 = baseP + jitter0;
+
+        // Default: no jellyfish in this cell segment.
+        de best;
+        best.d = dC;
+        best.m = 0.;
+        best.uv = vec3(0.);
+        best.pump = 0.;
+        vec3 bestId = baseId;
+        vec3 bestPos = p0;
+
+        // Evaluate current cell and (only when near a boundary) a couple of neighbor cells.
+        // This keeps the cost low while eliminating most boundary clipping artifacts.
+        float pad = 1.6; // ~ jellyfish radius + a little slack
+        bool nearX = abs(p0.x) > (q.h.x - pad);
+        bool nearZ = abs(p0.z) > (q.h.z - pad);
+        int dx = nearX ? (p0.x > 0. ? 1 : -1) : 0;
+        int dz = nearZ ? (p0.z > 0. ? 1 : -1) : 0;
+
+        for (int k = 0; k < 4; k++) {
+            int ox = 0;
+            int oz = 0;
+            if (k == 1) ox = dx;
+            if (k == 2) oz = dz;
+            if (k == 3) { ox = dx; oz = dz; }
+            if (ox == 0 && oz == 0) {
+                // ok
+            } else {
+                if (!nearX && ox != 0) continue;
+                if (!nearZ && oz != 0) continue;
+                if (ox == 0 && oz == 0) continue;
+            }
+
+            vec3 off = vec3(float(ox), 0.0, float(oz));
+            vec3 cid = baseId + off;
+            float Nc = N3(cid);
+            vec3 jitterC = (N31(Nc) - .5) * grid * vec3(.5, .7, .5);
+            vec3 plocal = (baseP - off * grid) + jitterC;
+
+            // Cheap cull: only evaluate map if ray is near the cell's xz center.
+            if (Dist(plocal.xz, r.d.xz, vec2(0.)) < 1.1) {
+                de cand = map(plocal, cid);
+                if (cand.d < best.d) {
+                    best = cand;
+                    bestId = cid;
+                    bestPos = plocal;
+                }
+            }
+        }
+
+        q.id = bestId;
+        q.p = bestPos;
+        s = best;
         
         
         #endif
