@@ -20,6 +20,14 @@ float audioLevel()
     return a;
 }
 
+vec3 audioBands()
+{
+    float lo = sampleFFT(0.020);
+    float md = sampleFFT(0.075);
+    float hi = sampleFFT(0.180);
+    return vec3(lo, md, hi);
+}
+
 void mainImage(out vec4 o, vec2 u) {
     float a = audioLevel();
     float ap = pow(a, 1.9);
@@ -45,5 +53,9 @@ void mainImage(out vec4 o, vec2 u) {
         col += (1.0 + cos(d + vec4(4.0, 2.0, 1.0, 0.0) + ap*1.2)) / ds;
     }
 
+    // Map FFT bands into RGB brightness so frequency levels affect color intensity.
+    vec3 bands = pow(clamp(audioBands(), 0.0, 1.0), vec3(1.7));
+    vec3 gain = vec3(0.85) + vec3(0.65, 0.55, 0.75) * bands;
+    col.rgb *= gain;
     o = tanh(col / 2e3);
 }

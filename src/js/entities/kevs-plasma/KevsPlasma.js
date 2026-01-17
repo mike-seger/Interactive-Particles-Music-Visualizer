@@ -10,7 +10,8 @@ export default class KevsPlasma {
         this.ctx = null;
         
         // Plasma parameters
-        this.plasmaDensity = 128; // Doubled for half the pixel size
+        // Higher density = smaller bubbles (roughly ~30% smaller than 128)
+        this.plasmaDensity = 184;
         this.cycleSpeed = 1;
         this.plasmaFunction = 1; // Function 1 for smooth gradients
         this.timeFunction = 512;
