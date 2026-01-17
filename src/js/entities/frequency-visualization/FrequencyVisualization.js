@@ -120,6 +120,14 @@ vec3 renderAt(vec2 fragCoord) {
   float maxH = floor(iResolution.y * 0.26);
 
   float s = pow(clamp(fSample, 0.0, 1.0), 1.10);
+  
+  // Smoothen left edge onset: specific dampening for the first two bars.
+  if (binIdx < 0.5) {
+    s *= 0.33;
+  } else if (binIdx < 1.5) {
+    s *= 0.66;
+  }
+
   // Reduce max height scalar to avoid massive bass blocks.
   float heightPx = floor((maxH * 0.9) * s);
 
