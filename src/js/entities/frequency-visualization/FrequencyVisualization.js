@@ -137,15 +137,16 @@ vec3 renderAt(vec2 fragCoord) {
   float distDn = sdRoundBox(vec2(cx, cyDn), halfSize, radius);
 
   // Constant AA width (WebGL1-safe).
-  float aa = 1.0;
+  float aa = 1.5;
   float fillUp = smoothstep(aa, -aa, distUp);
   float fillDn = smoothstep(aa, -aa, distDn);
 
-  // Glow: combine a tight edge glow + a wider halo (bloom-like).
+  // Glow: tight edge glow + wider soft halo (AE-like unsharp/foggy look).
   float dUp = max(distUp, 0.0);
   float dDn = max(distDn, 0.0);
-  float glowUp = 0.70 * exp(-dUp * 0.42) + 0.22 * exp(-dUp * 0.11);
-  float glowDn = 0.65 * exp(-dDn * 0.46) + 0.18 * exp(-dDn * 0.12);
+  // Tight glow near edge + medium halo + very soft outer fog.
+  float glowUp = 0.55 * exp(-dUp * 0.38) + 0.30 * exp(-dUp * 0.12) + 0.18 * exp(-dUp * 0.04);
+  float glowDn = 0.50 * exp(-dDn * 0.40) + 0.25 * exp(-dDn * 0.13) + 0.15 * exp(-dDn * 0.05);
 
   float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.22));
 
@@ -179,9 +180,9 @@ vec3 renderAt(vec2 fragCoord) {
 
   vec3 col = vec3(0.0);
   col += tipCol * fillUp;
-  col += tipCol * (0.72 * glowUp);
-  col += tipCol * (0.16 * fillDn * reflFade);
-  col += tipCol * (0.10 * glowDn * reflFade);
+  col += tipCol * (0.65 * glowUp);
+  col += tipCol * (0.18 * fillDn * reflFade);
+  col += tipCol * (0.12 * glowDn * reflFade);
 
   return col;
 }
