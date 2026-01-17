@@ -316,6 +316,30 @@ function inferChannelHints(source) {
       continue
     }
 
+    // Multi-octave noise heuristic:
+    // Many Shadertoy shaders treat iChannel0 (or another channel) as a small random/noise texture
+    // and build fractal noise by sampling it multiple times at different UV scales:
+    //   texture(iChannel0, uv*0.125) + texture(iChannel0, uv*0.25) + ...
+    // This can be misclassified as 'unknown' and would then default to audio in our single-pass mode.
+    // Keep this conservative: require multiple samples and multiple distinct scales.
+    {
+      const scaleRe = new RegExp(
+        `\\btexture(?:2D)?\\s*\\(\\s*${name}\\s*,[\\s\\S]{0,160}?\\*\\s*(0?\\.(?:125|25|5)|1(?:\\.0*)?|2(?:\\.0*)?|4(?:\\.0*)?)\\b`,
+        'g'
+      )
+      const scales = new Set()
+      let sampleCount = 0
+      let m
+      while ((m = scaleRe.exec(src)) && sampleCount < 12) {
+        sampleCount++
+        if (m[1]) scales.add(m[1])
+      }
+      if (sampleCount >= 3 && scales.size >= 2) {
+        hints[ch] = 'noise'
+        continue
+      }
+    }
+
     // Some Shadertoy shaders sample a tiny repeating noise texture with a scaled
     // screen-space coordinate like: vec2(k)*fragCoord/iResolution.yy + ...
     // This commonly indicates NOISE rather than a full-resolution buffer.
@@ -682,6 +706,9 @@ function transformDynamicForLoops(source) {
 
   const escapeRegExp = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
+  // Match numeric literals including exponent forms like 2e1, 1.0e-3.
+  const NUM_LIT = '[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?'
+
   let changed = false
   let out = ''
   let i = 0
@@ -723,8 +750,20 @@ function transformDynamicForLoops(source) {
     }
 
     const inside = src.slice(openParen + 1, closeParen)
-    const [init, cond, inc] = splitForParts(inside)
-    if (!init || !cond || !inc) {
+    const parts = splitForParts(inside)
+    if (parts.length !== 3) {
+      out += src.slice(i, closeParen + 1)
+      i = closeParen + 1
+      continue
+    }
+
+    // NOTE: init/inc may legitimately be empty in GLSL, e.g. `for(; i<10.; i++)`.
+    // Many strict GLSL ES 1.00 compilers still choke on certain non-canonical headers,
+    // so we must not bail out just because init/inc are empty.
+    const init = parts[0]
+    const cond = parts[1]
+    const inc = parts[2]
+    if (!cond) {
       out += src.slice(i, closeParen + 1)
       i = closeParen + 1
       continue
@@ -740,6 +779,54 @@ function transformDynamicForLoops(source) {
     }
     const body = src.slice(bodyStart, bodyEnd + 1)
 
+    // Some strict GLSL ES 1.00 compilers require the loop index initializer to be a
+    // constant expression, even when the loop bound is constant.
+    // Rewrite safe patterns like:
+    //   for (int i = max(0, -iFrame); i < 150; i++)
+    // into:
+    //   int _st_start = max(0, -iFrame);
+    //   for (int i = 0; i < 150; i++) { if (i < _st_start) continue; ... }
+    const nonConstIntInit = init.match(/^\s*int\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)\s*$/)
+    if (nonConstIntInit) {
+      const loopVar = nonConstIntInit[1]
+      const startExpr = nonConstIntInit[2].trim()
+
+      const startIsConst = new RegExp(`^${NUM_LIT}$`).test(startExpr)
+      const condMatch = cond.match(new RegExp(`^\\s*${escapeRegExp(loopVar)}\\s*(<=|<)\\s*(${NUM_LIT})\\s*$`))
+      const incIsCanonical = new RegExp(`^\\s*(\\+\\+\\s*${escapeRegExp(loopVar)}|${escapeRegExp(loopVar)}\\s*\\+\\+)\\s*$`).test(inc)
+
+      // Only apply when the start expression is obviously clamped to >= 0.
+      const startLooksClampedNonNegative =
+        /\bmax\s*\(\s*0\s*,/.test(startExpr) ||
+        /\bclamp\s*\(\s*[^,]+\s*,\s*0\s*,/.test(startExpr) ||
+        /\?\s*[^:]+\s*:\s*0\s*$/.test(startExpr)
+
+      if (!startIsConst && condMatch && incIsCanonical && startLooksClampedNonNegative) {
+        const op = condMatch[1]
+        const boundLit = condMatch[2]
+        const boundBase = Math.max(0, Math.floor(Number(boundLit)))
+        const boundInt = op === '<=' ? boundBase + 1 : boundBase
+        const startVar = `_st_start${j}`
+
+        let newBody = ''
+        const bodyTrim = body.trim()
+        const guard = `  if (${loopVar} < ${startVar}) continue;`
+        if (bodyTrim.startsWith('{')) {
+          const braceIndex = body.indexOf('{')
+          newBody = `${body.slice(0, braceIndex + 1)}\n${guard}\n${body.slice(braceIndex + 1)}`
+        } else {
+          const stmt = bodyTrim.endsWith(';') || bodyTrim.endsWith('}') ? bodyTrim : `${bodyTrim};`
+          newBody = `{\n${guard}\n  ${stmt}\n}`
+        }
+
+        out += src.slice(i, j)
+        out += `int ${startVar} = ${startExpr};\nfor (int ${loopVar} = 0; ${loopVar} < ${boundInt}; ${loopVar}++) ${newBody}`
+        changed = true
+        i = bodyEnd + 1
+        continue
+      }
+    }
+
     // Handle non-canonical loops often found in "minishaders", e.g.
     //   for(vec3 r=iResolution; ++i<77.; z+=.8*d+1e-3) exprStatement;
     // Many GLSL ES 1.00 compilers require the loop header to use a single loop index
@@ -749,19 +836,34 @@ function transformDynamicForLoops(source) {
     // Notes:
     // - Assumes the bound is a numeric literal.
     // - Preserves "++i<..." semantics by assigning i=float(iter+1) each iteration.
-    const nonCanonicalMatch = cond.match(
-      /^\s*\+\+\s*([A-Za-z_][A-Za-z0-9_]*)\s*<\s*([0-9]+(?:\.[0-9]*)?|\.[0-9]+)\s*$/
-    )
-    if (nonCanonicalMatch) {
-      const loopVar = nonCanonicalMatch[1]
-      const boundLit = nonCanonicalMatch[2]
+    const ident = '([A-Za-z_][A-Za-z0-9_]*)'
 
-      // Avoid rewriting if the increment already is the same loop var.
+    // Common minishader patterns:
+    //   ++i < 77.
+    //   i++ < 2e1
+    //   i-->0.    (tokenizes as i-- > 0.)
+    // We rewrite them into canonical loops and move init/inc into safe positions.
+    const incPrefixMatch = cond.match(new RegExp(`^\\s*\\+\\+\\s*${ident}\\s*<\\s*(${NUM_LIT})\\s*$`))
+    const incPostfixMatch = cond.match(new RegExp(`^\\s*${ident}\\s*\\+\\+\\s*<\\s*(${NUM_LIT})\\s*$`))
+    const decPostfixMatch = cond.match(new RegExp(`^\\s*${ident}\\s*--\\s*>\\s*(${NUM_LIT})\\s*$`))
+    const decPrefixMatch = cond.match(new RegExp(`^\\s*--\\s*${ident}\\s*>\\s*(${NUM_LIT})\\s*$`))
+
+    const incMatch = incPrefixMatch || incPostfixMatch
+    if (incMatch) {
+      const loopVar = incPrefixMatch ? incMatch[1] : incMatch[1]
+      const boundLit = incPrefixMatch ? incMatch[2] : incMatch[2]
+
+      // Avoid rewriting if the increment clause already uses the loop var.
       const incUsesLoopVar = new RegExp(`\\b${escapeRegExp(loopVar)}\\b`).test(inc)
       if (!incUsesLoopVar) {
         const boundInt = Math.max(0, Math.floor(Number(boundLit)))
         const iterVar = `_st_i${j}`
         const initStmt = init.trim().length ? `${init.trim()};\n` : ''
+
+        // Only reset loopVar if init doesn't already declare/assign it.
+        const initDefinesLoopVar = new RegExp(`\\b(float|int)\\s+${escapeRegExp(loopVar)}\\b`).test(init)
+        const initAssignsLoopVar = new RegExp(`\\b${escapeRegExp(loopVar)}\\b\\s*=`).test(init)
+        const loopVarReset = initDefinesLoopVar || initAssignsLoopVar ? '' : `${loopVar} = 0.0;\n`
 
         let newBody = ''
         const bodyTrim = body.trim()
@@ -771,7 +873,6 @@ function transformDynamicForLoops(source) {
         if (bodyTrim.startsWith('{')) {
           const braceIndex = body.indexOf('{')
           newBody = `${body.slice(0, braceIndex + 1)}\n${assignLoopVar}\n${body.slice(braceIndex + 1)}`
-          // ensure movedInc runs at end of loop body
           if (movedInc) {
             const closeBrace = newBody.lastIndexOf('}')
             if (closeBrace !== -1) {
@@ -781,13 +882,89 @@ function transformDynamicForLoops(source) {
             }
           }
         } else {
-          // Wrap single statement.
           const stmt = bodyTrim.endsWith(';') || bodyTrim.endsWith('}') ? bodyTrim : `${bodyTrim};`
           newBody = `{\n${assignLoopVar}\n  ${stmt}\n${movedInc}\n}`
         }
 
         out += src.slice(i, j)
-        out += `${initStmt}${loopVar} = 0.0;\nfor (int ${iterVar} = 0; ${iterVar} < ${boundInt}; ${iterVar}++) ${newBody}`
+        // Reset before running initStmt so init expressions like `o*=i` don't read an undefined `i`.
+        out += `${loopVarReset}${initStmt}for (int ${iterVar} = 0; ${iterVar} < ${boundInt}; ${iterVar}++) ${newBody}`
+        changed = true
+        i = bodyEnd + 1
+        continue
+      }
+    }
+
+    // Empty-body for-loops with comma-separated "increment" side effects are common in minishaders, e.g.:
+    //   for (s = .1; s < 2.; p -= ..., p += ..., s *= 1.42);
+    // Some GLSL ES 1.00 compilers reject these as non-canonical. Rewrite into a bounded loop:
+    //   s = .1;
+    //   for (int _st_k = 0; _st_k < _ST_LOOP_MAX; _st_k++) { if (!(s < 2.)) break; p -= ...; p += ...; s *= 1.42; }
+    if (body.trim() === ';') {
+      const initAssign = init.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]+?)\s*$/)
+      const condMatch = cond.match(new RegExp(`^\\s*${ident}\\s*(<|<=|>|>=)\\s*(${NUM_LIT})\\s*$`))
+      if (initAssign && condMatch) {
+        const loopVar = initAssign[1]
+        const initExpr = initAssign[2].trim()
+
+        // Only proceed if condition is on the same loop var.
+        if (condMatch[1] === loopVar) {
+          const incParts = splitTopLevelCommas(inc)
+          // Require at least one side-effect expression in the "inc" clause.
+          if (incParts.length > 0) {
+            const iterVar = `_st_e${j}`
+            const guardCond = `(${cond.trim()})`
+            const bodyLines = incParts
+              .map((p) => p.trim())
+              .filter((p) => p.length)
+              .map((p) => (p.endsWith(';') ? `  ${p}` : `  ${p};`))
+              .join('\n')
+
+            out += src.slice(i, j)
+            out += `${loopVar} = ${initExpr};\nfor (int ${iterVar} = 0; ${iterVar} < _ST_LOOP_MAX; ${iterVar}++) {\n  if (!${guardCond}) break;\n${bodyLines}\n}`
+            changed = true
+            i = bodyEnd + 1
+            continue
+          }
+        }
+      }
+    }
+
+    const decMatch = decPostfixMatch || decPrefixMatch
+    if (decMatch) {
+      const loopVar = decPostfixMatch ? decMatch[1] : decMatch[1]
+      const boundLit = decPostfixMatch ? decMatch[2] : decMatch[2]
+
+      // Avoid rewriting if the increment clause already uses the loop var.
+      const incUsesLoopVar = new RegExp(`\\b${escapeRegExp(loopVar)}\\b`).test(inc)
+      if (!incUsesLoopVar) {
+        const iterVar = `_st_d${j}`
+        const initStmt = init.trim().length ? `${init.trim()};\n` : ''
+
+        // For i-->0 style loops, preserve semantics: check then decrement before body.
+        const prelude = `  if (${loopVar} <= (${boundLit})) break;\n  ${loopVar} -= 1.0;`
+        const movedInc = inc.trim().length ? `  ${inc.trim()};` : ''
+
+        let newBody = ''
+        const bodyTrim = body.trim()
+        if (bodyTrim.startsWith('{')) {
+          const braceIndex = body.indexOf('{')
+          newBody = `${body.slice(0, braceIndex + 1)}\n${prelude}\n${body.slice(braceIndex + 1)}`
+          if (movedInc) {
+            const closeBrace = newBody.lastIndexOf('}')
+            if (closeBrace !== -1) {
+              newBody = `${newBody.slice(0, closeBrace)}\n${movedInc}\n${newBody.slice(closeBrace)}`
+            } else {
+              newBody += `\n${movedInc}\n`
+            }
+          }
+        } else {
+          const stmt = bodyTrim.endsWith(';') || bodyTrim.endsWith('}') ? bodyTrim : `${bodyTrim};`
+          newBody = `{\n${prelude}\n  ${stmt}\n${movedInc}\n}`
+        }
+
+        out += src.slice(i, j)
+        out += `${initStmt}for (int ${iterVar} = 0; ${iterVar} < _ST_LOOP_MAX; ${iterVar}++) ${newBody}`
         changed = true
         i = bodyEnd + 1
         continue
@@ -964,7 +1141,9 @@ function getShadertoyCompatFns(source) {
   const hasTextureFnDef = /\bvec4\s+texture\s*\(/.test(src)
   if (usesTextureFn && !hasTextureFnDef) {
     out.push('vec4 texture(sampler2D s, vec2 uv) { return texture2D(s, uv); }')
+    out.push('vec4 texture(sampler2D s, vec2 uv, float bias) { return texture2D(s, uv, bias); }')
     out.push('vec4 texture(samplerCube s, vec3 dir) { return textureCube(s, dir); }')
+    out.push('vec4 texture(samplerCube s, vec3 dir, float bias) { return textureCube(s, dir, bias); }')
   }
 
   const usesTextureLodFn = /\btextureLod\s*\(/.test(src)
@@ -1004,6 +1183,30 @@ function getShadertoyCompatFns(source) {
     out.push(`vec2 tanh(vec2 x) { return vec2(tanh(x.x), tanh(x.y)); }`)
     out.push(`vec3 tanh(vec3 x) { return vec3(tanh(x.x), tanh(x.y), tanh(x.z)); }`)
     out.push(`vec4 tanh(vec4 x) { return vec4(tanh(x.x), tanh(x.y), tanh(x.z), tanh(x.w)); }`)
+  }
+
+  // GLSL ES 1.00 only defines min/max/clamp for floats/vectors, but many Shadertoy
+  // ports use them with ints (commonly with iFrame). Provide int overloads when
+  // it looks like the shader is doing integer math.
+  const usesMax = /\bmax\s*\(/.test(src)
+  const usesMin = /\bmin\s*\(/.test(src)
+  const usesClamp = /\bclamp\s*\(/.test(src)
+  const maxLooksInt = /\bmax\s*\(\s*[-+]?\d+\s*,|,\s*[-+]?\d+\s*\)/.test(src)
+  const minLooksInt = /\bmin\s*\(\s*[-+]?\d+\s*,|,\s*[-+]?\d+\s*\)/.test(src)
+  const clampLooksInt = /\bclamp\s*\(\s*[^,]+,\s*[-+]?\d+\s*,\s*[-+]?\d+\s*\)/.test(src)
+  const likelyIntMath = /\biFrame\b/.test(src) || /\bint\b/.test(src)
+
+  if (likelyIntMath && ((usesMax && maxLooksInt) || (usesMin && minLooksInt) || (usesClamp && clampLooksInt))) {
+    out.push(
+      [
+        '#ifndef ST_INT_MATH',
+        '#define ST_INT_MATH 1',
+        'int max(int a, int b) { return (a > b) ? a : b; }',
+        'int min(int a, int b) { return (a < b) ? a : b; }',
+        'int clamp(int x, int a, int b) { return min(max(x, a), b); }',
+        '#endif',
+      ].join('\n')
+    )
   }
 
   return out
@@ -1076,6 +1279,15 @@ function buildFragmentSource(common, passCode, opts = {}) {
   const loopResult = transformDynamicForLoops(body)
   body = loopResult.source
 
+  // Precision qualifiers must appear before any global declarations (including uniforms).
+  // Many shaders include their own precision statements; since we inject uniforms in a
+  // prelude, we must lift precision to the prelude and strip it from the body.
+  const floatPrecMatch = body.match(/\bprecision\s+(lowp|mediump|highp)\s+float\s*;/)
+  const intPrecMatch = body.match(/\bprecision\s+(lowp|mediump|highp)\s+int\s*;/)
+  const floatPrec = floatPrecMatch ? floatPrecMatch[1] : 'highp'
+  const intPrec = intPrecMatch ? intPrecMatch[1] : 'highp'
+  body = body.replace(/^\s*precision\s+(lowp|mediump|highp)\s+(float|int)\s*;\s*\n?/gm, '')
+
   /** @type {string[]} */
   const prelude = []
 
@@ -1099,15 +1311,9 @@ function buildFragmentSource(common, passCode, opts = {}) {
     prelude.push(...compatDefines)
   }
 
-  // Precision must appear before any non-preprocessor statement that uses floats.
-  // In particular, we may inject compat functions (round/tanh) which use float/vec
-  // types, so declare precision early.
-  if (!/\bprecision\s+(lowp|mediump|highp)\s+float\s*;/.test(body)) {
-    prelude.push('precision highp float;')
-  }
-  if (!/\bprecision\s+(lowp|mediump|highp)\s+int\s*;/.test(body)) {
-    prelude.push('precision highp int;')
-  }
+  // Precision must appear before any global declarations that use floats/ints.
+  prelude.push(`precision ${floatPrec} float;`)
+  prelude.push(`precision ${intPrec} int;`)
 
   const compatFns = getShadertoyCompatFns(body)
   if (compatFns.length) {

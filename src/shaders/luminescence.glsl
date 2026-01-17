@@ -371,7 +371,7 @@ de CastRay(ray r) {
     float dC = MAX_DISTANCE;
     vec3 p;
     rc q;
-    float t = iTime;
+    float t = iTime * 2.0;
     vec3 grid = vec3(6., 30., 6.);
         
     for(float i=0.; i<MAX_STEPS; i++) {
