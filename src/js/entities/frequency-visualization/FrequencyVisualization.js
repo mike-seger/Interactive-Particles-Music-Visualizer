@@ -307,13 +307,20 @@ vec3 renderAt(vec2 fragCoord) {
       float radius = min(8.0, 0.5 * barW);
       radius = min(radius, min(halfSize.x, halfSize.y));
 
+      // Simulate blurring glass (Defocused look)
+      // Removed noisy jitter to fix grainy artifacts.
+      // Just use a wide smoothstep for optical soften/blur.
+      
+      // Calculate SDF (clean coordinates)
       float distUp = sdRoundBox(vec2(cx, cyUp), halfSize, radius);
       
       // Apply water distortion to the reflection lookup
       float distDn = sdRoundBox(vec2(cx, cyDn) + distort, halfSize, radius);
 
-      float aa = 2.0;
-      float fillUp = smoothstep(aa, -aa, distUp);
+      // Wide smoothstep for optical defocus/scattering
+      // Reduced to prevent closing gaps between bars
+      float blurAmt = 3.0; 
+      float fillUp = smoothstep(blurAmt, -blurAmt, distUp);
       
       float aaRefl = 6.0;
       float fillDn = smoothstep(aaRefl, -aaRefl, distDn);
@@ -326,9 +333,10 @@ vec3 renderAt(vec2 fragCoord) {
       float dxDn = max(qDn.x, 0.0);
       float dyDn = max(qDn.y, 0.0);
 
-      // Consistent glow params
-      float glowUp = 1.0 * exp(-dxUp * 3.0 - dyUp * 2.0) + 0.5 * exp(-dxUp * 4.0 - dyUp * 3.0);
-      float glowDn = 0.8 * exp(-dxDn * 3.0 - dyDn * 2.0) + 0.4 * exp(-dxDn * 4.0 - dyDn * 3.0);
+      // Consistent glow params (Tuned for soft look but preserving gaps)
+      // Decay coefs: 1.5/1.2 (Softer than orig 3.0, tighter than blob 0.5)
+      float glowUp = 0.9 * exp(-dxUp * 1.5 - dyUp * 1.2) + 0.45 * exp(-dxUp * 2.0 - dyUp * 1.5);
+      float glowDn = 0.7 * exp(-dxDn * 1.5 - dyDn * 1.2) + 0.35 * exp(-dxDn * 2.0 - dyDn * 1.5);
       
       float reflFade = exp(-yLocalDown / max(1.0, iResolution.y * 0.08));
 
