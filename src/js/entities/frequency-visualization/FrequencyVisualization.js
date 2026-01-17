@@ -84,17 +84,43 @@ float fbm(vec2 x) {
 
 // Height map for water/slate: layering noise for ridges with movement
 float getSlateHeight(vec2 uv) {
-   float time = iTime * 0.25; // Slow wavy movement
+   float time = iTime * 0.25; 
    
-   // Large Swell: higher amplitude, slower, diagonal (BL to TR)
-   float swellInput = dot(uv, vec2(0.4, 0.6)) - time * 0.8;
-   float swell = 2.0 * sin(swellInput); 
+   // --- Surf / Random Wave Logic ---
+   // Direction: Bottom-Left to Top-Right
+   vec2 dir = normalize(vec2(1.0, 0.7)); 
+   float d = dot(uv, dir);
+   
+   // Irregular timing (waves come in sets)
+   // Modulate time to vary spacing and speed
+   // Reduced speed (0.2x)
+   float tSurf = iTime * 0.2; 
+   
+   // Organic warping (Breaks straight lines)
+   // Distort the domain to bend the wavefronts
+   float warp = noise(uv * 0.6 + vec2(tSurf * 0.5)) * 3.5;
+   float dWarped = d + warp;
 
-   // Primary large ridges
-   float h = swell + fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
-   // Fine grain
+   // Irregular wave train (Interference pattern for "sets")
+   // Combine varying frequencies to break the regular cadence
+   float surge = tSurf; 
+   float w1 = sin(dWarped * 0.8 - surge * 3.0);
+   float w2 = sin(dWarped * 0.53 - surge * 2.1 + 2.0); // mismatched freq
+   
+   // Composite wave: Constructive interference creates "sets"
+   float surf = (w1 + 0.8 * w2) * 0.6; // Scale to ~ -1..1 range
+   
+   // Sharpen peaks: High threshold ensures only strongest overlaps are visible
+   // This results in sparse waves (approx 1-2 active sets)
+   surf = exp(surf * 5.0 - 4.0); 
+   
+   // Doubled amplitude
+   float swell = surf * 24.0;
+
+   float h = swell;
+   // Add existing detail layers
+   h += fbm(uv * 3.0 + vec2(time * 0.5, time * 0.2));
    h += 0.5 * fbm(uv * 12.0 - vec2(time * 0.3));
-   // Micro detail
    h += 0.25 * fbm(uv * 48.0 + vec2(0.0, time * 0.1));
    return h;
 }
