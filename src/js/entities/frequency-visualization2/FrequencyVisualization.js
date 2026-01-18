@@ -1,6 +1,18 @@
 import * as THREE from 'three'
 import App from '../../App'
 
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x))
+
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
+}
+
+function dbToLin(db) {
+  return Math.pow(10, db / 20)
+}
+
+
 const VERT = /* glsl */ `
 precision highp float;
 
@@ -600,9 +612,20 @@ export default class FrequencyVisualization extends THREE.Object3D {
       this._analyser.getByteFrequencyData(this._fftBytes)
     }
 
-    const width = 512
-    const n = this._fftBytes.length
+    // --- Kick / Bass Boost (AE punch) ---
+    // Applied to the *transient* component (after per-bin floor subtraction)
+    // so sustained bass doesn't pin the spectrum.
+    const kickHz = 70.0          // move to 55..90 depending on your material
+    const kickBoostDb = 8.0      // 6..12 dB
+    const kickWidthOct = 0.65    // 0.45..0.9 (smaller = narrower)
+    const subShelfDb = 4.0       // gentle lift below ~120 Hz
 
+    const width = this._audioTex?.image?.width ?? 512
+    const n = this._analyser.frequencyBinCount
+
+    const sampleRate = this._analyser.context?.sampleRate ?? 48000
+    const nyquist = sampleRate * 0.5
+    
     // AE-like stability: attack/release smoothing + noise floor + strong peak emphasis.
     // Faster response for snappier updates.
     const attack = 0.92
@@ -719,10 +742,23 @@ export default class FrequencyVisualization extends THREE.Object3D {
       // Also subtract a global percentile baseline (keeps the whole band from filling up).
       const deBiased = Math.max(0, transient - baseline * baselineStrength)
 
-      // Low-frequency emphasis (bass reads stronger like AE) while keeping
-      // highs from dominating.
-      const lfBoost = 1.55 - 0.55 * Math.pow(t, 0.55) // ~1.55 at bass -> ~1.0 at highs
-      const weighted = Math.max(0, deBiased * lfBoost - displayThreshold)
+      // Frequency-aware emphasis (kick + sub shelf) similar to AE's "punchy" low end.
+      const fHz = t * nyquist
+
+      // Sub-shelf: lift below ~120 Hz, fades out by ~200 Hz.
+      const shelfT = 1.0 - smoothstep(120.0, 220.0, fHz)
+      const shelf = dbToLin(subShelfDb * shelfT)
+
+      // Kick bell around kickHz (in octaves).
+      const oct = Math.log2(Math.max(1e-6, fHz) / kickHz)
+      const sigma = kickWidthOct / 2.355
+      const bell = Math.exp(-(oct * oct) / (2.0 * sigma * sigma))
+      const kick = dbToLin(kickBoostDb * bell)
+
+      // Keep some gentle tilt so highs don't dominate.
+      const tilt = 1.35 - 0.35 * Math.pow(t, 0.55) // ~1.35 at bass -> ~1.0 at highs
+
+      const weighted = Math.max(0, deBiased * shelf * kick * tilt - displayThreshold)
 
       if (weighted > peak) peak = weighted
     }
@@ -746,8 +782,17 @@ export default class FrequencyVisualization extends THREE.Object3D {
       const transient = Math.max(0, shaped - f * floorStrength)
       const deBiased = Math.max(0, transient - baseline * baselineStrength)
 
-      const lfBoost = 1.55 - 0.55 * Math.pow(t, 0.55)
-      const weighted = Math.max(0, deBiased * lfBoost - displayThreshold)
+      const fHz = t * nyquist
+      const shelfT = 1.0 - smoothstep(120.0, 220.0, fHz)
+      const shelf = dbToLin(subShelfDb * shelfT)
+
+      const oct = Math.log2(Math.max(1e-6, fHz) / kickHz)
+      const sigma = kickWidthOct / 2.355
+      const bell = Math.exp(-(oct * oct) / (2.0 * sigma * sigma))
+      const kick = dbToLin(kickBoostDb * bell)
+
+      const tilt = 1.35 - 0.35 * Math.pow(t, 0.55)
+      const weighted = Math.max(0, deBiased * shelf * kick * tilt - displayThreshold)
 
 
       // Final gain. Keep quiet bins quiet.
