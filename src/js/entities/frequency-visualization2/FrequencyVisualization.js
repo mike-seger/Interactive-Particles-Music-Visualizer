@@ -279,7 +279,7 @@ vec3 renderAt(vec2 fragCoord) {
       float uEnd = clamp(uCutHi, 0.0, 1.0);
       
       // Lower gamma to expose more mids/highs detail (closer to AE)
-      float logGamma = 1.0;
+      float logGamma = 1.30;
       float t = pow(clamp(x, 0.0, 1.0), logGamma);
       float sampleX = mix(uStart, uEnd, t);
       
@@ -524,6 +524,10 @@ export default class FrequencyVisualization extends THREE.Object3D {
       this._fftBytes = new Uint8Array(this._analyser.frequencyBinCount)
       this._fftFloats = new Float32Array(this._analyser.frequencyBinCount)
 
+      // IMPORTANT: AnalyserNode has its own temporal smoothing that affects get(Float|Byte)FrequencyData.
+      // If this is high (often default ~0.8), peaks will not decay between beats no matter what we do below.
+      this._analyser.smoothingTimeConstant = 0.0
+
       const maxBars = 220
       const available = this._analyser.frequencyBinCount || 0
 
@@ -601,70 +605,36 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     // AE-like stability: attack/release smoothing + noise floor + strong peak emphasis.
     // Faster response for snappier updates.
-    const attack = 0.75
-    const release = 0.12
-    const noiseFloor = 0.02
-    const peakCurve = 1.15
+    const attack = 0.92
+    const release = 0.78
+    const noiseFloor = 0.01
+    const peakCurve = 1.22
 
     // Map dB -> 0..1 (AE-style: fixed dB window).
     // These are deliberately conservative so most bins sit near zero.
     const minDb = -90
-    const maxDb = -12
+    const maxDb = -25
 
     // Percentile baseline removal (noise floor) + gentle LF emphasis.
     const baselinePercentile = 0.18
-    const baselineStrength = 0.48
-    const displayThreshold = 0.002
+    const baselineStrength = 0.32
+    const displayThreshold = 0.005
 
     // Very limited AGC: only compensates when overall output is too quiet.
-    const targetPeak = 0.98
+    const targetPeak = 0.95
     const minGain = 0.90
-    const maxGain = 2.2
+    const maxGain = 1.35
     const agcAttack = 0.18
-    const agcRelease = 0.07
-
-    // --- AE-ish frequency shaping ---
-    // AE spectra tend to be *mid-forward* with controlled sub-bass and a gentle high rolloff.
-    // We approximate that with: low shelf attenuation + wide mid bell + high rolloff.
-    const clamp01 = (x) => Math.max(0, Math.min(1, x))
-    const smoothstep = (e0, e1, x) => {
-      const t = clamp01((x - e0) / (e1 - e0))
-      return t * t * (3 - 2 * t)
-    }
-    const dbToLin = (db) => Math.pow(10, db / 20)
-
-    const sampleRate = this._analyser?.context?.sampleRate ?? 48000
-    const nyquist = sampleRate * 0.5
-
-    const aeWeight = (i) => {
-      const t = i / (width - 1)
-      const f = t * nyquist
-
-      // Low shelf: attenuate deep lows (sub-bass) so the band doesn't pin constantly.
-      const lowCut = smoothstep(40, 140, f)        // 0 in sub-bass -> 1 above ~140 Hz
-      const lowDb = -9.0 * (1.0 - lowCut)          // up to -9 dB below ~140 Hz
-
-      // Mid bell: wide boost centered ~1.6 kHz.
-      const midCenter = 1600.0
-      const ratio = Math.max(1e-6, f / midCenter)
-      const log2 = Math.log(ratio) / Math.log(2)
-      const midWidthOct = 1.6                       // wide bell
-      const sigma = (midWidthOct / 2.355)           // convert FWHM-ish to sigma
-      const midShape = Math.exp(-(log2 * log2) / (2 * sigma * sigma))
-      const midDb = 6.0 * midShape
-
-      // High rolloff: gently reduce > ~10 kHz.
-      const hiRoll = smoothstep(9000, 16000, f)     // 0 below 9k -> 1 above 16k
-      const hiDb = -6.0 * hiRoll
-
-      return dbToLin(lowDb + midDb + hiDb)
-    }
+    const agcRelease = 0.18
 
     if (!this._audioSmooth || this._audioSmooth.length !== width) {
       this._audioSmooth = new Float32Array(width)
     }
     if (!this._spatialBuf || this._spatialBuf.length !== width) {
       this._spatialBuf = new Float32Array(width)
+    }
+    if (!this._binFloor || this._binFloor.length !== width) {
+      this._binFloor = new Float32Array(width)
     }
 
     let peak = 0
@@ -693,18 +663,13 @@ export default class FrequencyVisualization extends THREE.Object3D {
       this._audioSmooth[i] = shaped
     }
     
-    // Pass 1.5: Spatial smoothing / banding (AE-ish)
-    // Wider kernel makes the result read like frequency *bands* rather than raw FFT bins.
-    // (Also helps match AE's inherently band-aggregated look.)
-    const K = [1, 4, 9, 15, 20, 15, 9, 4, 1]
-    const Ksum = 78
+    // Pass 1.5: Spatial Smoothing (envelope)
+    // Lighter 3-point smoothing to preserve per-bin detail
     for (let i = 0; i < width; i++) {
-      let acc = 0
-      for (let k = -4; k <= 4; k++) {
-        const j = Math.max(0, Math.min(width - 1, i + k))
-        acc += K[k + 4] * (this._audioSmooth[j] ?? 0)
-      }
-      this._spatialBuf[i] = acc / Ksum
+      const iL = Math.max(0, i - 1)
+      const iR = Math.min(width - 1, i + 1)
+      const val = (0.05 * this._audioSmooth[iL]) + (0.90 * this._audioSmooth[i]) + (0.05 * this._audioSmooth[iR])
+      this._spatialBuf[i] = val
     }
 
     // Pass 1.8: Histogram (from spatially smoothed data)
@@ -732,12 +697,32 @@ export default class FrequencyVisualization extends THREE.Object3D {
     for (let i = 0; i < width; i++) {
       const shaped = this._spatialBuf[i] ?? 0
 
-      // Subtract percentile baseline to keep the band from filling up.
-      const deBiased = Math.max(0, shaped - baseline * baselineStrength)
 
-      // AE-ish frequency shaping (mid-forward, controlled lows, gentle high rolloff)
-      const w = aeWeight(i)
-      const weighted = Math.max(0, deBiased * w - displayThreshold)
+      // --- Per-band floor (prevents bass bins from staying high between beats) ---
+      // Maintain a slow-moving baseline per bin and visualize the transient above it.
+      const t = i / (width - 1)
+      const isLow = t < 0.20
+      const floorAtk = isLow ? 0.18 : 0.10   // how fast the floor follows upward
+      const floorRel = isLow ? 0.03 : 0.015  // how fast the floor falls back down
+
+      const fPrev = this._binFloor[i] ?? 0
+      const fNext = shaped > fPrev
+        ? fPrev + (shaped - fPrev) * floorAtk
+        : fPrev + (shaped - fPrev) * floorRel
+      this._binFloor[i] = fNext
+
+      // Subtract most of the floor (more in the lows). This makes kicks pop but
+      // lets sustained basslines decay visually like AE.
+      const floorStrength = isLow ? 0.80 : 0.60
+      const transient = Math.max(0, shaped - fNext * floorStrength)
+
+      // Also subtract a global percentile baseline (keeps the whole band from filling up).
+      const deBiased = Math.max(0, transient - baseline * baselineStrength)
+
+      // Low-frequency emphasis (bass reads stronger like AE) while keeping
+      // highs from dominating.
+      const lfBoost = 1.55 - 0.55 * Math.pow(t, 0.55) // ~1.55 at bass -> ~1.0 at highs
+      const weighted = Math.max(0, deBiased * lfBoost - displayThreshold)
 
       if (weighted > peak) peak = weighted
     }
@@ -753,9 +738,17 @@ export default class FrequencyVisualization extends THREE.Object3D {
     for (let i = 0; i < width; i++) {
       const shaped = this._spatialBuf[i] ?? 0
 
-      const deBiased = Math.max(0, shaped - baseline * baselineStrength)
-      const w = aeWeight(i)
-      const weighted = Math.max(0, deBiased * w - displayThreshold)
+
+      const t = i / (width - 1)
+      const isLow = t < 0.20
+      const f = this._binFloor[i] ?? 0
+      const floorStrength = isLow ? 0.80 : 0.60
+      const transient = Math.max(0, shaped - f * floorStrength)
+      const deBiased = Math.max(0, transient - baseline * baselineStrength)
+
+      const lfBoost = 1.55 - 0.55 * Math.pow(t, 0.55)
+      const weighted = Math.max(0, deBiased * lfBoost - displayThreshold)
+
 
       // Final gain. Keep quiet bins quiet.
       const leveled = Math.max(0, Math.min(1, weighted * (this._agcGain ?? 1)))
