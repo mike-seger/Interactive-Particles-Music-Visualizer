@@ -33,6 +33,8 @@ import FireworksNight from './entities/fireworks-night/FireworksNight'
 import FireworksShader from './entities/fireworks-shader/FireworksShader'
 import ThreeDAudioVisualizer from './entities/3d-audio-visualizer/ThreeDAudioVisualizer'
 import FrequencyVisualization from './entities/frequency-visualization/FrequencyVisualization'
+import FrequencyVisualization2 from './entities/frequency-visualization2/FrequencyVisualization'
+import FrequencyVisualization3 from './entities/frequency-visualization3/FrequencyVisualization'
 import PulseWaves from './entities/pulse-waves/PulseWaves'
 import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
 import * as dat from 'dat.gui'
@@ -74,6 +76,8 @@ export default class App {
     'Fluid',
     'Frequency Bars',
     'Frequency Visualization',
+    'Frequency Visualization 2',
+    'Frequency Visualization 3',
     'Frequency Rings',
     'Iris',
     'Sparkling Boxes',
@@ -600,6 +604,12 @@ export default class App {
         break
       case 'Frequency Visualization':
         App.currentVisualizer = new FrequencyVisualization()
+        break
+      case 'Frequency Visualization 2':
+        App.currentVisualizer = new FrequencyVisualization2()
+        break
+      case 'Frequency Visualization 3':
+        App.currentVisualizer = new FrequencyVisualization3()
         break
       case 'Oscilloscope':
         App.currentVisualizer = new AudioOscilloscope()
