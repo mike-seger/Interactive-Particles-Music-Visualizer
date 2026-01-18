@@ -44,6 +44,10 @@ export default class AudioManager {
       // Create analyser for visualization
       const analyser = this.audioContext.createAnalyser()
       analyser.fftSize = 2048
+      // Match bridge behavior: no internal smoothing, fixed dB window
+      analyser.smoothingTimeConstant = 0.0
+      analyser.minDecibels = -90
+      analyser.maxDecibels = -25
       
       // Connect: source -> analyser -> destination (speakers)
       source.connect(analyser)
