@@ -278,13 +278,17 @@ vec3 renderAt(vec2 fragCoord) {
       float uStart = skip / max(1.0, binsAll);
       float uEnd = clamp(uCutHi, 0.0, 1.0);
       
-      float logGamma = 1.55;
+      // Lower gamma to expose more mids/highs detail (closer to AE)
+      float logGamma = 1.30;
       float t = pow(clamp(x, 0.0, 1.0), logGamma);
       float sampleX = mix(uStart, uEnd, t);
       
+      // Use single-tap sampling to preserve per-bin detail (no extra averaging here)
       float fSample = texture2D(iChannel0, vec2(sampleX, 0.25)).x;
 
       float baseY = floor(iResolution.y * 0.30);
+      // Visual height scale (lifted to better match AE peak levels)
+      float heightScale = 0.78;
       float maxH = floor(iResolution.y * 0.26);
 
       float s = pow(clamp(fSample, 0.0, 1.0), 1.10);
@@ -293,8 +297,9 @@ vec3 renderAt(vec2 fragCoord) {
       if (binIdx < 0.5) s *= 0.33;
       else if (binIdx < 1.5) s *= 0.66;
 
-      float heightPx = floor((maxH * 0.9) * s);
-      float minHPx = barW;
+      float heightPx = floor((maxH * heightScale) * s);
+      // Allow near-silent bins to stay thin instead of enforcing full bar width
+      float minHPx = max(1.0, barW * 0.35);
       heightPx = max(heightPx, minHPx);
 
       float yLocalUp = fc.y - baseY;
@@ -378,7 +383,8 @@ vec3 renderAt(vec2 fragCoord) {
       
       // Increased brightness to compensate for blur spreading
       // Removed min(1.0) clamp to allow over-driving brightness
-      vec3 tipCol = baseCol * (1.8 + 0.6 * tip);
+      // Slightly brighter tips to match AE perceived levels
+      vec3 tipCol = baseCol * (1.75 + 0.60 * tip);
 
       // Composite Bars (Opaque Body)
       // Mix the solid bar color over the background based on fillUp mask.
@@ -387,8 +393,9 @@ vec3 renderAt(vec2 fragCoord) {
       col += tipCol * (1.1 * glowUp);
       
       // Composite Reflection (Additive on floor)
-      col += tipCol * (0.18 * fillDn * reflFade);
-      col += tipCol * (0.22 * glowDn * reflFade);
+        // Dim reflection relative to AE target
+        col += tipCol * (0.14 * fillDn * reflFade);
+        col += tipCol * (0.17 * glowDn * reflFade);
   }
 
   return col;
@@ -593,10 +600,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const n = this._fftBytes.length
 
     // AE-like stability: attack/release smoothing + noise floor + strong peak emphasis.
-    const attack = 0.60
-    const release = 0.10
-    const noiseFloor = 0.03
-    const peakCurve = 1.75
+    // Faster response for snappier updates.
+    const attack = 0.92
+    const release = 0.28
+    const noiseFloor = 0.02
+    const peakCurve = 1.70
 
     // Map dB -> 0..1 (AE-style: fixed dB window).
     // These are deliberately conservative so most bins sit near zero.
@@ -604,16 +612,16 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const maxDb = -25
 
     // Percentile baseline removal (noise floor) + gentle LF emphasis.
-    const baselinePercentile = 0.25
-    const baselineStrength = 0.78
-    const displayThreshold = 0.01
+    const baselinePercentile = 0.18
+    const baselineStrength = 0.48
+    const displayThreshold = 0.005
 
     // Very limited AGC: only compensates when overall output is too quiet.
-    const targetPeak = 0.85
+    const targetPeak = 0.95
     const minGain = 0.90
-    const maxGain = 1.25
-    const agcAttack = 0.08
-    const agcRelease = 0.02
+    const maxGain = 1.22
+    const agcAttack = 0.18
+    const agcRelease = 0.07
 
     if (!this._audioSmooth || this._audioSmooth.length !== width) {
       this._audioSmooth = new Float32Array(width)
@@ -649,11 +657,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
     }
     
     // Pass 1.5: Spatial Smoothing (envelope)
-    // 3-point weighted average to reduce single spikes
+    // Lighter 3-point smoothing to preserve per-bin detail
     for (let i = 0; i < width; i++) {
       const iL = Math.max(0, i - 1)
       const iR = Math.min(width - 1, i + 1)
-      const val = (this._audioSmooth[iL] + 2.0 * this._audioSmooth[i] + this._audioSmooth[iR]) * 0.25
+      const val = (0.05 * this._audioSmooth[iL]) + (0.90 * this._audioSmooth[i]) + (0.05 * this._audioSmooth[iR])
       this._spatialBuf[i] = val
     }
 
