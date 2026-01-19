@@ -990,10 +990,33 @@ export default class App {
       return ctrl
     }
 
+    // Shelf / tone
     addSlider('bassFreqHz', 'Bass boost freq (Hz)', 20, 140, 1)
     addSlider('bassWidthHz', 'Boost width (Hz)', 1, 50, 1)
     addSlider('bassGainDb', 'Boost gain (dB)', -6, 30, 0.5)
     addSlider('hiRolloffDb', 'High rolloff (dB)', -24, 0, 0.5)
+
+    // Temporal envelope
+    addSlider('attack', 'Attack', 0.01, 1.0, 0.01)
+    addSlider('release', 'Release', 0.01, 1.0, 0.01)
+    addSlider('noiseFloor', 'Noise floor', 0.0, 0.2, 0.001)
+    addSlider('peakCurve', 'Peak curve', 0.5, 4.0, 0.05)
+
+    // dB window
+    addSlider('minDb', 'Min dB', -120, -10, 1)
+    addSlider('maxDb', 'Max dB', -60, 0, 1)
+
+    // Baseline & threshold
+    addSlider('baselinePercentile', 'Baseline percentile', 0.01, 0.5, 0.005)
+    addSlider('baselineStrength', 'Baseline strength', 0.0, 1.0, 0.01)
+    addSlider('displayThreshold', 'Display threshold', 0.0, 0.05, 0.0005)
+
+    // AGC
+    addSlider('targetPeak', 'Target peak', 0.1, 1.5, 0.01)
+    addSlider('minGain', 'Min gain', 0.05, 3.0, 0.01)
+    addSlider('maxGain', 'Max gain', 0.1, 5.0, 0.01)
+    addSlider('agcAttack', 'AGC attack', 0.0, 1.0, 0.01)
+    addSlider('agcRelease', 'AGC release', 0.0, 1.0, 0.01)
 
     Object.values(this.variant3Controllers).forEach((ctrl) => {
       if (ctrl?.updateDisplay) ctrl.updateDisplay()

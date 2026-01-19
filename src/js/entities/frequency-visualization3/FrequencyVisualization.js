@@ -440,6 +440,28 @@ export default class FrequencyVisualization extends THREE.Object3D {
       bassGainDb: 8.0,
       // High-frequency rolloff amount (negative dB).
       hiRolloffDb: -6.0,
+
+      // Temporal smoothing
+      attack: 0.75,
+      release: 0.12,
+      noiseFloor: 0.02,
+      peakCurve: 1.25,
+
+      // dB window
+      minDb: -80,
+      maxDb: -18,
+
+      // Baseline and thresholding
+      baselinePercentile: 0.18,
+      baselineStrength: 0.48,
+      displayThreshold: 0.005,
+
+      // AGC and leveling
+      targetPeak: 0.95,
+      minGain: 0.90,
+      maxGain: 1.22,
+      agcAttack: 0.18,
+      agcRelease: 0.07,
     }
 
     // Visual bins (bars) count.
@@ -606,11 +628,39 @@ export default class FrequencyVisualization extends THREE.Object3D {
       return Math.min(hi, Math.max(lo, n))
     }
 
+    const minDbRaw = clamp(src.minDb, -120, -10, this._controls?.minDb ?? -80)
+    const maxDbRaw = clamp(src.maxDb, -60, 0, this._controls?.maxDb ?? -18)
+    const minDb = Math.min(minDbRaw, maxDbRaw - 1)
+    const maxDb = Math.max(maxDbRaw, minDb + 1)
+
+    const minGainRaw = clamp(src.minGain, 0.05, 3.0, this._controls?.minGain ?? 0.9)
+    const maxGainRaw = clamp(src.maxGain, 0.1, 5.0, this._controls?.maxGain ?? 1.22)
+    const minGain = Math.min(minGainRaw, maxGainRaw - 0.01)
+    const maxGain = Math.max(maxGainRaw, minGain + 0.01)
+
     return {
       bassFreqHz: clamp(src.bassFreqHz, 20, 140, this._controls?.bassFreqHz ?? 130),
       bassWidthHz: clamp(src.bassWidthHz, 1, 50, this._controls?.bassWidthHz ?? 40),
       bassGainDb: clamp(src.bassGainDb, -6, 30, this._controls?.bassGainDb ?? 8),
       hiRolloffDb: clamp(src.hiRolloffDb, -24, 0, this._controls?.hiRolloffDb ?? -6),
+
+      attack: clamp(src.attack, 0.01, 1.0, this._controls?.attack ?? 0.75),
+      release: clamp(src.release, 0.01, 1.0, this._controls?.release ?? 0.12),
+      noiseFloor: clamp(src.noiseFloor, 0.0, 0.2, this._controls?.noiseFloor ?? 0.02),
+      peakCurve: clamp(src.peakCurve, 0.5, 4.0, this._controls?.peakCurve ?? 1.25),
+
+      minDb,
+      maxDb,
+
+      baselinePercentile: clamp(src.baselinePercentile, 0.01, 0.5, this._controls?.baselinePercentile ?? 0.18),
+      baselineStrength: clamp(src.baselineStrength, 0.0, 1.0, this._controls?.baselineStrength ?? 0.48),
+      displayThreshold: clamp(src.displayThreshold, 0.0, 0.05, this._controls?.displayThreshold ?? 0.005),
+
+      targetPeak: clamp(src.targetPeak, 0.1, 1.5, this._controls?.targetPeak ?? 0.95),
+      minGain,
+      maxGain,
+      agcAttack: clamp(src.agcAttack, 0.0, 1.0, this._controls?.agcAttack ?? 0.18),
+      agcRelease: clamp(src.agcRelease, 0.0, 1.0, this._controls?.agcRelease ?? 0.07),
     }
   }
 
@@ -648,27 +698,27 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     // AE-like stability: attack/release smoothing + noise floor + strong peak emphasis.
     // Faster response for snappier updates.
-    const attack = 0.75
-    const release = 0.12
-    const noiseFloor = 0.02
-    const peakCurve = 1.25
+    const attack = controls.attack
+    const release = controls.release
+    const noiseFloor = controls.noiseFloor
+    const peakCurve = controls.peakCurve
 
     // Map dB -> 0..1 (AE-style: fixed dB window).
     // These are deliberately conservative so most bins sit near zero.
-    const minDb = -80
-    const maxDb = -18
+    const minDb = controls.minDb
+    const maxDb = controls.maxDb
 
     // Percentile baseline removal (noise floor) + gentle LF emphasis.
-    const baselinePercentile = 0.18
-    const baselineStrength = 0.48
-    const displayThreshold = 0.005
+    const baselinePercentile = controls.baselinePercentile
+    const baselineStrength = controls.baselineStrength
+    const displayThreshold = controls.displayThreshold
 
     // Very limited AGC: only compensates when overall output is too quiet.
-    const targetPeak = 0.95
-    const minGain = 0.90
-    const maxGain = 1.22
-    const agcAttack = 0.18
-    const agcRelease = 0.07
+    const targetPeak = controls.targetPeak
+    const minGain = controls.minGain
+    const maxGain = controls.maxGain
+    const agcAttack = controls.agcAttack
+    const agcRelease = controls.agcRelease
 
     // --- AE-ish frequency shaping ---
     // AE spectra tend to be *mid-forward* with controlled sub-bass and a gentle high rolloff.
