@@ -756,7 +756,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
       const kick = dbToLin(kickBoostDb * bell)
 
       // Keep some gentle tilt so highs don't dominate.
-      const tilt = 1.35 - 0.35 * Math.pow(t, 0.55) // ~1.35 at bass -> ~1.0 at highs
+      const tilt = 1.45 - 0.45 * Math.pow(t, 0.55) // ~1.45 at bass -> ~1.0 at highs
 
       const weighted = Math.max(0, deBiased * shelf * kick * tilt - displayThreshold)
 

@@ -693,12 +693,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
       // Subtract percentile baseline to keep the band from filling up.
       const deBiased = Math.max(0, shaped - baseline * baselineStrength)
 
-      // Low-frequency emphasis (bass reads stronger like AE) while keeping
-      // highs from dominating.
+      // Low-frequency emphasis (boost kicks) while keeping highs energetic.
       const t = i / (width - 1)
-      // High frequencies should be ~2x taller than lows.
-      const hfBoost = 1.0 + 1.0 * Math.pow(t, 0.70) // ~1.0 at bass -> ~2.0 at highs
-      const weighted = Math.max(0, deBiased * hfBoost - displayThreshold)
+      const bassBoost = 1.25 - 0.35 * t;          // ~1.25 at bass down to ~0.9 at highs
+      const hfBoost = 1.0 + 0.80 * Math.pow(t, 0.65); // ~1.0 at bass up to ~1.8 at highs
+      const weighted = Math.max(0, deBiased * bassBoost * hfBoost - displayThreshold)
 
       if (weighted > peak) peak = weighted
     }
@@ -716,8 +715,9 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
       const deBiased = Math.max(0, shaped - baseline * baselineStrength)
       const t = i / (width - 1)
-      const hfBoost = 1.0 + 1.0 * Math.pow(t, 0.70)
-      const weighted = Math.max(0, deBiased * hfBoost - displayThreshold)
+      const bassBoost = 1.25 - 0.35 * t
+      const hfBoost = 1.0 + 0.80 * Math.pow(t, 0.65)
+      const weighted = Math.max(0, deBiased * bassBoost * hfBoost - displayThreshold)
 
       // Final gain. Keep quiet bins quiet.
       const leveled = Math.max(0, Math.min(1, weighted * (this._agcGain ?? 1)))

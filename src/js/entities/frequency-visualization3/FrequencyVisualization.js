@@ -430,6 +430,18 @@ export default class FrequencyVisualization extends THREE.Object3D {
     // Histogram buffer for fast percentile baseline estimation.
     this._hist = new Uint16Array(64)
 
+    // User-tweakable weighting controls (variant 3 only).
+    this._controls = {
+      // Where the low shelf decays to zero boost (Hz).
+      bassFreqHz: 130,
+      // Transition width for the shelf decay (Hz).
+      bassWidthHz: 40,
+      // Gain applied below the shelf knee (dB).
+      bassGainDb: 8.0,
+      // High-frequency rolloff amount (negative dB).
+      hiRolloffDb: -6.0,
+    }
+
     // Visual bins (bars) count.
     this._vBars = 140
     // Bar fill ratio (0..1). Lower means thinner bars / larger gaps.
@@ -513,6 +525,15 @@ export default class FrequencyVisualization extends THREE.Object3D {
     this._mat = mat
     this._mesh = mesh
 
+    // Ensure a holder exists in case init runs before App.holder is ready.
+    if (!App.holder) {
+      App.holder = new THREE.Object3D()
+      App.holder.name = 'holder'
+      if (App.scene) {
+        App.scene.add(App.holder)
+      }
+    }
+
     App.holder.add(mesh)
     this._syncResolution()
     window.addEventListener('resize', this._onResize)
@@ -579,6 +600,28 @@ export default class FrequencyVisualization extends THREE.Object3D {
     this._audioTex = tex
   }
 
+  _normalizeControls(src = {}) {
+    const clamp = (v, lo, hi, fallback) => {
+      const n = Number.isFinite(v) ? v : fallback
+      return Math.min(hi, Math.max(lo, n))
+    }
+
+    return {
+      bassFreqHz: clamp(src.bassFreqHz, 20, 140, this._controls?.bassFreqHz ?? 130),
+      bassWidthHz: clamp(src.bassWidthHz, 1, 50, this._controls?.bassWidthHz ?? 40),
+      bassGainDb: clamp(src.bassGainDb, -6, 30, this._controls?.bassGainDb ?? 8),
+      hiRolloffDb: clamp(src.hiRolloffDb, -24, 0, this._controls?.hiRolloffDb ?? -6),
+    }
+  }
+
+  getControlParams() {
+    return { ...this._controls }
+  }
+
+  setControlParams(next = {}) {
+    this._controls = this._normalizeControls({ ...this._controls, ...next })
+  }
+
   _updateAudioTexture() {
     if (!this._analyser || !this._fftBytes || !this._audioTexData || !this._audioTex) return
 
@@ -595,6 +638,10 @@ export default class FrequencyVisualization extends THREE.Object3D {
     } else {
       this._analyser.getByteFrequencyData(this._fftBytes)
     }
+
+    // Ensure control params stay clamped to safe ranges.
+    this._controls = this._normalizeControls(this._controls)
+    const controls = this._controls
 
     const width = 512
     const n = this._fftBytes.length
@@ -640,9 +687,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
       const t = i / (width - 1)
       const f = t * nyquist
 
-      // Low shelf: attenuate deep lows (sub-bass) so the band doesn't pin constantly.
-      const lowCut = smoothstep(40, 140, f)        // 0 in sub-bass -> 1 above ~140 Hz
-      const lowDb = -9.0 * (1.0 - lowCut)          // up to -9 dB below ~140 Hz
+      // Low shelf: gently lift deep lows/kick energy.
+      const bassEdgeHi = Math.min(nyquist * 0.98, Math.max(20, controls.bassFreqHz))
+      const bassEdgeLo = Math.max(5, Math.min(bassEdgeHi - 1, bassEdgeHi - controls.bassWidthHz))
+      const lowCut = smoothstep(bassEdgeLo, bassEdgeHi, f) // 0 in sub-bass -> 1 above knee
+      const lowDb = controls.bassGainDb * (1.0 - lowCut)
 
       // Mid bell: wide boost centered ~1.6 kHz.
       const midCenter = 1600.0
@@ -655,7 +704,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
       // High rolloff: gently reduce > ~10 kHz.
       const hiRoll = smoothstep(9000, 16000, f)     // 0 below 9k -> 1 above 16k
-      const hiDb = -6.0 * hiRoll
+      const hiDb = controls.hiRolloffDb * hiRoll
 
       return dbToLin(lowDb + midDb + hiDb)
     }

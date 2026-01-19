@@ -112,6 +112,11 @@ export default class App {
     this.visualizerSwitcherConfig = null
     this.visualizerController = null
 
+    // Variant 3 GUI state
+    this.variant3Folder = null
+    this.variant3Controllers = {}
+    this.variant3Config = null
+
     // Toast showing the current visualizer name
     this.visualizerToast = null
     this.visualizerToastHideTimer = null
@@ -220,6 +225,11 @@ export default class App {
       guiContainer.style.zIndex = '2500'
       guiContainer.style.pointerEvents = 'auto'
       guiContainer.style.display = 'block'
+      guiContainer.style.right = '12px'
+      guiContainer.style.left = 'auto'
+      guiContainer.style.top = '12px'
+      guiContainer.style.maxWidth = 'calc(100vw - 24px)'
+      guiContainer.style.boxSizing = 'border-box'
 
       // Also set on the root in case autoPlace behavior differs.
       guiRoot.style.position = 'relative'
@@ -650,6 +660,13 @@ export default class App {
     }
     
     App.currentVisualizer.init()
+
+    if (type === 'Frequency Visualization 3') {
+      this.setupFrequencyViz3Controls(App.currentVisualizer)
+    } else {
+      this.teardownFrequencyViz3Controls()
+    }
+
     App.visualizerType = type
     this.saveVisualizerType(type)
 
@@ -861,6 +878,127 @@ export default class App {
     } else {
       this.switchVisualizer(next)
     }
+  }
+
+  ensureVariant3GuiStyles() {
+    if (document.getElementById('fv3-gui-style')) return
+    const style = document.createElement('style')
+    style.id = 'fv3-gui-style'
+    style.textContent = `
+      .dg.main { width: 445px !important; }
+      .dg .fv3-controls { width: 100%; max-width: 100%; box-sizing: border-box; }
+      .dg .fv3-controls .cr.number { padding: 4px 4px 6px; }
+      .dg .fv3-controls .cr.number .property-name { width: 40%; text-align: left; font-weight: 600; }
+      .dg .fv3-controls .cr.number .c {
+        width: 60%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dg .fv3-controls .cr.number .c .slider,
+      .dg .fv3-controls .cr.number .c input[type="text"] {
+        float: none !important;
+        box-sizing: border-box;
+      }
+      .dg .fv3-controls .cr.number .c .slider {
+        order: 1;
+        flex: 1 1 auto;
+        min-width: 140px;
+        height: 16px;
+        position: relative;
+        overflow: hidden;
+      }
+      .dg .fv3-controls .cr.number .c input[type="text"] {
+        order: 2;
+        flex: 0 0 60px;
+        min-width: 60px;
+        max-width: 60px;
+        width: 60px !important;
+        padding: 2px 4px;
+        border: 1px solid #444;
+        opacity: 1;
+        text-align: right;
+      }
+      .dg .fv3-controls .slider-fg { position: relative; height: 100%; }
+    `
+    document.head.appendChild(style)
+  }
+
+  teardownFrequencyViz3Controls() {
+    if (!this.variant3Folder) return
+    const folder = this.variant3Folder
+    const parent = folder.domElement?.parentElement
+    if (parent && folder.domElement) {
+      parent.removeChild(folder.domElement)
+    }
+    if (App.gui?.__folders && folder.name && App.gui.__folders[folder.name]) {
+      delete App.gui.__folders[folder.name]
+    }
+    if (typeof App.gui?.onResize === 'function') {
+      App.gui.onResize()
+    }
+    this.variant3Folder = null
+    this.variant3Controllers = {}
+    this.variant3Config = null
+  }
+
+  setupFrequencyViz3Controls(visualizer) {
+    this.teardownFrequencyViz3Controls()
+    if (!visualizer || typeof visualizer.getControlParams !== 'function' || typeof visualizer.setControlParams !== 'function' || !App.gui) return
+
+    this.ensureVariant3GuiStyles()
+
+    this.variant3Config = { ...visualizer.getControlParams() }
+    const folderName = 'Frequency Viz 3 Controls'
+    const folder = App.gui.addFolder(folderName)
+    folder.open()
+
+    folder.domElement.classList.add('fv3-controls')
+    const parent = folder.domElement?.parentElement
+    if (parent) parent.classList.add('fv3-controls')
+
+    this.variant3Folder = folder
+    this.variant3Controllers = {}
+
+    const formatValue = (value, step) => {
+      if (!Number.isFinite(value)) return ''
+      const s = Number.isFinite(step) ? step : 0.01
+      const mag = Math.abs(s)
+      const decimals = mag >= 1 ? 0 : mag >= 0.1 ? 1 : mag >= 0.01 ? 2 : 3
+      return value.toFixed(decimals)
+    }
+
+    const updateSliderValueLabel = (controller, value) => {
+      const slider = controller?.__slider
+      const input = controller?.__input
+      const display = formatValue(value, controller.__impliedStep || controller.__step || 0.01)
+      if (input) input.value = display
+      if (controller?.updateDisplay) controller.updateDisplay()
+    }
+
+    const addSlider = (prop, label, min, max, step = 1) => {
+      const ctrl = folder.add(this.variant3Config, prop, min, max).step(step).name(label).listen()
+      ctrl.onChange((value) => {
+        if (Number.isFinite(value)) {
+          visualizer.setControlParams({ [prop]: value })
+          updateSliderValueLabel(ctrl, value)
+        }
+      })
+      this.variant3Controllers[prop] = ctrl
+      // Initialize displayed value (async to allow DOM paint)
+      requestAnimationFrame(() => updateSliderValueLabel(ctrl, this.variant3Config[prop]))
+      return ctrl
+    }
+
+    addSlider('bassFreqHz', 'Bass boost freq (Hz)', 20, 140, 1)
+    addSlider('bassWidthHz', 'Boost width (Hz)', 1, 50, 1)
+    addSlider('bassGainDb', 'Boost gain (dB)', -6, 30, 0.5)
+    addSlider('hiRolloffDb', 'High rolloff (dB)', -24, 0, 0.5)
+
+    Object.values(this.variant3Controllers).forEach((ctrl) => {
+      if (ctrl?.updateDisplay) ctrl.updateDisplay()
+      requestAnimationFrame(() => updateSliderValueLabel(ctrl, this.variant3Config[ctrl.property]))
+    })
   }
   
   addVisualizerSwitcher() {
