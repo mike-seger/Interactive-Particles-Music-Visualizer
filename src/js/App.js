@@ -120,6 +120,7 @@ export default class App {
     this.variant3LoadSelect = null
     this.variant3PresetRow = null
     this.variant3UploadInput = null
+    this.variant3Overlay = null
 
     // Toast showing the current visualizer name
     this.visualizerToast = null
@@ -184,6 +185,98 @@ export default class App {
     }
   }
 
+  initPlayerControls() {
+    const controls = document.getElementById('player-controls')
+    if (!controls) return
+
+    const playPauseBtn = document.getElementById('play-pause-btn')
+    const muteBtn = document.getElementById('mute-btn')
+    const micBtn = document.getElementById('mic-btn')
+    const positionSlider = document.getElementById('position-slider')
+    const timeDisplay = document.getElementById('time-display')
+
+    let isSeeking = false
+
+    const updatePlayState = () => {
+      if (!App.audioManager?.audio) return
+      const isPlaying = !App.audioManager.audio.paused
+      playPauseBtn.textContent = isPlaying ? 'Pause' : 'Play'
+    }
+
+    const updateMuteState = () => {
+      if (!App.audioManager?.audio) return
+      const isMuted = !!App.audioManager.audio.muted
+      muteBtn.textContent = isMuted ? 'Unmute' : 'Mute'
+    }
+
+    const formatTime = (seconds) => {
+      const mins = Math.floor(seconds / 60)
+      const secs = Math.floor(seconds % 60)
+      return `${mins}:${secs.toString().padStart(2, '0')}`
+    }
+
+    const updateTime = () => {
+      if (!App.audioManager?.audio) return
+      const audio = App.audioManager.audio
+      const current = audio.currentTime || 0
+      const duration = audio.duration || 0
+      if (!isSeeking) {
+        positionSlider.value = duration ? (current / duration) * 100 : 0
+      }
+      timeDisplay.textContent = `${formatTime(current)} / ${formatTime(duration || 0)}`
+    }
+
+    playPauseBtn?.addEventListener('click', () => {
+      if (!App.audioManager?.audio) return
+      const audio = App.audioManager.audio
+      if (audio.paused) {
+        audio.play()
+      } else {
+        audio.pause()
+      }
+      updatePlayState()
+    })
+
+    muteBtn?.addEventListener('click', () => {
+      if (!App.audioManager?.audio) return
+      App.audioManager.audio.muted = !App.audioManager.audio.muted
+      updateMuteState()
+    })
+
+    // Microphone toggle not implemented; keep button disabled.
+    if (micBtn) {
+      micBtn.disabled = true
+      micBtn.title = 'Microphone input not available in this build'
+    }
+
+    positionSlider?.addEventListener('mousedown', () => { isSeeking = true })
+    positionSlider?.addEventListener('mouseup', () => { isSeeking = false })
+    positionSlider?.addEventListener('input', (e) => {
+      if (!App.audioManager?.audio) return
+      const duration = App.audioManager.audio.duration || 0
+      const seekTime = (e.target.value / 100) * duration
+      timeDisplay.textContent = `${formatTime(seekTime)} / ${formatTime(duration)}`
+    })
+    positionSlider?.addEventListener('change', (e) => {
+      if (!App.audioManager?.audio) return
+      const duration = App.audioManager.audio.duration || 0
+      const seekTime = (e.target.value / 100) * duration
+      App.audioManager.seek(seekTime)
+      this.savePlaybackPosition(seekTime)
+      isSeeking = false
+    })
+
+    updatePlayState()
+    updateMuteState()
+    updateTime()
+    setInterval(updateTime, 1000)
+
+    window.addEventListener('beforeunload', () => {
+      if (!App.audioManager || !App.audioManager.audio || App.audioManager.isUsingMicrophone) return
+      this.savePlaybackPosition(App.audioManager.getCurrentTime())
+    })
+  }
+
   init() {
     document.removeEventListener('click', this.onClickBinder)
 
@@ -245,183 +338,6 @@ export default class App {
 
     this.resize()
     window.addEventListener('resize', () => this.resize())
-  }
-
-  initPlayerControls() {
-    const controls = document.getElementById('player-controls')
-    const playPauseBtn = document.getElementById('play-pause-btn')
-    const muteBtn = document.getElementById('mute-btn')
-    const micBtn = document.getElementById('mic-btn')
-    const positionSlider = document.getElementById('position-slider')
-    const timeDisplay = document.getElementById('time-display')
-    let hideTimer = null
-    let isVisible = false
-    let isSeeking = false
-    
-    // Update time display and slider position
-    const updateTime = () => {
-      if (App.audioManager && App.audioManager.audio && !isSeeking) {
-        const current = App.audioManager.getCurrentTime()
-        const duration = App.audioManager.audio.duration || 0
-        const currentMins = Math.floor(current / 60)
-        const currentSecs = Math.floor(current % 60)
-        const durationMins = Math.floor(duration / 60)
-        const durationSecs = Math.floor(duration % 60)
-        timeDisplay.textContent = `${currentMins}:${currentSecs.toString().padStart(2, '0')} / ${durationMins}:${durationSecs.toString().padStart(2, '0')}`
-        
-        // Update slider position
-        const percentage = (current / duration) * 100
-        positionSlider.value = percentage
-
-        if (duration > 0) {
-          this.savePlaybackPosition(current)
-        }
-      }
-    }
-    
-    // Show controls
-    const showControls = () => {
-      if (!isVisible) {
-        controls.style.opacity = '1'
-        controls.style.pointerEvents = 'auto'
-        isVisible = true
-      }
-      clearTimeout(hideTimer)
-    }
-    
-    // Hide controls after delay
-    const scheduleHide = () => {
-      clearTimeout(hideTimer)
-      hideTimer = setTimeout(() => {
-        controls.style.opacity = '0'
-        controls.style.pointerEvents = 'none'
-        isVisible = false
-      }, 5000)
-    }
-    
-    // Mouse enter trigger area (bottom right 200x80)
-    const checkMousePosition = (e) => {
-      const triggerX = window.innerWidth - 220
-      const triggerY = window.innerHeight - 100
-      
-      if (e.clientX >= triggerX && e.clientY >= triggerY) {
-        showControls()
-        scheduleHide()
-      }
-    }
-    
-    // Controls hover - keep visible
-    controls.addEventListener('mouseenter', () => {
-      showControls()
-      clearTimeout(hideTimer)
-    })
-    
-    controls.addEventListener('mouseleave', () => {
-      scheduleHide()
-    })
-    
-    // Play/Pause button
-    playPauseBtn.addEventListener('click', () => {
-      if (App.audioManager.isPlaying) {
-        App.audioManager.pause()
-        playPauseBtn.textContent = '▶'
-      } else {
-        this.restoreSessionOnPlay()
-        App.audioManager.play()
-        playPauseBtn.textContent = '❚❚'
-      }
-    })
-    
-    // Mute button
-    muteBtn.addEventListener('click', () => {
-      if (App.audioManager.audio) {
-        App.audioManager.audio.muted = !App.audioManager.audio.muted
-        if (App.audioManager.audio.muted) {
-          muteBtn.classList.add('active')
-        } else {
-          muteBtn.classList.remove('active')
-        }
-      }
-    })
-    
-    // Microphone button
-    micBtn.addEventListener('click', async () => {
-      const wasUsingMic = App.audioManager.isUsingMicrophone
-      
-      if (wasUsingMic) {
-        // Switch back to file source
-        await App.audioManager.switchToFileSource()
-        micBtn.classList.remove('active')
-      } else {
-        // Switch to microphone
-        try {
-          await App.audioManager.switchToMicrophoneSource()
-          micBtn.classList.add('active')
-        } catch (error) {
-          console.error('Failed to access microphone:', error)
-          let errorMessage = 'Failed to access microphone. '
-          
-          if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-            errorMessage += 'Please allow microphone access in your browser settings.'
-          } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-            errorMessage += 'No microphone found on your device.'
-          } else if (error.name === 'NotSupportedError') {
-            errorMessage += 'Microphone access is not supported (try using HTTPS).'
-          } else {
-            errorMessage += error.message || 'Unknown error.'
-          }
-          
-          alert(errorMessage)
-        }
-      }
-    })
-    
-    // Position slider - seeking
-    positionSlider.addEventListener('mousedown', () => {
-      isSeeking = true
-    })
-    
-    positionSlider.addEventListener('mouseup', () => {
-      isSeeking = false
-    })
-    
-    positionSlider.addEventListener('input', (e) => {
-      if (App.audioManager && App.audioManager.audio) {
-        const duration = App.audioManager.audio.duration || 0
-        const seekTime = (e.target.value / 100) * duration
-        
-        // Update time display immediately
-        const seekMins = Math.floor(seekTime / 60)
-        const seekSecs = Math.floor(seekTime % 60)
-        const durationMins = Math.floor(duration / 60)
-        const durationSecs = Math.floor(duration % 60)
-        timeDisplay.textContent = `${seekMins}:${seekSecs.toString().padStart(2, '0')} / ${durationMins}:${durationSecs.toString().padStart(2, '0')}`
-      }
-    })
-    
-    positionSlider.addEventListener('change', (e) => {
-      if (App.audioManager && App.audioManager.audio) {
-        const duration = App.audioManager.audio.duration || 0
-        const seekTime = (e.target.value / 100) * duration
-        
-        // Seek to the new position
-        App.audioManager.seek(seekTime)
-        this.savePlaybackPosition(seekTime)
-      }
-      isSeeking = false
-    })
-    
-    // Track mouse movement
-    document.addEventListener('mousemove', checkMousePosition)
-    
-    // Update time every second
-    setInterval(updateTime, 1000)
-
-    // Best-effort save on reload/navigation as well.
-    window.addEventListener('beforeunload', () => {
-      if (!App.audioManager || !App.audioManager.audio || App.audioManager.isUsingMicrophone) return
-      this.savePlaybackPosition(App.audioManager.getCurrentTime())
-    })
   }
 
   async createManagers() {
@@ -1022,6 +938,144 @@ export default class App {
         line-height: 1;
         display: inline-block;
       }
+      /* Edit Presets trigger row */
+      .dg .fv3-controls .cr.fv3-edit-row {
+        padding: 6px 8px;
+        box-sizing: border-box;
+      }
+      .dg .fv3-controls .cr.fv3-edit-row button {
+        width: 100%;
+        height: 28px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background: linear-gradient(90deg, #1f2531, #1b212c);
+        color: #e6e9f0;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        cursor: pointer;
+        transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+      }
+      .dg .fv3-controls .cr.fv3-edit-row button:hover {
+        border-color: #6ea8ff;
+        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
+        background: linear-gradient(90deg, #263043, #1e2535);
+      }
+
+      /* Preset overlay */
+      .fv3-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(4, 6, 10, 0.82);
+        backdrop-filter: blur(4px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 2600;
+        padding: 20px;
+      }
+      .fv3-overlay .fv3-modal {
+        width: min(520px, 100%);
+        background: #0f1219;
+        border: 1px solid #2b2f3a;
+        border-radius: 10px;
+        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+        color: #e6e9f0;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        padding: 18px 18px 16px;
+        box-sizing: border-box;
+      }
+      .fv3-overlay header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .fv3-overlay h3 {
+        margin: 0;
+        font-size: 17px;
+        letter-spacing: 0.01em;
+      }
+      .fv3-overlay .close-btn {
+        background: transparent;
+        border: 1px solid #3a3f4d;
+        border-radius: 999px;
+        color: #e6e9f0;
+        width: 30px;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      .fv3-overlay .close-btn:hover {
+        border-color: #6ea8ff;
+        background: rgba(110, 168, 255, 0.08);
+      }
+      .fv3-overlay .row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-top: 1px solid #1c202a;
+      }
+      .fv3-overlay .row:first-of-type {
+        border-top: none;
+      }
+      .fv3-overlay .label {
+        width: 34%;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .fv3-overlay .field {
+        width: 66%;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .fv3-overlay input[type="text"],
+      .fv3-overlay select {
+        flex: 1 1 auto;
+        min-width: 180px;
+        background: #11141c;
+        border: 1px solid #3a3f4d;
+        color: #e6e9f0;
+        padding: 7px 9px;
+        font-size: 13px;
+        border-radius: 4px;
+      }
+      .fv3-overlay .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .fv3-overlay .icon-btn {
+        height: 34px;
+        width: 38px;
+        min-width: 38px;
+        background: transparent;
+        color: #e6e9f0;
+        border: 1px solid #3a3f4d;
+        border-radius: 6px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+      }
+      .fv3-overlay .icon-btn:hover {
+        border-color: #6ea8ff;
+        color: #fff;
+        background: rgba(110, 168, 255, 0.08);
+      }
+      .fv3-overlay .fv3-icon {
+        font-family: 'Material Icons Round-Regular';
+        font-variation-settings: 'FILL' 0, 'GRAD' 0, 'opsz' 24, 'wght' 400;
+        font-size: 20px;
+        line-height: 1;
+        display: inline-block;
+      }
     `
     document.head.appendChild(style)
   }
@@ -1045,6 +1099,10 @@ export default class App {
     this.variant3PresetState = null
     this.variant3LoadSelect = null
     this.variant3PresetRow = null
+    if (this.variant3Overlay?.parentElement) {
+      this.variant3Overlay.parentElement.removeChild(this.variant3Overlay)
+    }
+    this.variant3Overlay = null
   }
 
   setupFrequencyViz3Controls(visualizer) {
@@ -1099,23 +1157,29 @@ export default class App {
 
     const refreshLoadOptions = () => {
       const names = Object.keys(presets)
-      const select = this.variant3LoadSelect
-      if (!select) return
-      select.innerHTML = ''
-      const placeholder = document.createElement('option')
-      placeholder.value = ''
-      placeholder.textContent = names.length ? 'Select…' : 'No presets'
-      select.appendChild(placeholder)
-      names.forEach((name) => {
-        const opt = document.createElement('option')
-        opt.value = name
-        opt.textContent = name
-        select.appendChild(opt)
-      })
-      if (names.includes(this.variant3PresetState.loadPreset)) {
-        select.value = this.variant3PresetState.loadPreset
-      } else {
-        select.value = ''
+      const updateSelect = (select) => {
+        if (!select) return
+        select.innerHTML = ''
+        const placeholder = document.createElement('option')
+        placeholder.value = ''
+        placeholder.textContent = names.length ? 'Select…' : 'No presets'
+        select.appendChild(placeholder)
+        names.forEach((name) => {
+          const opt = document.createElement('option')
+          opt.value = name
+          opt.textContent = name
+          select.appendChild(opt)
+        })
+        if (names.includes(this.variant3PresetState.loadPreset)) {
+          select.value = this.variant3PresetState.loadPreset
+        } else {
+          select.value = ''
+        }
+      }
+
+      updateSelect(this.variant3LoadSelect)
+
+      if (!names.includes(this.variant3PresetState.loadPreset)) {
         this.variant3PresetState.loadPreset = ''
       }
     }
@@ -1126,7 +1190,15 @@ export default class App {
       loadPreset: Object.keys(presets)[0] || ''
     }
 
-    folder.add(this.variant3PresetState, 'presetName').name('Preset name')
+    let overlayNameInput = null
+
+    const syncPresetNameInputs = (value) => {
+      const val = value ?? ''
+      this.variant3PresetState.presetName = val
+      if (overlayNameInput && overlayNameInput.value !== val) {
+        overlayNameInput.value = val
+      }
+    }
 
     const presetActions = {
       savePreset: () => {
@@ -1173,7 +1245,7 @@ export default class App {
               const name = (parsed?.name && typeof parsed.name === 'string' ? parsed.name : file.name.replace(/\.json$/i, '')) || 'Imported preset'
               presets[name] = controls
               this.saveFV3Presets(presets)
-              this.variant3PresetState.presetName = name
+              syncPresetNameInputs(name)
               this.variant3PresetState.loadPreset = name
               applyParams(controls)
               refreshLoadOptions()
@@ -1190,61 +1262,129 @@ export default class App {
       }
     }
 
-    // Build custom preset action row (dat.GUI-style container)
-    const row = document.createElement('li')
-    row.className = 'cr fv3-preset-line'
-    const label = document.createElement('span')
-    label.className = 'property-name'
-    label.textContent = 'Preset action'
-    const actions = document.createElement('div')
-    actions.className = 'c'
-
-    const select = document.createElement('select')
-    select.addEventListener('change', (e) => {
-      const name = e.target.value
-      if (!name) return
-      const preset = presets[name]
+    const onPresetSelect = (value) => {
+      if (!value) return
+      const preset = presets[value]
       applyParams(preset)
-      this.variant3PresetState.loadPreset = name
-    })
-    this.variant3LoadSelect = select
-    refreshLoadOptions()
+      this.variant3PresetState.loadPreset = value
+      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value
+    }
 
-    const makeIconButton = (ligature, title, handler) => {
+    const buildOverlay = () => {
+      if (this.variant3Overlay?.parentElement) return this.variant3Overlay
+
+      const overlay = document.createElement('div')
+      overlay.className = 'fv3-overlay'
+      const modal = document.createElement('div')
+      modal.className = 'fv3-modal'
+
+      const header = document.createElement('header')
+      const title = document.createElement('h3')
+      title.textContent = 'Edit FV3 Presets'
+      const closeBtn = document.createElement('button')
+      closeBtn.className = 'close-btn'
+      closeBtn.title = 'Close'
+      closeBtn.textContent = '×'
+      closeBtn.addEventListener('click', () => {
+        overlay.style.display = 'none'
+      })
+      header.appendChild(title)
+      header.appendChild(closeBtn)
+      modal.appendChild(header)
+
+      const makeRow = (labelText, fieldEl) => {
+        const rowEl = document.createElement('div')
+        rowEl.className = 'row'
+        const labelEl = document.createElement('div')
+        labelEl.className = 'label'
+        labelEl.textContent = labelText
+        const field = document.createElement('div')
+        field.className = 'field'
+        field.appendChild(fieldEl)
+        rowEl.appendChild(labelEl)
+        rowEl.appendChild(field)
+        return rowEl
+      }
+
+      const select = document.createElement('select')
+      select.addEventListener('change', (e) => onPresetSelect(e.target.value))
+      this.variant3LoadSelect = select
+      modal.appendChild(makeRow('Load preset', select))
+
+      const nameInput = document.createElement('input')
+      nameInput.type = 'text'
+      nameInput.placeholder = 'Preset name'
+      nameInput.value = this.variant3PresetState.presetName
+      nameInput.addEventListener('input', (e) => syncPresetNameInputs(e.target.value, 'overlay'))
+      overlayNameInput = nameInput
+      modal.appendChild(makeRow('Save as', nameInput))
+
+      const actions = document.createElement('div')
+      actions.className = 'actions'
+      const makeIconButton = (ligature, title, handler) => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'icon-btn'
+        btn.title = title
+        const icon = document.createElement('span')
+        icon.className = 'fv3-icon'
+        icon.textContent = ligature
+        btn.appendChild(icon)
+        btn.addEventListener('click', handler)
+        return btn
+      }
+      actions.appendChild(makeIconButton('save', 'Save preset', presetActions.savePreset))
+      actions.appendChild(makeIconButton('file_download', 'Download preset JSON', presetActions.downloadPreset))
+      actions.appendChild(makeIconButton('upload_file', 'Upload preset JSON', presetActions.uploadPreset))
+
+      const actionsRow = document.createElement('div')
+      actionsRow.className = 'row'
+      const actionsLabel = document.createElement('div')
+      actionsLabel.className = 'label'
+      actionsLabel.textContent = 'Actions'
+      const actionsField = document.createElement('div')
+      actionsField.className = 'field'
+      actionsField.appendChild(actions)
+      actionsRow.appendChild(actionsLabel)
+      actionsRow.appendChild(actionsField)
+      modal.appendChild(actionsRow)
+
+      overlay.appendChild(modal)
+      document.body.appendChild(overlay)
+      this.variant3Overlay = overlay
+      refreshLoadOptions()
+      syncPresetNameInputs(this.variant3PresetState.presetName)
+      return overlay
+    }
+
+    const openOverlay = () => {
+      const overlay = buildOverlay()
+      if (overlay) {
+        refreshLoadOptions()
+        overlay.style.display = 'flex'
+      }
+    }
+
+    // Native dat.GUI row at the top to open the overlay
+    const editConfig = { 'Edit Presets': () => openOverlay() }
+    const editController = folder.add(editConfig, 'Edit Presets').name('Edit Presets')
+    const editLi = editController?.domElement
+    if (editLi) {
+      // Replace default input with a full-width button
+      editLi.classList.add('fv3-edit-row')
+      editLi.innerHTML = ''
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.title = title
-      const icon = document.createElement('span')
-      icon.className = 'fv3-icon'
-      icon.textContent = ligature
-      btn.appendChild(icon)
-      btn.addEventListener('click', handler)
-      return btn
+      btn.textContent = 'Edit Presets'
+      btn.addEventListener('click', () => openOverlay())
+      editLi.appendChild(btn)
+
+      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+      if (listEl) {
+        listEl.insertBefore(editLi, listEl.firstChild)
+      }
+      this.variant3PresetRow = editLi
     }
-
-    const saveBtn = makeIconButton('save', 'Save preset', presetActions.savePreset)
-    const downloadBtn = makeIconButton('download', 'Download preset JSON', presetActions.downloadPreset)
-    const uploadBtn = makeIconButton('upload', 'Upload preset JSON', presetActions.uploadPreset)
-
-    actions.appendChild(select)
-    actions.appendChild(saveBtn)
-    actions.appendChild(downloadBtn)
-    actions.appendChild(uploadBtn)
-    row.appendChild(label)
-    row.appendChild(actions)
-
-    // Insert after preset name controller to keep grouping (inside folder UL)
-    const controllers = folder.__controllers || []
-    const lastControllerEl = controllers.length ? controllers[controllers.length - 1].domElement : null
-    const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
-    if (lastControllerEl && lastControllerEl.parentElement) {
-      lastControllerEl.parentElement.insertBefore(row, lastControllerEl.nextSibling)
-    } else if (listEl) {
-      listEl.appendChild(row)
-    } else {
-      folder.domElement.appendChild(row)
-    }
-    this.variant3PresetRow = row
 
     const addSlider = (prop, label, min, max, step = 1) => {
       const ctrl = folder.add(this.variant3Config, prop, min, max).step(step).name(label).listen()
