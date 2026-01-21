@@ -430,6 +430,9 @@ export default class FrequencyVisualization extends THREE.Object3D {
     // Histogram buffer for fast percentile baseline estimation.
     this._hist = new Uint16Array(64)
 
+    this._beatPulse = 0
+    this._lastUpdateMs = performance.now()
+
     // User-tweakable weighting controls (variant 3 only).
     this._controls = {
       // Where the low shelf decays to zero boost (Hz).
@@ -450,6 +453,9 @@ export default class FrequencyVisualization extends THREE.Object3D {
       // dB window
       minDb: -80,
       maxDb: -18,
+
+      // Beat accent
+      beatBoost: 0.65,
 
       // Baseline and thresholding
       baselinePercentile: 0.18,
@@ -649,6 +655,8 @@ export default class FrequencyVisualization extends THREE.Object3D {
       noiseFloor: clamp(src.noiseFloor, 0.0, 0.2, this._controls?.noiseFloor ?? 0.02),
       peakCurve: clamp(src.peakCurve, 0.5, 4.0, this._controls?.peakCurve ?? 1.25),
 
+      beatBoost: clamp(src.beatBoost, 0.0, 2.0, this._controls?.beatBoost ?? 0.65),
+
       minDb,
       maxDb,
 
@@ -719,6 +727,10 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const maxGain = controls.maxGain
     const agcAttack = controls.agcAttack
     const agcRelease = controls.agcRelease
+
+    const beatPulse = this._beatPulse ?? 0
+    const beatBoost = controls.beatBoost ?? 0
+    const beatFactorFor = (t) => 1 + beatPulse * beatBoost * Math.max(0, 1 - t * 4.0) // taper after ~25% of spectrum
 
     // --- AE-ish frequency shaping ---
     // AE spectra tend to be *mid-forward* with controlled sub-bass and a gentle high rolloff.
@@ -834,9 +846,10 @@ export default class FrequencyVisualization extends THREE.Object3D {
       // Subtract percentile baseline to keep the band from filling up.
       const deBiased = Math.max(0, shaped - baseline * baselineStrength)
 
-      // AE-ish frequency shaping (mid-forward, controlled lows, gentle high rolloff)
+      // AE-ish frequency shaping (mid-forward, controlled lows, gentle high rolloff) + beat accent on low bins.
       const w = aeWeight(i)
-      const weighted = Math.max(0, deBiased * w - displayThreshold)
+      const t = i / Math.max(1, width - 1)
+      const weighted = Math.max(0, deBiased * w * beatFactorFor(t) - displayThreshold)
 
       if (weighted > peak) peak = weighted
     }
@@ -854,7 +867,8 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
       const deBiased = Math.max(0, shaped - baseline * baselineStrength)
       const w = aeWeight(i)
-      const weighted = Math.max(0, deBiased * w - displayThreshold)
+      const t = i / Math.max(1, width - 1)
+      const weighted = Math.max(0, deBiased * w * beatFactorFor(t) - displayThreshold)
 
       // Final gain. Keep quiet bins quiet.
       const leveled = Math.max(0, Math.min(1, weighted * (this._agcGain ?? 1)))
@@ -870,10 +884,20 @@ export default class FrequencyVisualization extends THREE.Object3D {
     this._audioTex.needsUpdate = true
   }
 
-  update() {
+  update(audioData) {
     if (!this._mat) return
 
     const now = performance.now()
+    const dt = Math.min(0.1, Math.max(0.001, (now - (this._lastUpdateMs || now)) / 1000))
+    this._lastUpdateMs = now
+
+    if (audioData?.isBeat) {
+      this._beatPulse = 1
+    } else {
+      const decay = Math.pow(0.05, dt) // fast decay so beat pulses are short
+      this._beatPulse *= decay
+    }
+
     this._mat.uniforms.iTime.value = (now - this._startAt) / 1000
 
     this._updateAudioTexture()

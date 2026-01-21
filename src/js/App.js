@@ -51,8 +51,8 @@ export default class App {
   //Managers
   static audioManager = null
   static bpmManager = null
-  
-  //Visualizer management
+
+  // Visualizer management
   static currentVisualizer = null
   static visualizerType = 'Reactive Particles'
   static visualizerList = [
@@ -116,6 +116,10 @@ export default class App {
     this.variant3Folder = null
     this.variant3Controllers = {}
     this.variant3Config = null
+    this.variant3PresetState = null
+    this.variant3LoadSelect = null
+    this.variant3PresetRow = null
+    this.variant3UploadInput = null
 
     // Toast showing the current visualizer name
     this.visualizerToast = null
@@ -123,7 +127,8 @@ export default class App {
 
     this.storageKeys = {
       playbackPosition: 'visualizer.playbackPosition',
-      visualizerType: 'visualizer.lastType'
+      visualizerType: 'visualizer.lastType',
+      fv3Presets: 'visualizer.fv3.presets'
     }
   }
 
@@ -880,11 +885,50 @@ export default class App {
     }
   }
 
+  getFV3Presets() {
+    try {
+      const raw = window.localStorage.getItem(this.storageKeys.fv3Presets)
+      if (!raw) return {}
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch (err) {
+      return {}
+    }
+  }
+
+  saveFV3Presets(presets = {}) {
+    try {
+      const cleaned = presets && typeof presets === 'object' ? presets : {}
+      window.localStorage.setItem(this.storageKeys.fv3Presets, JSON.stringify(cleaned))
+    } catch (err) {
+      // ignore storage errors
+    }
+  }
+
+  ensureFV3UploadInput() {
+    if (this.variant3UploadInput) return this.variant3UploadInput
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'application/json'
+    input.style.display = 'none'
+    document.body.appendChild(input)
+    this.variant3UploadInput = input
+    return input
+  }
+
   ensureVariant3GuiStyles() {
     if (document.getElementById('fv3-gui-style')) return
     const style = document.createElement('style')
     style.id = 'fv3-gui-style'
     style.textContent = `
+      @font-face {
+        font-family: 'Material Icons Round-Regular';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('player-fill0.woff2') format('woff2');
+      }
+
       .dg.main { width: 445px !important; }
       .dg .fv3-controls { width: 100%; max-width: 100%; box-sizing: border-box; }
       .dg .fv3-controls .cr.number { padding: 4px 4px 6px; }
@@ -920,6 +964,64 @@ export default class App {
         text-align: right;
       }
       .dg .fv3-controls .slider-fg { position: relative; height: 100%; }
+
+      .dg .fv3-controls .cr.fv3-preset-line {
+        display: flex;
+        align-items: center;
+        padding: 4px 4px 6px;
+        border-top: 1px solid #2b2f3a;
+        border-bottom: 1px solid #2b2f3a;
+        box-sizing: border-box;
+      }
+      .dg .fv3-controls .cr.fv3-preset-line .property-name {
+        width: 40%;
+        font-weight: 600;
+        text-transform: none;
+        padding-right: 6px;
+      }
+      .dg .fv3-controls .cr.fv3-preset-line .c {
+        width: 60%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dg .fv3-controls .cr.fv3-preset-line select {
+        flex: 1 1 auto;
+        min-width: 120px;
+        background: #161921;
+        color: #e6e9f0;
+        border: 1px solid #444;
+        padding: 4px 6px;
+        height: 26px;
+        font-size: 12px;
+      }
+      .dg .fv3-controls .cr.fv3-preset-line button {
+        height: 26px;
+        width: 32px;
+        min-width: 32px;
+        background: transparent;
+        color: #e6e9f0;
+        border: 1px solid #444;
+        border-radius: 4px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+      }
+      .dg .fv3-controls .cr.fv3-preset-line button:hover {
+        border-color: #6ea8ff;
+        color: #fff;
+        background: rgba(110, 168, 255, 0.08);
+      }
+      .dg .fv3-controls .cr.fv3-preset-line .fv3-icon {
+        font-family: 'Material Icons Round-Regular';
+        font-variation-settings: 'FILL' 0, 'GRAD' 0, 'opsz' 24, 'wght' 400;
+        font-size: 18px;
+        line-height: 1;
+        display: inline-block;
+      }
     `
     document.head.appendChild(style)
   }
@@ -940,6 +1042,9 @@ export default class App {
     this.variant3Folder = null
     this.variant3Controllers = {}
     this.variant3Config = null
+    this.variant3PresetState = null
+    this.variant3LoadSelect = null
+    this.variant3PresetRow = null
   }
 
   setupFrequencyViz3Controls(visualizer) {
@@ -959,6 +1064,7 @@ export default class App {
 
     this.variant3Folder = folder
     this.variant3Controllers = {}
+    const presets = this.getFV3Presets()
 
     const formatValue = (value, step) => {
       if (!Number.isFinite(value)) return ''
@@ -975,6 +1081,170 @@ export default class App {
       if (input) input.value = display
       if (controller?.updateDisplay) controller.updateDisplay()
     }
+
+    const applyParams = (params) => {
+      if (!params || typeof params !== 'object') return
+      visualizer.setControlParams(params)
+      this.variant3Config = { ...visualizer.getControlParams() }
+      Object.entries(this.variant3Controllers).forEach(([prop, ctrl]) => {
+        const val = this.variant3Config[prop]
+        if (ctrl?.setValue) {
+          ctrl.setValue(val)
+        } else if (ctrl?.updateDisplay) {
+          ctrl.updateDisplay()
+        }
+        updateSliderValueLabel(ctrl, val)
+      })
+    }
+
+    const refreshLoadOptions = () => {
+      const names = Object.keys(presets)
+      const select = this.variant3LoadSelect
+      if (!select) return
+      select.innerHTML = ''
+      const placeholder = document.createElement('option')
+      placeholder.value = ''
+      placeholder.textContent = names.length ? 'Select…' : 'No presets'
+      select.appendChild(placeholder)
+      names.forEach((name) => {
+        const opt = document.createElement('option')
+        opt.value = name
+        opt.textContent = name
+        select.appendChild(opt)
+      })
+      if (names.includes(this.variant3PresetState.loadPreset)) {
+        select.value = this.variant3PresetState.loadPreset
+      } else {
+        select.value = ''
+        this.variant3PresetState.loadPreset = ''
+      }
+    }
+
+    // Preset save/load/upload/download controls
+    this.variant3PresetState = {
+      presetName: '',
+      loadPreset: Object.keys(presets)[0] || ''
+    }
+
+    folder.add(this.variant3PresetState, 'presetName').name('Preset name')
+
+    const presetActions = {
+      savePreset: () => {
+        const name = (this.variant3PresetState.presetName || '').trim()
+        if (!name) {
+          alert('Enter a preset name first.')
+          return
+        }
+        presets[name] = visualizer.getControlParams()
+        this.saveFV3Presets(presets)
+        this.variant3PresetState.loadPreset = name
+        refreshLoadOptions()
+        if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
+      },
+      downloadPreset: () => {
+        const data = {
+          name: (this.variant3PresetState.presetName || '').trim() || 'preset',
+          controls: visualizer.getControlParams(),
+          visualizer: 'Frequency Visualization 3'
+        }
+        const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'preset'
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `fv3-preset-${slug}.json`
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      },
+      uploadPreset: () => {
+        const input = this.ensureFV3UploadInput()
+        if (!input) return
+        input.onchange = (e) => {
+          const file = e.target?.files?.[0]
+          if (!file) return
+          const reader = new FileReader()
+          reader.onload = () => {
+            try {
+              const parsed = JSON.parse(reader.result)
+              const controls = parsed?.controls && typeof parsed.controls === 'object' ? parsed.controls : parsed
+              if (!controls || typeof controls !== 'object') throw new Error('Invalid preset file')
+              const name = (parsed?.name && typeof parsed.name === 'string' ? parsed.name : file.name.replace(/\.json$/i, '')) || 'Imported preset'
+              presets[name] = controls
+              this.saveFV3Presets(presets)
+              this.variant3PresetState.presetName = name
+              this.variant3PresetState.loadPreset = name
+              applyParams(controls)
+              refreshLoadOptions()
+              if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
+            } catch (err) {
+              alert('Failed to load preset: ' + (err?.message || err))
+            } finally {
+              input.value = ''
+            }
+          }
+          reader.readAsText(file)
+        }
+        input.click()
+      }
+    }
+
+    // Build custom preset action row (dat.GUI-style container)
+    const row = document.createElement('li')
+    row.className = 'cr fv3-preset-line'
+    const label = document.createElement('span')
+    label.className = 'property-name'
+    label.textContent = 'Preset action'
+    const actions = document.createElement('div')
+    actions.className = 'c'
+
+    const select = document.createElement('select')
+    select.addEventListener('change', (e) => {
+      const name = e.target.value
+      if (!name) return
+      const preset = presets[name]
+      applyParams(preset)
+      this.variant3PresetState.loadPreset = name
+    })
+    this.variant3LoadSelect = select
+    refreshLoadOptions()
+
+    const makeIconButton = (ligature, title, handler) => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.title = title
+      const icon = document.createElement('span')
+      icon.className = 'fv3-icon'
+      icon.textContent = ligature
+      btn.appendChild(icon)
+      btn.addEventListener('click', handler)
+      return btn
+    }
+
+    const saveBtn = makeIconButton('save', 'Save preset', presetActions.savePreset)
+    const downloadBtn = makeIconButton('download', 'Download preset JSON', presetActions.downloadPreset)
+    const uploadBtn = makeIconButton('upload', 'Upload preset JSON', presetActions.uploadPreset)
+
+    actions.appendChild(select)
+    actions.appendChild(saveBtn)
+    actions.appendChild(downloadBtn)
+    actions.appendChild(uploadBtn)
+    row.appendChild(label)
+    row.appendChild(actions)
+
+    // Insert after preset name controller to keep grouping (inside folder UL)
+    const controllers = folder.__controllers || []
+    const lastControllerEl = controllers.length ? controllers[controllers.length - 1].domElement : null
+    const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+    if (lastControllerEl && lastControllerEl.parentElement) {
+      lastControllerEl.parentElement.insertBefore(row, lastControllerEl.nextSibling)
+    } else if (listEl) {
+      listEl.appendChild(row)
+    } else {
+      folder.domElement.appendChild(row)
+    }
+    this.variant3PresetRow = row
 
     const addSlider = (prop, label, min, max, step = 1) => {
       const ctrl = folder.add(this.variant3Config, prop, min, max).step(step).name(label).listen()
@@ -995,6 +1265,9 @@ export default class App {
     addSlider('bassWidthHz', 'Boost width (Hz)', 1, 50, 1)
     addSlider('bassGainDb', 'Boost gain (dB)', -6, 30, 0.5)
     addSlider('hiRolloffDb', 'High rolloff (dB)', -24, 0, 0.5)
+
+    // Beat accent
+    addSlider('beatBoost', 'Beat boost', 0.0, 2.0, 0.05)
 
     // Temporal envelope
     addSlider('attack', 'Attack', 0.01, 1.0, 0.01)
