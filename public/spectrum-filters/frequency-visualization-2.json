@@ -1,0 +1,24 @@
+{
+  "name": "Frequency Visualization 2",
+  "controls": {
+    "bassFreqHz": 120,
+    "bassWidthHz": 70,
+    "bassGainDb": 10,
+    "hiRolloffDb": -4,
+    "attack": 0.92,
+    "release": 0.78,
+    "noiseFloor": 0.01,
+    "peakCurve": 1.22,
+    "beatBoost": 0.55,
+    "minDb": -90,
+    "maxDb": -25,
+    "baselinePercentile": 0.18,
+    "baselineStrength": 0.32,
+    "displayThreshold": 0.005,
+    "targetPeak": 0.95,
+    "minGain": 0.9,
+    "maxGain": 1.35,
+    "agcAttack": 0.18,
+    "agcRelease": 0.18
+  }
+}

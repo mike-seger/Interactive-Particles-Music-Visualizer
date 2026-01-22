@@ -37,6 +37,7 @@ import FrequencyVisualization2 from './entities/frequency-visualization2/Frequen
 import FrequencyVisualization3 from './entities/frequency-visualization3/FrequencyVisualization'
 import PulseWaves from './entities/pulse-waves/PulseWaves'
 import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
+import { loadSpectrumFilters } from './spectrumFilters'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import AudioManager from './managers/AudioManager'
@@ -121,6 +122,7 @@ export default class App {
     this.variant3PresetRow = null
     this.variant3UploadInput = null
     this.variant3Overlay = null
+    this.variant3PresetApplied = false
 
     // Toast showing the current visualizer name
     this.visualizerToast = null
@@ -129,7 +131,8 @@ export default class App {
     this.storageKeys = {
       playbackPosition: 'visualizer.playbackPosition',
       visualizerType: 'visualizer.lastType',
-      fv3Presets: 'visualizer.fv3.presets'
+      fv3Presets: 'visualizer.fv3.presets',
+      fv3SelectedPreset: 'visualizer.fv3.selectedPreset'
     }
   }
 
@@ -894,6 +897,26 @@ export default class App {
     }
   }
 
+  getStoredFV3PresetName() {
+    try {
+      return window.localStorage.getItem(this.storageKeys.fv3SelectedPreset) || ''
+    } catch (err) {
+      return ''
+    }
+  }
+
+  saveFV3PresetName(name) {
+    try {
+      if (name) {
+        window.localStorage.setItem(this.storageKeys.fv3SelectedPreset, name)
+      } else {
+        window.localStorage.removeItem(this.storageKeys.fv3SelectedPreset)
+      }
+    } catch (err) {
+      // ignore storage errors
+    }
+  }
+
   ensureFV3UploadInput() {
     if (this.variant3UploadInput) return this.variant3UploadInput
     const input = document.createElement('input')
@@ -1224,6 +1247,7 @@ export default class App {
     this.ensureVariant3GuiStyles()
 
     this.variant3Config = { ...visualizer.getControlParams() }
+    this.variant3PresetApplied = false
     const folderName = 'Frequency Viz 3 Controls'
     const folder = App.gui.addFolder(folderName)
     folder.open()
@@ -1251,6 +1275,16 @@ export default class App {
     this.variant3Folder = folder
     this.variant3Controllers = {}
     const presets = this.getFV3Presets()
+    this.fv3FilePresets = this.fv3FilePresets || {}
+    const mergedPresets = () => ({ ...(this.fv3FilePresets || {}), ...(presets || {}) })
+
+    this.variant3PresetState = {
+      presetName: '',
+      loadPreset: this.getStoredFV3PresetName() || Object.keys(mergedPresets())[0] || ''
+    }
+    if (this.variant3PresetState.loadPreset) {
+      this.saveFV3PresetName(this.variant3PresetState.loadPreset)
+    }
 
     const formatValue = (value, step) => {
       if (!Number.isFinite(value)) return ''
@@ -1296,8 +1330,19 @@ export default class App {
       })
     }
 
+    const onPresetSelect = (value) => {
+      if (!value) return
+      const preset = mergedPresets()[value]
+      applyParams(preset)
+      this.variant3PresetState.loadPreset = value
+      this.saveFV3PresetName(value)
+      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value
+    }
+
     const refreshLoadOptions = () => {
-      const names = Object.keys(presets)
+      const names = Object.keys(mergedPresets())
+      const currentPreset = this.variant3PresetState?.loadPreset || ''
+      const preferred = currentPreset || this.getStoredFV3PresetName() || ''
       const updateSelect = (select) => {
         if (!select) return
         select.innerHTML = ''
@@ -1311,7 +1356,7 @@ export default class App {
           opt.textContent = name
           select.appendChild(opt)
         })
-        if (names.includes(this.variant3PresetState.loadPreset)) {
+        if (names.includes(this.variant3PresetState?.loadPreset)) {
           select.value = this.variant3PresetState.loadPreset
         } else {
           select.value = ''
@@ -1320,16 +1365,31 @@ export default class App {
 
       updateSelect(this.variant3LoadSelect)
 
-      if (!names.includes(this.variant3PresetState.loadPreset)) {
-        this.variant3PresetState.loadPreset = ''
+      if (!names.includes(this.variant3PresetState?.loadPreset)) {
+        this.variant3PresetState.loadPreset = names.includes(preferred) ? preferred : (names[0] || '')
+        if (this.variant3LoadSelect) this.variant3LoadSelect.value = this.variant3PresetState.loadPreset
+        if (this.variant3PresetState.loadPreset) this.saveFV3PresetName(this.variant3PresetState.loadPreset)
+      }
+
+      const effective = this.variant3PresetState.loadPreset
+      if (!this.variant3PresetApplied && effective && names.includes(effective)) {
+        onPresetSelect(effective)
+        this.variant3PresetApplied = true
       }
     }
 
-    // Preset save/load/upload/download controls
-    this.variant3PresetState = {
-      presetName: '',
-      loadPreset: Object.keys(presets)[0] || ''
+    // Asynchronously load built-in spectrum filters from disk and merge into presets
+    if (!this.fv3FilePresetsLoaded) {
+      this.fv3FilePresetsLoaded = true
+      loadSpectrumFilters().then((loaded) => {
+        this.fv3FilePresets = loaded || {}
+        refreshLoadOptions()
+      }).catch((err) => {
+        console.warn('Failed to load spectrum filters', err)
+      })
     }
+
+    // Preset save/load/upload/download controls
 
     let overlayNameInput = null
 
@@ -1364,6 +1424,7 @@ export default class App {
         presets[name] = roundParamsForStorage(visualizer.getControlParams())
         this.saveFV3Presets(presets)
         this.variant3PresetState.loadPreset = name
+        this.saveFV3PresetName(name)
         refreshLoadOptions()
         if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
       },
@@ -1402,6 +1463,7 @@ export default class App {
               this.saveFV3Presets(presets)
               syncPresetNameInputs(name)
               this.variant3PresetState.loadPreset = name
+              this.saveFV3PresetName(name)
               applyParams(normalized)
               refreshLoadOptions()
               if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
@@ -1421,6 +1483,10 @@ export default class App {
           alert('Select a preset to delete first.')
           return
         }
+        if (this.fv3FilePresets && this.fv3FilePresets[name]) {
+          alert('Built-in presets cannot be deleted.')
+          return
+        }
         if (!presets[name]) {
           alert('Preset not found.')
           return
@@ -1430,20 +1496,13 @@ export default class App {
         this.saveFV3Presets(presets)
         if (this.variant3PresetState.loadPreset === name) {
           this.variant3PresetState.loadPreset = Object.keys(presets)[0] || ''
+          this.saveFV3PresetName(this.variant3PresetState.loadPreset)
         }
         refreshLoadOptions()
         if (this.variant3LoadSelect) {
           this.variant3LoadSelect.value = this.variant3PresetState.loadPreset || ''
         }
       }
-    }
-
-    const onPresetSelect = (value) => {
-      if (!value) return
-      const preset = presets[value]
-      applyParams(preset)
-      this.variant3PresetState.loadPreset = value
-      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value
     }
 
     const hideOverlay = () => {
