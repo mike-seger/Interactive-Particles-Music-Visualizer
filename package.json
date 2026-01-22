@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/gen-spectrum-index.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

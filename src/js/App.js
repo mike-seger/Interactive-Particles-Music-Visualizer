@@ -119,6 +119,7 @@ export default class App {
     this.variant3Config = null
     this.variant3PresetState = null
     this.variant3LoadSelect = null
+    this.variant3LoadController = null
     this.variant3PresetRow = null
     this.variant3UploadInput = null
     this.variant3Overlay = null
@@ -1432,19 +1433,36 @@ export default class App {
       })
     }
 
+    let isSyncingPreset = false
+
+    const syncLoadDropdowns = (value) => {
+      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value || ''
+      const selectEl = this.variant3LoadController?.__select
+      if (selectEl) selectEl.value = value || ''
+      if (this.variant3LoadController?.updateDisplay) this.variant3LoadController.updateDisplay()
+    }
+
     const onPresetSelect = (value) => {
-      if (!value) return
+      if (!value || isSyncingPreset) return
       const preset = mergedPresets()[value]
+      if (!preset) {
+        console.warn('[FV3] preset not found', value)
+        return
+      }
+      isSyncingPreset = true
       applyParams(preset)
       this.variant3PresetState.loadPreset = value
       this.saveFV3PresetName(value)
-      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value
+      syncLoadDropdowns(value)
+      isSyncingPreset = false
+      syncPresetNameInputs(value)
     }
 
     const refreshLoadOptions = () => {
       const names = Object.keys(mergedPresets())
       const currentPreset = this.variant3PresetState?.loadPreset || ''
       const preferred = currentPreset || this.getStoredFV3PresetName() || ''
+
       const updateSelect = (select) => {
         if (!select) return
         select.innerHTML = ''
@@ -1465,11 +1483,35 @@ export default class App {
         }
       }
 
+      const updateLoadController = () => {
+        const ctrl = this.variant3LoadController
+        const select = ctrl?.__select
+        if (!ctrl || !select) return
+        select.innerHTML = ''
+        const placeholder = document.createElement('option')
+        placeholder.value = ''
+        placeholder.textContent = names.length ? 'Select…' : 'No presets'
+        select.appendChild(placeholder)
+        names.forEach((name) => {
+          const opt = document.createElement('option')
+          opt.value = name
+          opt.textContent = name
+          select.appendChild(opt)
+        })
+        if (names.includes(this.variant3PresetState?.loadPreset)) {
+          select.value = this.variant3PresetState.loadPreset
+        } else {
+          select.value = ''
+        }
+        if (ctrl.updateDisplay) ctrl.updateDisplay()
+      }
+
       updateSelect(this.variant3LoadSelect)
+      updateLoadController()
 
       if (!names.includes(this.variant3PresetState?.loadPreset)) {
         this.variant3PresetState.loadPreset = names.includes(preferred) ? preferred : (names[0] || '')
-        if (this.variant3LoadSelect) this.variant3LoadSelect.value = this.variant3PresetState.loadPreset
+        syncLoadDropdowns(this.variant3PresetState.loadPreset)
         if (this.variant3PresetState.loadPreset) this.saveFV3PresetName(this.variant3PresetState.loadPreset)
       }
 
@@ -1528,7 +1570,6 @@ export default class App {
         this.variant3PresetState.loadPreset = name
         this.saveFV3PresetName(name)
         refreshLoadOptions()
-        if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
       },
       downloadPreset: () => {
         const data = {
@@ -1568,7 +1609,6 @@ export default class App {
               this.saveFV3PresetName(name)
               applyParams(normalized)
               refreshLoadOptions()
-              if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
             } catch (err) {
               alert('Failed to load preset: ' + (err?.message || err))
             } finally {
@@ -1580,7 +1620,7 @@ export default class App {
         input.click()
       },
       deletePreset: () => {
-        const name = this.variant3PresetState.loadPreset || this.variant3LoadSelect?.value || ''
+        const name = this.variant3PresetState.loadPreset || ''
         if (!name) {
           alert('Select a preset to delete first.')
           return
@@ -1601,9 +1641,6 @@ export default class App {
           this.saveFV3PresetName(this.variant3PresetState.loadPreset)
         }
         refreshLoadOptions()
-        if (this.variant3LoadSelect) {
-          this.variant3LoadSelect.value = this.variant3PresetState.loadPreset || ''
-        }
       }
     }
 
@@ -1614,13 +1651,9 @@ export default class App {
     }
 
     const buildOverlay = () => {
-          folder.domElement.style.overflowY = 'auto'
-          folder.domElement.style.overflowX = 'hidden'
-          folder.domElement.style.maxHeight = '70vh'
-          folder.domElement.style.height = 'auto'
+      if (this.variant3Overlay?.parentElement) return this.variant3Overlay
 
       const overlay = document.createElement('div')
-        relaxGuiHeights()
       overlay.className = 'fv3-overlay'
       const modal = document.createElement('div')
       modal.className = 'fv3-modal'
@@ -1651,18 +1684,6 @@ export default class App {
         return rowEl
       }
 
-      const select = document.createElement('select')
-      select.addEventListener('change', (e) => onPresetSelect(e.target.value))
-      this.variant3LoadSelect = select
-      const loadField = document.createElement('div')
-      loadField.style.display = 'flex'
-      loadField.style.alignItems = 'center'
-      loadField.style.gap = '6px'
-      loadField.appendChild(select)
-      const deleteBtn = makeIconButton('delete', 'Delete preset', presetActions.deletePreset)
-      loadField.appendChild(deleteBtn)
-      modal.appendChild(makeRow('Load preset', loadField))
-
       const nameInput = document.createElement('input')
       nameInput.type = 'text'
       nameInput.placeholder = 'Preset name'
@@ -1676,6 +1697,7 @@ export default class App {
       actions.appendChild(makeIconButton('save', 'Save preset', presetActions.savePreset))
       actions.appendChild(makeIconButton('file_download', 'Download preset JSON', presetActions.downloadPreset))
       actions.appendChild(makeIconButton('upload_file', 'Upload preset JSON', presetActions.uploadPreset))
+      actions.appendChild(makeIconButton('delete', 'Delete preset', presetActions.deletePreset))
 
       const actionsRow = document.createElement('div')
       actionsRow.className = 'row'
@@ -1705,10 +1727,15 @@ export default class App {
       const overlay = buildOverlay()
       if (overlay) {
         refreshLoadOptions()
+        const currentName = this.variant3PresetState.loadPreset || this.variant3PresetState.presetName || ''
+        syncPresetNameInputs(currentName)
         overlay.style.display = 'flex'
         if (folder?.domElement) {
           folder.domElement.style.overflow = 'visible'
+          folder.domElement.style.maxHeight = '70vh'
+          folder.domElement.style.height = 'auto'
         }
+        relaxGuiHeights()
       }
     }
 
@@ -1769,6 +1796,16 @@ export default class App {
       this.variant3Controllers[prop] = ctrl
       return ctrl
     }
+
+    // Load preset dropdown (moved from overlay)
+    const loadPresetNames = Object.keys(mergedPresets())
+    this.variant3LoadController = folder.add(this.variant3PresetState, 'loadPreset', loadPresetNames).name('Load preset').listen()
+    this.variant3LoadController.onChange((value) => {
+      if (isSyncingPreset) return
+      onPresetSelect(value)
+    })
+
+    refreshLoadOptions()
 
     // Weighting / mode
     addDropdown('weightingMode', 'Weighting mode', ['ae', 'fv2'])
