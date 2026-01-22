@@ -435,6 +435,34 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     // User-tweakable weighting controls (variant 3 only).
     this._controls = {
+      // Mode: 'ae' (default) or 'fv2' style weighting/tilt/kick.
+      weightingMode: 'ae',
+
+      // Analyser smoothingTimeConstant override (0 => match FV2 snap). Non-null keeps slider usable.
+      analyserSmoothing: 0.0,
+
+      // Spatial smoothing kernel: 'wide' (9-tap, FV3 default) or 'narrow' (3-tap, FV1/FV2 feel).
+      spatialKernel: 'wide',
+
+      // Per-bin floor (FV2 transient feel).
+      useBinFloor: false,
+      floorAtkLow: 0.18,
+      floorRelLow: 0.03,
+      floorAtkHi: 0.10,
+      floorRelHi: 0.015,
+      floorStrengthLow: 0.8,
+      floorStrengthHi: 0.6,
+
+      // Kick/sub weighting (FV2 style) used when weightingMode = 'fv2'.
+      kickHz: 70,
+      kickWidthOct: 0.65,
+      kickBoostDb: 8,
+      subShelfDb: 4,
+      tiltHi: 1.0,   // multiplier at highs (bass is implied by tilt curve)
+      tiltLo: 1.45,  // multiplier at bass
+
+      // Beat accent enable (FV3 only). Set to 0 to match FV1/FV2 behavior.
+      beatBoostEnabled: 1,
       // Where the low shelf decays to zero boost (Hz).
       bassFreqHz: 130,
       // Transition width for the shelf decay (Hz).
@@ -573,6 +601,11 @@ export default class FrequencyVisualization extends THREE.Object3D {
       this._fftBytes = new Uint8Array(this._analyser.frequencyBinCount)
       this._fftFloats = new Float32Array(this._analyser.frequencyBinCount)
 
+      const smoothing = this._controls?.analyserSmoothing
+      if (typeof smoothing === 'number' && smoothing >= 0 && smoothing <= 1 && Number.isFinite(smoothing)) {
+        this._analyser.smoothingTimeConstant = smoothing
+      }
+
       const maxBars = 220
       const available = this._analyser.frequencyBinCount || 0
 
@@ -609,6 +642,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
     this._audioTexData = new Uint8Array(width * height * 4)
     this._audioSmooth = new Float32Array(width)
     this._spatialBuf = new Float32Array(width)
+    this._binFloor = new Float32Array(width)
 
     for (let i = 0; i < width; i++) {
       const o = i * 4
@@ -634,6 +668,10 @@ export default class FrequencyVisualization extends THREE.Object3D {
       return Math.min(hi, Math.max(lo, n))
     }
 
+    const normMode = (v) => (v === 'fv2' ? 'fv2' : 'ae')
+    const normKernel = (v) => (v === 'narrow' ? 'narrow' : 'wide')
+    const normBool01 = (v, fallback) => (v === 0 || v === 1 ? v : fallback)
+
     const minDbRaw = clamp(src.minDb, -120, -10, this._controls?.minDb ?? -80)
     const maxDbRaw = clamp(src.maxDb, -60, 0, this._controls?.maxDb ?? -18)
     const minDb = Math.min(minDbRaw, maxDbRaw - 1)
@@ -655,6 +693,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
       noiseFloor: clamp(src.noiseFloor, 0.0, 0.2, this._controls?.noiseFloor ?? 0.02),
       peakCurve: clamp(src.peakCurve, 0.5, 4.0, this._controls?.peakCurve ?? 1.25),
 
+      beatBoostEnabled: normBool01(src.beatBoostEnabled, this._controls?.beatBoostEnabled ?? 1),
       beatBoost: clamp(src.beatBoost, 0.0, 2.0, this._controls?.beatBoost ?? 0.65),
 
       minDb,
@@ -669,6 +708,27 @@ export default class FrequencyVisualization extends THREE.Object3D {
       maxGain,
       agcAttack: clamp(src.agcAttack, 0.0, 1.0, this._controls?.agcAttack ?? 0.18),
       agcRelease: clamp(src.agcRelease, 0.0, 1.0, this._controls?.agcRelease ?? 0.07),
+
+      weightingMode: normMode(src.weightingMode ?? this._controls?.weightingMode),
+      analyserSmoothing: Number.isFinite(src.analyserSmoothing)
+        ? Math.max(0, Math.min(1, src.analyserSmoothing))
+        : (Number.isFinite(this._controls?.analyserSmoothing) ? this._controls.analyserSmoothing : 0.0),
+      spatialKernel: normKernel(src.spatialKernel ?? this._controls?.spatialKernel),
+
+      useBinFloor: !!(src.useBinFloor ?? this._controls?.useBinFloor),
+      floorAtkLow: clamp(src.floorAtkLow, 0.0, 1.0, this._controls?.floorAtkLow ?? 0.18),
+      floorRelLow: clamp(src.floorRelLow, 0.0, 1.0, this._controls?.floorRelLow ?? 0.03),
+      floorAtkHi: clamp(src.floorAtkHi, 0.0, 1.0, this._controls?.floorAtkHi ?? 0.10),
+      floorRelHi: clamp(src.floorRelHi, 0.0, 1.0, this._controls?.floorRelHi ?? 0.015),
+      floorStrengthLow: clamp(src.floorStrengthLow, 0.0, 1.5, this._controls?.floorStrengthLow ?? 0.8),
+      floorStrengthHi: clamp(src.floorStrengthHi, 0.0, 1.5, this._controls?.floorStrengthHi ?? 0.6),
+
+      kickHz: clamp(src.kickHz, 20, 200, this._controls?.kickHz ?? 70),
+      kickWidthOct: clamp(src.kickWidthOct, 0.1, 2.0, this._controls?.kickWidthOct ?? 0.65),
+      kickBoostDb: clamp(src.kickBoostDb, -12, 24, this._controls?.kickBoostDb ?? 8),
+      subShelfDb: clamp(src.subShelfDb, -12, 24, this._controls?.subShelfDb ?? 4),
+      tiltHi: clamp(src.tiltHi, 0.1, 2.5, this._controls?.tiltHi ?? 1.0),
+      tiltLo: clamp(src.tiltLo, 0.1, 3.0, this._controls?.tiltLo ?? 1.45),
     }
   }
 
@@ -697,6 +757,12 @@ export default class FrequencyVisualization extends THREE.Object3D {
       this._analyser.getByteFrequencyData(this._fftBytes)
     }
 
+    // Re-apply analyser smoothing if a preset changed it
+    const smoothing = this._controls?.analyserSmoothing
+    if (typeof smoothing === 'number' && smoothing >= 0 && smoothing <= 1 && Number.isFinite(smoothing)) {
+      this._analyser.smoothingTimeConstant = smoothing
+    }
+
     // Ensure control params stay clamped to safe ranges.
     this._controls = this._normalizeControls(this._controls)
     const controls = this._controls
@@ -704,8 +770,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const width = 512
     const n = this._fftBytes.length
 
-    // AE-like stability: attack/release smoothing + noise floor + strong peak emphasis.
-    // Faster response for snappier updates.
+    // Temporal smoothing + peak shaping.
     const attack = controls.attack
     const release = controls.release
     const noiseFloor = controls.noiseFloor
@@ -716,7 +781,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const minDb = controls.minDb
     const maxDb = controls.maxDb
 
-    // Percentile baseline removal (noise floor) + gentle LF emphasis.
+    // Percentile baseline removal + thresholding.
     const baselinePercentile = controls.baselinePercentile
     const baselineStrength = controls.baselineStrength
     const displayThreshold = controls.displayThreshold
@@ -729,7 +794,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
     const agcRelease = controls.agcRelease
 
     const beatPulse = this._beatPulse ?? 0
-    const beatBoost = controls.beatBoost ?? 0
+    const beatBoost = (controls.beatBoostEnabled ? controls.beatBoost : 0) ?? 0
     const beatFactorFor = (t) => 1 + beatPulse * beatBoost * Math.max(0, 1 - t * 4.0) // taper after ~25% of spectrum
 
     // --- AE-ish frequency shaping ---
@@ -758,10 +823,10 @@ export default class FrequencyVisualization extends THREE.Object3D {
       // Mid bell: wide boost centered ~1.6 kHz.
       const midCenter = 1600.0
       const ratio = Math.max(1e-6, f / midCenter)
-      const log2 = Math.log(ratio) / Math.log(2)
+      const log2v = Math.log(ratio) / Math.log(2)
       const midWidthOct = 1.6                       // wide bell
-      const sigma = (midWidthOct / 2.355)           // convert FWHM-ish to sigma
-      const midShape = Math.exp(-(log2 * log2) / (2 * sigma * sigma))
+      const sigma = (midWidthOct / 2.355)
+      const midShape = Math.exp(-(log2v * log2v) / (2 * sigma * sigma))
       const midDb = 6.0 * midShape
 
       // High rolloff: gently reduce > ~10 kHz.
@@ -769,6 +834,23 @@ export default class FrequencyVisualization extends THREE.Object3D {
       const hiDb = controls.hiRolloffDb * hiRoll
 
       return dbToLin(lowDb + midDb + hiDb)
+    }
+
+    const fv2Weight = (i) => {
+      const t = i / Math.max(1, width - 1)
+      const f = t * nyquist
+
+      const shelfT = 1.0 - smoothstep(120.0, 220.0, f)
+      const shelf = dbToLin(controls.subShelfDb * shelfT)
+
+      const oct = Math.log2(Math.max(1e-6, f) / controls.kickHz)
+      const sigma = controls.kickWidthOct / 2.355
+      const bell = Math.exp(-(oct * oct) / (2.0 * sigma * sigma))
+      const kick = dbToLin(controls.kickBoostDb * bell)
+
+      const tilt = controls.tiltLo - (controls.tiltLo - controls.tiltHi) * Math.pow(t, 0.55)
+
+      return Math.max(0, shelf * kick * tilt)
     }
 
     if (!this._audioSmooth || this._audioSmooth.length !== width) {
@@ -805,17 +887,26 @@ export default class FrequencyVisualization extends THREE.Object3D {
     }
     
     // Pass 1.5: Spatial smoothing / banding (AE-ish)
-    // Wider kernel makes the result read like frequency *bands* rather than raw FFT bins.
-    // (Also helps match AE's inherently band-aggregated look.)
-    const K = [1, 4, 9, 15, 20, 15, 9, 4, 1]
-    const Ksum = 78
-    for (let i = 0; i < width; i++) {
-      let acc = 0
-      for (let k = -4; k <= 4; k++) {
-        const j = Math.max(0, Math.min(width - 1, i + k))
-        acc += K[k + 4] * (this._audioSmooth[j] ?? 0)
+    if (controls.spatialKernel === 'narrow') {
+      // 3-tap for FV1/FV2 feel.
+      for (let i = 0; i < width; i++) {
+        const iL = Math.max(0, i - 1)
+        const iR = Math.min(width - 1, i + 1)
+        const val = (0.05 * this._audioSmooth[iL]) + (0.90 * this._audioSmooth[i]) + (0.05 * this._audioSmooth[iR])
+        this._spatialBuf[i] = val
       }
-      this._spatialBuf[i] = acc / Ksum
+    } else {
+      // 9-tap wide kernel (FV3 default)
+      const K = [1, 4, 9, 15, 20, 15, 9, 4, 1]
+      const Ksum = 78
+      for (let i = 0; i < width; i++) {
+        let acc = 0
+        for (let k = -4; k <= 4; k++) {
+          const j = Math.max(0, Math.min(width - 1, i + k))
+          acc += K[k + 4] * (this._audioSmooth[j] ?? 0)
+        }
+        this._spatialBuf[i] = acc / Ksum
+      }
     }
 
     // Pass 1.8: Histogram (from spatially smoothed data)
@@ -839,15 +930,32 @@ export default class FrequencyVisualization extends THREE.Object3D {
       baseline = idx / Math.max(1, this._hist.length - 1)
     }
 
-    // Pass 2: baseline subtraction + LF weighting + peak for AGC
+    // Pass 2: baseline subtraction + weighting + peak for AGC
     for (let i = 0; i < width; i++) {
       const shaped = this._spatialBuf[i] ?? 0
 
-      // Subtract percentile baseline to keep the band from filling up.
-      const deBiased = Math.max(0, shaped - baseline * baselineStrength)
+      // Optional per-bin floor (FV2 transient extraction).
+      let transient = shaped
+      if (controls.useBinFloor) {
+        const t = i / (width - 1)
+        const isLow = t < 0.20
+        const floorAtk = isLow ? controls.floorAtkLow : controls.floorAtkHi
+        const floorRel = isLow ? controls.floorRelLow : controls.floorRelHi
+        const fPrev = this._binFloor[i] ?? 0
+        const fNext = shaped > fPrev
+          ? fPrev + (shaped - fPrev) * floorAtk
+          : fPrev + (shaped - fPrev) * floorRel
+        this._binFloor[i] = fNext
+        const strength = isLow ? controls.floorStrengthLow : controls.floorStrengthHi
+        transient = Math.max(0, shaped - fNext * strength)
+      }
 
-      // AE-ish frequency shaping (mid-forward, controlled lows, gentle high rolloff) + beat accent on low bins.
-      const w = aeWeight(i)
+      // Subtract percentile baseline to keep the band from filling up.
+      const deBiased = Math.max(0, transient - baseline * baselineStrength)
+
+      // Frequency weighting.
+      const useFv2 = controls.weightingMode === 'fv2'
+      const w = useFv2 ? fv2Weight(i) : aeWeight(i)
       const t = i / Math.max(1, width - 1)
       const weighted = Math.max(0, deBiased * w * beatFactorFor(t) - displayThreshold)
 
@@ -865,8 +973,18 @@ export default class FrequencyVisualization extends THREE.Object3D {
     for (let i = 0; i < width; i++) {
       const shaped = this._spatialBuf[i] ?? 0
 
-      const deBiased = Math.max(0, shaped - baseline * baselineStrength)
-      const w = aeWeight(i)
+      let transient = shaped
+      if (controls.useBinFloor) {
+        const t = i / (width - 1)
+        const isLow = t < 0.20
+        const strength = isLow ? controls.floorStrengthLow : controls.floorStrengthHi
+        const f = this._binFloor[i] ?? 0
+        transient = Math.max(0, shaped - f * strength)
+      }
+
+      const deBiased = Math.max(0, transient - baseline * baselineStrength)
+      const useFv2 = controls.weightingMode === 'fv2'
+      const w = useFv2 ? fv2Weight(i) : aeWeight(i)
       const t = i / Math.max(1, width - 1)
       const weighted = Math.max(0, deBiased * w * beatFactorFor(t) - displayThreshold)
 

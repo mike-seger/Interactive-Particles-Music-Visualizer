@@ -935,8 +935,82 @@ export default class App {
     style.textContent = `
       @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
 
-      .dg.main { width: 445px !important; position: relative; overflow: visible; }
-      .dg .fv3-controls { width: 100%; max-width: 100%; box-sizing: border-box; }
+      .dg.main {
+        width: 445px !important;
+        position: relative;
+        overflow: visible;
+        max-height: none !important;
+      }
+      .dg.main > ul {
+        max-height: none !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      .dg .folder > ul {
+        max-height: none !important;
+        height: auto !important;
+        overflow: visible !important;
+      }
+      .dg .fv3-controls {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        max-height: 70vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      .dg .fv3-controls ul {
+        max-height: none;
+        overflow: visible;
+      }
+      .dg .fv3-controls,
+      .dg .fv3-controls ul {
+        scrollbar-color: #2f3545 #0f1219;
+      }
+      .dg .fv3-controls::-webkit-scrollbar {
+        width: 10px;
+      }
+      .dg .fv3-controls::-webkit-scrollbar-track {
+        background: #0f1219;
+      }
+      .dg .fv3-controls::-webkit-scrollbar-thumb {
+        background: #2f3545;
+        border-radius: 8px;
+      }
+      .dg .fv3-controls::-webkit-scrollbar-thumb:hover {
+        background: #3c4458;
+      }
+      .dg .fv3-controls ul::-webkit-scrollbar {
+        width: 10px;
+      }
+      .dg .fv3-controls ul::-webkit-scrollbar-track {
+        background: #0f1219;
+      }
+      .dg .fv3-controls ul::-webkit-scrollbar-thumb {
+        background: #2f3545;
+        border-radius: 8px;
+      }
+      .dg .fv3-controls ul::-webkit-scrollbar-thumb:hover {
+        background: #3c4458;
+      }
+
+      /* Dark mode form controls for the top rows */
+      .dg .fv3-controls select,
+      .dg .fv3-controls input[type="text"],
+      .dg .fv3-controls input[type="number"],
+      .dg .fv3-controls input[type="checkbox"] {
+        background: #161921;
+        color: #e6e9f0;
+        border: 1px solid #3a3f4d;
+      }
+      .dg .fv3-controls select:focus,
+      .dg .fv3-controls input[type="text"]:focus,
+      .dg .fv3-controls input[type="number"]:focus,
+      .dg .fv3-controls input[type="checkbox"]:focus {
+        outline: 1px solid #6ea8ff;
+        border-color: #6ea8ff;
+        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
+      }
       .dg .fv3-controls ul.closed li:not(.title) { display: none; }
       .dg .fv3-controls .cr.number { padding: 4px 4px 6px; }
       .dg .fv3-controls .cr.number .property-name { width: 40%; text-align: left; font-weight: 600; }
@@ -1088,19 +1162,19 @@ export default class App {
 
       /* Preset overlay */
       .fv3-overlay {
-        position: absolute;
+        position: fixed;
         inset: 0;
         background: rgba(8, 10, 16, 0.94);
         display: none;
         align-items: flex-start;
         justify-content: center;
         z-index: 50;
-        padding: 8px;
+        padding: 16px;
         box-sizing: border-box;
       }
       .fv3-overlay .fv3-modal {
         width: 100%;
-        max-width: 360px;
+        max-width: 460px;
         background: #0f1219;
         border: 1px solid #2b2f3a;
         border-radius: 10px;
@@ -1110,7 +1184,7 @@ export default class App {
         padding: 10px 10px 8px;
         box-sizing: border-box;
         overflow: auto;
-        max-height: calc(100% - 16px);
+        max-height: 86vh;
       }
       .fv3-overlay header {
         display: flex;
@@ -1254,7 +1328,10 @@ export default class App {
 
     folder.domElement.classList.add('fv3-controls')
     folder.domElement.style.position = 'relative'
-    folder.domElement.style.overflow = 'hidden'
+    folder.domElement.style.overflowY = 'auto'
+    folder.domElement.style.overflowX = 'hidden'
+    folder.domElement.style.maxHeight = '70vh'
+    folder.domElement.style.height = 'auto'
     const parent = folder.domElement?.parentElement
     if (parent) parent.classList.add('fv3-controls')
 
@@ -1267,6 +1344,11 @@ export default class App {
         if (folder.domElement.classList.contains('closed')) {
           if (this.variant3Overlay) this.variant3Overlay.style.display = 'none'
           folder.domElement.style.overflow = 'hidden'
+        } else {
+          folder.domElement.style.overflowY = 'auto'
+          folder.domElement.style.overflowX = 'hidden'
+          folder.domElement.style.maxHeight = '70vh'
+          folder.domElement.style.height = 'auto'
         }
       })
       this.variant3FolderObserver.observe(folder.domElement, { attributes: true, attributeFilter: ['class'] })
@@ -1327,6 +1409,26 @@ export default class App {
           ctrl.updateDisplay()
         }
         updateSliderValueLabel(ctrl, val)
+      })
+    }
+
+    const relaxGuiHeights = () => {
+      const root = App.gui?.domElement
+      if (!root) return
+      const elems = [root, root.querySelector('ul'), ...root.querySelectorAll('ul')]
+      elems.forEach((el) => {
+        if (!el) return
+        const isFv3 = el.classList?.contains('fv3-controls') || el.closest?.('.fv3-controls')
+        if (isFv3) {
+          el.style.maxHeight = '70vh'
+          el.style.height = 'auto'
+          el.style.overflowY = 'auto'
+          el.style.overflowX = 'hidden'
+        } else {
+          el.style.maxHeight = 'none'
+          el.style.height = 'auto'
+          el.style.overflow = 'visible'
+        }
       })
     }
 
@@ -1509,15 +1611,16 @@ export default class App {
       if (this.variant3Overlay) {
         this.variant3Overlay.style.display = 'none'
       }
-      if (folder?.domElement) {
-        folder.domElement.style.overflow = 'hidden'
-      }
     }
 
     const buildOverlay = () => {
-      if (this.variant3Overlay?.parentElement) return this.variant3Overlay
+          folder.domElement.style.overflowY = 'auto'
+          folder.domElement.style.overflowX = 'hidden'
+          folder.domElement.style.maxHeight = '70vh'
+          folder.domElement.style.height = 'auto'
 
       const overlay = document.createElement('div')
+        relaxGuiHeights()
       overlay.className = 'fv3-overlay'
       const modal = document.createElement('div')
       modal.className = 'fv3-modal'
@@ -1645,10 +1748,50 @@ export default class App {
         }
       })
       this.variant3Controllers[prop] = ctrl
-      // Initialize displayed value (async to allow DOM paint)
       requestAnimationFrame(() => updateSliderValueLabel(ctrl, this.variant3Config[prop]))
       return ctrl
     }
+
+    const addToggle = (prop, label) => {
+      const ctrl = folder.add(this.variant3Config, prop).name(label).listen()
+      ctrl.onChange((value) => {
+        visualizer.setControlParams({ [prop]: !!value })
+      })
+      this.variant3Controllers[prop] = ctrl
+      return ctrl
+    }
+
+    const addDropdown = (prop, label, options) => {
+      const ctrl = folder.add(this.variant3Config, prop, options).name(label).listen()
+      ctrl.onChange((value) => {
+        visualizer.setControlParams({ [prop]: value })
+      })
+      this.variant3Controllers[prop] = ctrl
+      return ctrl
+    }
+
+    // Weighting / mode
+    addDropdown('weightingMode', 'Weighting mode', ['ae', 'fv2'])
+    addDropdown('spatialKernel', 'Smoothing kernel', ['wide', 'narrow'])
+    addToggle('useBinFloor', 'Use per-bin floor')
+    addDropdown('beatBoostEnabled', 'Beat accent enabled', [1, 0])
+    addSlider('analyserSmoothing', 'Analyser smoothing', 0.0, 1.0, 0.01)
+
+    // Kick / tilt (FV2 style)
+    addSlider('kickHz', 'Kick center Hz', 20, 200, 1)
+    addSlider('kickWidthOct', 'Kick width (oct)', 0.1, 2.0, 0.01)
+    addSlider('kickBoostDb', 'Kick boost (dB)', -12, 24, 0.25)
+    addSlider('subShelfDb', 'Sub shelf (dB)', -12, 24, 0.25)
+    addSlider('tiltLo', 'Tilt low mult', 0.1, 3.0, 0.01)
+    addSlider('tiltHi', 'Tilt high mult', 0.1, 2.5, 0.01)
+
+    // Per-bin floor controls
+    addSlider('floorAtkLow', 'Floor atk low', 0.0, 1.0, 0.01)
+    addSlider('floorRelLow', 'Floor rel low', 0.0, 1.0, 0.01)
+    addSlider('floorAtkHi', 'Floor atk high', 0.0, 1.0, 0.01)
+    addSlider('floorRelHi', 'Floor rel high', 0.0, 1.0, 0.01)
+    addSlider('floorStrengthLow', 'Floor strength low', 0.0, 1.5, 0.01)
+    addSlider('floorStrengthHi', 'Floor strength high', 0.0, 1.5, 0.01)
 
     // Shelf / tone
     addSlider('bassFreqHz', 'Bass boost freq (Hz)', 20, 140, 1)
@@ -1685,6 +1828,9 @@ export default class App {
       if (ctrl?.updateDisplay) ctrl.updateDisplay()
       requestAnimationFrame(() => updateSliderValueLabel(ctrl, this.variant3Config[ctrl.property]))
     })
+
+    // Ensure heights are unlocked after the controls are built
+    requestAnimationFrame(relaxGuiHeights)
   }
   
   addVisualizerSwitcher() {

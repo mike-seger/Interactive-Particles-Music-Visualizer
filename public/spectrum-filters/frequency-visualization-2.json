@@ -1,6 +1,17 @@
 {
   "name": "Frequency Visualization 2",
   "controls": {
+    "weightingMode": "fv2",
+    "analyserSmoothing": 0.0,
+    "spatialKernel": "narrow",
+    "useBinFloor": true,
+    "floorAtkLow": 0.18,
+    "floorRelLow": 0.03,
+    "floorAtkHi": 0.10,
+    "floorRelHi": 0.015,
+    "floorStrengthLow": 0.8,
+    "floorStrengthHi": 0.6,
+    "beatBoostEnabled": 0,
     "bassFreqHz": 120,
     "bassWidthHz": 70,
     "bassGainDb": 10,
@@ -19,6 +30,12 @@
     "minGain": 0.9,
     "maxGain": 1.35,
     "agcAttack": 0.18,
-    "agcRelease": 0.18
+    "agcRelease": 0.18,
+    "kickHz": 70,
+    "kickWidthOct": 0.65,
+    "kickBoostDb": 8,
+    "subShelfDb": 4,
+    "tiltHi": 1.0,
+    "tiltLo": 1.45
   }
 }
