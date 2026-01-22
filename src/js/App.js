@@ -195,18 +195,57 @@ export default class App {
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
 
+    const rendererRoot = this.renderer?.domElement?.parentElement || document.querySelector('.content') || document.body
+
     let isSeeking = false
+    let idleTimer = null
+    let pointerInside = false
+    const idleDelayMs = 10000
+
+    const showControls = () => {
+      controls.style.display = 'flex'
+      controls.style.opacity = '1'
+      controls.style.pointerEvents = 'auto'
+    }
+
+    const hideControls = () => {
+      controls.style.display = 'none'
+      controls.style.pointerEvents = 'none'
+    }
+
+    const clearTimers = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer)
+        idleTimer = null
+      }
+    }
+
+    const scheduleIdle = () => {
+      clearTimers()
+      idleTimer = setTimeout(() => {
+        if (!pointerInside) hideControls()
+      }, idleDelayMs)
+    }
+
+    const resetVisibility = () => {
+      showControls()
+      clearTimers()
+      scheduleIdle()
+    }
+
+    // Make the overlay visible and interactive initially
+    resetVisibility()
 
     const updatePlayState = () => {
       if (!App.audioManager?.audio) return
       const isPlaying = !App.audioManager.audio.paused
-      playPauseBtn.textContent = isPlaying ? 'Pause' : 'Play'
+      playPauseBtn.textContent = isPlaying ? 'pause_circle' : 'play_circle'
     }
 
     const updateMuteState = () => {
-      if (!App.audioManager?.audio) return
-      const isMuted = !!App.audioManager.audio.muted
-      muteBtn.textContent = isMuted ? 'Unmute' : 'Mute'
+      if (!App.audioManager) return
+      const isMuted = !!App.audioManager.isMuted
+      muteBtn.textContent = isMuted ? 'volume_off' : 'volume_up'
     }
 
     const formatTime = (seconds) => {
@@ -235,18 +274,26 @@ export default class App {
         audio.pause()
       }
       updatePlayState()
+      resetVisibility()
     })
 
+    if (App.audioManager?.audio) {
+      App.audioManager.audio.addEventListener('play', updatePlayState)
+      App.audioManager.audio.addEventListener('pause', updatePlayState)
+    }
+
     muteBtn?.addEventListener('click', () => {
-      if (!App.audioManager?.audio) return
-      App.audioManager.audio.muted = !App.audioManager.audio.muted
+      if (!App.audioManager) return
+      App.audioManager.setMuted(!App.audioManager.isMuted)
       updateMuteState()
+      resetVisibility()
     })
 
     // Microphone toggle not implemented; keep button disabled.
     if (micBtn) {
       micBtn.disabled = true
       micBtn.title = 'Microphone input not available in this build'
+      micBtn.textContent = 'mic_off'
     }
 
     positionSlider?.addEventListener('mousedown', () => { isSeeking = true })
@@ -270,6 +317,32 @@ export default class App {
     updateMuteState()
     updateTime()
     setInterval(updateTime, 1000)
+
+    // Pointer tracking for fade/hide behavior
+    controls.addEventListener('mouseenter', () => {
+      pointerInside = true
+      showControls()
+      clearTimers()
+    })
+    controls.addEventListener('mouseleave', () => {
+      pointerInside = false
+      scheduleIdle()
+    })
+
+    // Visualizer clicks reset visibility or trigger hide when outside controls
+    if (rendererRoot) {
+      rendererRoot.addEventListener('click', (e) => {
+        const clickedInsideControls = controls.contains(e.target)
+        if (clickedInsideControls) {
+          resetVisibility()
+        } else if (controls.style.display === 'none') {
+          resetVisibility()
+        } else {
+          pointerInside = false
+          hideControls()
+        }
+      })
+    }
 
     window.addEventListener('beforeunload', () => {
       if (!App.audioManager || !App.audioManager.audio || App.audioManager.isUsingMicrophone) return
@@ -1260,6 +1333,19 @@ export default class App {
 
     let overlayNameInput = null
 
+    const makeIconButton = (ligature, title, handler) => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'icon-btn'
+      btn.title = title
+      const icon = document.createElement('span')
+      icon.className = 'fv3-icon'
+      icon.textContent = ligature
+      btn.appendChild(icon)
+      btn.addEventListener('click', handler)
+      return btn
+    }
+
     const syncPresetNameInputs = (value) => {
       const val = value ?? ''
       this.variant3PresetState.presetName = val
@@ -1328,6 +1414,27 @@ export default class App {
           reader.readAsText(file)
         }
         input.click()
+      },
+      deletePreset: () => {
+        const name = this.variant3PresetState.loadPreset || this.variant3LoadSelect?.value || ''
+        if (!name) {
+          alert('Select a preset to delete first.')
+          return
+        }
+        if (!presets[name]) {
+          alert('Preset not found.')
+          return
+        }
+        if (!window.confirm(`Delete preset "${name}"?`)) return
+        delete presets[name]
+        this.saveFV3Presets(presets)
+        if (this.variant3PresetState.loadPreset === name) {
+          this.variant3PresetState.loadPreset = Object.keys(presets)[0] || ''
+        }
+        refreshLoadOptions()
+        if (this.variant3LoadSelect) {
+          this.variant3LoadSelect.value = this.variant3PresetState.loadPreset || ''
+        }
       }
     }
 
@@ -1385,7 +1492,14 @@ export default class App {
       const select = document.createElement('select')
       select.addEventListener('change', (e) => onPresetSelect(e.target.value))
       this.variant3LoadSelect = select
-      modal.appendChild(makeRow('Load preset', select))
+      const loadField = document.createElement('div')
+      loadField.style.display = 'flex'
+      loadField.style.alignItems = 'center'
+      loadField.style.gap = '6px'
+      loadField.appendChild(select)
+      const deleteBtn = makeIconButton('delete', 'Delete preset', presetActions.deletePreset)
+      loadField.appendChild(deleteBtn)
+      modal.appendChild(makeRow('Load preset', loadField))
 
       const nameInput = document.createElement('input')
       nameInput.type = 'text'
@@ -1397,18 +1511,6 @@ export default class App {
 
       const actions = document.createElement('div')
       actions.className = 'actions'
-      const makeIconButton = (ligature, title, handler) => {
-        const btn = document.createElement('button')
-        btn.type = 'button'
-        btn.className = 'icon-btn'
-        btn.title = title
-        const icon = document.createElement('span')
-        icon.className = 'fv3-icon'
-        icon.textContent = ligature
-        btn.appendChild(icon)
-        btn.addEventListener('click', handler)
-        return btn
-      }
       actions.appendChild(makeIconButton('save', 'Save preset', presetActions.savePreset))
       actions.appendChild(makeIconButton('file_download', 'Download preset JSON', presetActions.downloadPreset))
       actions.appendChild(makeIconButton('upload_file', 'Upload preset JSON', presetActions.uploadPreset))

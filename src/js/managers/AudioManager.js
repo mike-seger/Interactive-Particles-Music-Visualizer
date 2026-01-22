@@ -17,6 +17,8 @@ export default class AudioManager {
     this.startTime = 0
     this.pauseTime = 0
     this.offset = 0
+    this.outputGain = null
+    this.isMuted = false
     this.isUsingMicrophone = false
     this.microphoneStream = null
     this.microphoneSource = null
@@ -48,10 +50,15 @@ export default class AudioManager {
       analyser.smoothingTimeConstant = 0.0
       analyser.minDecibels = -90
       analyser.maxDecibels = -25
+
+      // Gain node to control muting without pausing audio
+      this.outputGain = this.audioContext.createGain()
+      this.outputGain.gain.value = this.isMuted ? 0 : 1
       
       // Connect: source -> analyser -> destination (speakers)
       source.connect(analyser)
-      analyser.connect(this.audioContext.destination)
+      analyser.connect(this.outputGain)
+      this.outputGain.connect(this.audioContext.destination)
       
       // Store references
       this.audio = audioElement
@@ -229,7 +236,9 @@ export default class AudioManager {
     
     // Disconnect previous source and connect microphone
     this.microphoneSource.connect(this.analyserNode)
-    this.analyserNode.connect(this.audioContext.destination)
+    this.analyserNode.disconnect()
+    this.analyserNode.connect(this.outputGain)
+    this.outputGain.connect(this.audioContext.destination)
     
     this.isUsingMicrophone = true
     console.log('Switched to microphone source')
@@ -256,5 +265,15 @@ export default class AudioManager {
     }
     
     console.log('Switched to file source')
+  }
+
+  setMuted(muted) {
+    this.isMuted = !!muted
+    if (this.outputGain) {
+      this.outputGain.gain.value = this.isMuted ? 0 : 1
+    }
+    if (this.audio) {
+      this.audio.muted = false
+    }
   }
 }
