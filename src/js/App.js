@@ -1452,7 +1452,12 @@ export default class App {
 
     const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
     if (listEl) {
-      listEl.insertBefore(editLi, listEl.firstChild)
+      const titleLi = listEl.querySelector('li.title')
+      if (titleLi?.parentElement === listEl) {
+        titleLi.insertAdjacentElement('afterend', editLi)
+      } else {
+        listEl.insertBefore(editLi, listEl.firstChild)
+      }
       this.variant3PresetRow = editLi
     }
 
