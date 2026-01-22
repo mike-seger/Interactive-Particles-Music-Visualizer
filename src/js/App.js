@@ -837,16 +837,11 @@ export default class App {
     const style = document.createElement('style')
     style.id = 'fv3-gui-style'
     style.textContent = `
-      @font-face {
-        font-family: 'Material Icons Round-Regular';
-        font-style: normal;
-        font-weight: 400;
-        font-display: swap;
-        src: url('player-fill0.woff2') format('woff2');
-      }
+      @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
 
-      .dg.main { width: 445px !important; }
+      .dg.main { width: 445px !important; position: relative; overflow: visible; }
       .dg .fv3-controls { width: 100%; max-width: 100%; box-sizing: border-box; }
+      .dg .fv3-controls ul.closed li:not(.title) { display: none; }
       .dg .fv3-controls .cr.number { padding: 4px 4px 6px; }
       .dg .fv3-controls .cr.number .property-name { width: 40%; text-align: left; font-weight: 600; }
       .dg .fv3-controls .cr.number .c {
@@ -932,11 +927,45 @@ export default class App {
         background: rgba(110, 168, 255, 0.08);
       }
       .dg .fv3-controls .cr.fv3-preset-line .fv3-icon {
-        font-family: 'Material Icons Round-Regular';
-        font-variation-settings: 'FILL' 0, 'GRAD' 0, 'opsz' 24, 'wght' 400;
+        font-family: 'Material Symbols Rounded';
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         font-size: 18px;
         line-height: 1;
         display: inline-block;
+      }
+
+      /* Edit Presets row */
+      .dg .fv3-controls .cr.fv3-edit-row {
+        display: flex;
+        align-items: center;
+        padding: 6px 8px;
+        box-sizing: border-box;
+      }
+      .dg .fv3-controls .cr.fv3-edit-row .property-name {
+        width: 40%;
+        font-weight: 600;
+        text-transform: none;
+        padding-right: 6px;
+      }
+      .dg .fv3-controls .cr.fv3-edit-row .c {
+        width: 60%;
+      }
+      .dg .fv3-controls .cr.fv3-edit-row button {
+        width: 100%;
+        height: 28px;
+        border-radius: 4px;
+        border: 1px solid #444;
+        background: linear-gradient(90deg, #1f2531, #1b212c);
+        color: #e6e9f0;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        cursor: pointer;
+        transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+      }
+      .dg .fv3-controls .cr.fv3-edit-row button:hover {
+        border-color: #6ea8ff;
+        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
+        background: linear-gradient(90deg, #263043, #1e2535);
       }
       /* Edit Presets trigger row */
       .dg .fv3-controls .cr.fv3-edit-row {
@@ -963,32 +992,35 @@ export default class App {
 
       /* Preset overlay */
       .fv3-overlay {
-        position: fixed;
+        position: absolute;
         inset: 0;
-        background: rgba(4, 6, 10, 0.82);
-        backdrop-filter: blur(4px);
+        background: rgba(8, 10, 16, 0.94);
         display: none;
-        align-items: center;
+        align-items: flex-start;
         justify-content: center;
-        z-index: 2600;
-        padding: 20px;
+        z-index: 50;
+        padding: 8px;
+        box-sizing: border-box;
       }
       .fv3-overlay .fv3-modal {
-        width: min(520px, 100%);
+        width: 100%;
+        max-width: 360px;
         background: #0f1219;
         border: 1px solid #2b2f3a;
         border-radius: 10px;
-        box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
         color: #e6e9f0;
         font-family: 'Inter', system-ui, -apple-system, sans-serif;
-        padding: 18px 18px 16px;
+        padding: 10px 10px 8px;
         box-sizing: border-box;
+        overflow: auto;
+        max-height: calc(100% - 16px);
       }
       .fv3-overlay header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        margin-bottom: 12px;
+        margin-bottom: 8px;
       }
       .fv3-overlay h3 {
         margin: 0;
@@ -1015,48 +1047,48 @@ export default class App {
       .fv3-overlay .row {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 8px 0;
+        gap: 8px;
+        padding: 6px 0;
         border-top: 1px solid #1c202a;
       }
       .fv3-overlay .row:first-of-type {
         border-top: none;
       }
       .fv3-overlay .label {
-        width: 34%;
+        width: 40%;
         font-weight: 600;
         font-size: 12px;
       }
       .fv3-overlay .field {
-        width: 66%;
+        width: 60%;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
       }
       .fv3-overlay input[type="text"],
       .fv3-overlay select {
         flex: 1 1 auto;
-        min-width: 180px;
+        min-width: 140px;
         background: #11141c;
         border: 1px solid #3a3f4d;
         color: #e6e9f0;
-        padding: 7px 9px;
-        font-size: 13px;
+        padding: 6px 8px;
+        font-size: 12px;
         border-radius: 4px;
       }
       .fv3-overlay .actions {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
       }
       .fv3-overlay .icon-btn {
-        height: 34px;
-        width: 38px;
-        min-width: 38px;
+        height: 30px;
+        width: 34px;
+        min-width: 34px;
         background: transparent;
         color: #e6e9f0;
         border: 1px solid #3a3f4d;
-        border-radius: 6px;
+        border-radius: 4px;
         cursor: pointer;
         display: inline-flex;
         align-items: center;
@@ -1070,8 +1102,8 @@ export default class App {
         background: rgba(110, 168, 255, 0.08);
       }
       .fv3-overlay .fv3-icon {
-        font-family: 'Material Icons Round-Regular';
-        font-variation-settings: 'FILL' 0, 'GRAD' 0, 'opsz' 24, 'wght' 400;
+        font-family: 'Material Symbols Rounded';
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         font-size: 20px;
         line-height: 1;
         display: inline-block;
@@ -1099,6 +1131,13 @@ export default class App {
     this.variant3PresetState = null
     this.variant3LoadSelect = null
     this.variant3PresetRow = null
+    if (this.variant3FolderObserver) {
+      this.variant3FolderObserver.disconnect()
+      this.variant3FolderObserver = null
+    }
+    if (this.variant3Folder?.domElement) {
+      this.variant3Folder.domElement.style.overflow = 'hidden'
+    }
     if (this.variant3Overlay?.parentElement) {
       this.variant3Overlay.parentElement.removeChild(this.variant3Overlay)
     }
@@ -1117,8 +1156,24 @@ export default class App {
     folder.open()
 
     folder.domElement.classList.add('fv3-controls')
+    folder.domElement.style.position = 'relative'
+    folder.domElement.style.overflow = 'hidden'
     const parent = folder.domElement?.parentElement
     if (parent) parent.classList.add('fv3-controls')
+
+    if (this.variant3FolderObserver) {
+      this.variant3FolderObserver.disconnect()
+      this.variant3FolderObserver = null
+    }
+    if (folder.domElement) {
+      this.variant3FolderObserver = new MutationObserver(() => {
+        if (folder.domElement.classList.contains('closed')) {
+          if (this.variant3Overlay) this.variant3Overlay.style.display = 'none'
+          folder.domElement.style.overflow = 'hidden'
+        }
+      })
+      this.variant3FolderObserver.observe(folder.domElement, { attributes: true, attributeFilter: ['class'] })
+    }
 
     this.variant3Folder = folder
     this.variant3Controllers = {}
@@ -1270,6 +1325,15 @@ export default class App {
       if (this.variant3LoadSelect) this.variant3LoadSelect.value = value
     }
 
+    const hideOverlay = () => {
+      if (this.variant3Overlay) {
+        this.variant3Overlay.style.display = 'none'
+      }
+      if (folder?.domElement) {
+        folder.domElement.style.overflow = 'hidden'
+      }
+    }
+
     const buildOverlay = () => {
       if (this.variant3Overlay?.parentElement) return this.variant3Overlay
 
@@ -1285,9 +1349,7 @@ export default class App {
       closeBtn.className = 'close-btn'
       closeBtn.title = 'Close'
       closeBtn.textContent = '×'
-      closeBtn.addEventListener('click', () => {
-        overlay.style.display = 'none'
-      })
+      closeBtn.addEventListener('click', hideOverlay)
       header.appendChild(title)
       header.appendChild(closeBtn)
       modal.appendChild(header)
@@ -1350,7 +1412,11 @@ export default class App {
       modal.appendChild(actionsRow)
 
       overlay.appendChild(modal)
-      document.body.appendChild(overlay)
+      const container = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement || App.gui?.domElement || document.body
+      if (container && !container.style.position) {
+        container.style.position = 'relative'
+      }
+      container.appendChild(overlay)
       this.variant3Overlay = overlay
       refreshLoadOptions()
       syncPresetNameInputs(this.variant3PresetState.presetName)
@@ -1362,27 +1428,31 @@ export default class App {
       if (overlay) {
         refreshLoadOptions()
         overlay.style.display = 'flex'
+        if (folder?.domElement) {
+          folder.domElement.style.overflow = 'visible'
+        }
       }
     }
 
-    // Native dat.GUI row at the top to open the overlay
-    const editConfig = { 'Edit Presets': () => openOverlay() }
-    const editController = folder.add(editConfig, 'Edit Presets').name('Edit Presets')
-    const editLi = editController?.domElement
-    if (editLi) {
-      // Replace default input with a full-width button
-      editLi.classList.add('fv3-edit-row')
-      editLi.innerHTML = ''
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.textContent = 'Edit Presets'
-      btn.addEventListener('click', () => openOverlay())
-      editLi.appendChild(btn)
+    // Custom row at the top to open the overlay
+    const editLi = document.createElement('li')
+    editLi.className = 'cr fv3-edit-row'
+    const labelSpan = document.createElement('span')
+    labelSpan.className = 'property-name'
+    labelSpan.textContent = 'Presets'
+    const cDiv = document.createElement('div')
+    cDiv.className = 'c'
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.textContent = 'Edit'
+    btn.addEventListener('click', () => openOverlay())
+    cDiv.appendChild(btn)
+    editLi.appendChild(labelSpan)
+    editLi.appendChild(cDiv)
 
-      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
-      if (listEl) {
-        listEl.insertBefore(editLi, listEl.firstChild)
-      }
+    const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+    if (listEl) {
+      listEl.insertBefore(editLi, listEl.firstChild)
       this.variant3PresetRow = editLi
     }
 

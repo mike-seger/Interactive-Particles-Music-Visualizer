@@ -72,6 +72,46 @@
   color: red;
 }
 
+.fv3-edit-row {
+  display: flex;
+  align-items: center;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 4px 5px;
+
+  .property-name {
+    width: 40%;
+    padding-right: 4px;
+    text-align: left;
+    color: #e0e0e0;
+  }
+
+  .c {
+    width: 60%;
+  }
+
+  button {
+    width: 100%;
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid #1a1a1a;
+    background: linear-gradient(#3c3c3c, #2b2b2b);
+    color: #f0f0f0;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+
+    &:hover {
+      background: linear-gradient(#4a4a4a, #333);
+    }
+
+    &:active {
+      background: linear-gradient(#2e2e2e, #222);
+      border-color: #000;
+    }
+  }
+}
+
 #position-slider {
   width: 180px;
   height: 4px;
