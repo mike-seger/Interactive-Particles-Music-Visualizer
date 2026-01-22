@@ -1187,6 +1187,19 @@ export default class App {
       return value.toFixed(decimals)
     }
 
+    const roundParamsForStorage = (params) => {
+      if (!params || typeof params !== 'object') return params
+      const rounded = {}
+      Object.entries(params).forEach(([key, val]) => {
+        if (Number.isFinite(val)) {
+          rounded[key] = parseFloat(val.toFixed(6))
+        } else {
+          rounded[key] = val
+        }
+      })
+      return rounded
+    }
+
     const updateSliderValueLabel = (controller, value) => {
       const slider = controller?.__slider
       const input = controller?.__input
@@ -1262,7 +1275,7 @@ export default class App {
           alert('Enter a preset name first.')
           return
         }
-        presets[name] = visualizer.getControlParams()
+        presets[name] = roundParamsForStorage(visualizer.getControlParams())
         this.saveFV3Presets(presets)
         this.variant3PresetState.loadPreset = name
         refreshLoadOptions()
@@ -1271,7 +1284,7 @@ export default class App {
       downloadPreset: () => {
         const data = {
           name: (this.variant3PresetState.presetName || '').trim() || 'preset',
-          controls: visualizer.getControlParams(),
+          controls: roundParamsForStorage(visualizer.getControlParams()),
           visualizer: 'Frequency Visualization 3'
         }
         const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'preset'
@@ -1298,11 +1311,12 @@ export default class App {
               const controls = parsed?.controls && typeof parsed.controls === 'object' ? parsed.controls : parsed
               if (!controls || typeof controls !== 'object') throw new Error('Invalid preset file')
               const name = (parsed?.name && typeof parsed.name === 'string' ? parsed.name : file.name.replace(/\.json$/i, '')) || 'Imported preset'
-              presets[name] = controls
+              const normalized = roundParamsForStorage(controls)
+              presets[name] = normalized
               this.saveFV3Presets(presets)
               syncPresetNameInputs(name)
               this.variant3PresetState.loadPreset = name
-              applyParams(controls)
+              applyParams(normalized)
               refreshLoadOptions()
               if (this.variant3LoadSelect) this.variant3LoadSelect.value = name
             } catch (err) {
