@@ -121,6 +121,7 @@ export default class App {
     this.variant3LoadSelect = null
     this.variant3LoadController = null
     this.variant3PresetRow = null
+    this.variant3ScrollContainer = null
     this.variant3UploadInput = null
     this.variant3Overlay = null
     this.variant3PresetApplied = false
@@ -960,6 +961,13 @@ export default class App {
         overflow-y: auto;
         overflow-x: hidden;
       }
+      .dg .fv3-controls .fv3-scroll {
+        max-height: 60vh;
+        overflow-y: auto;
+        overflow-x: hidden;
+        margin: 0;
+        padding: 0;
+      }
       .dg .fv3-controls ul {
         max-height: none;
         overflow: visible;
@@ -1790,6 +1798,25 @@ export default class App {
       }
     }
 
+    const ensureScrollContainer = () => {
+      if (this.variant3ScrollContainer) return this.variant3ScrollContainer
+      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+      if (!listEl) return null
+      const scroller = document.createElement('div')
+      scroller.className = 'fv3-scroll'
+      listEl.appendChild(scroller)
+      this.variant3ScrollContainer = scroller
+      return scroller
+    }
+
+    const moveToScroller = (ctrl) => {
+      const li = ctrl?.__li
+      const scroller = ensureScrollContainer()
+      if (li && scroller && li.parentElement !== scroller) {
+        scroller.appendChild(li)
+      }
+    }
+
     const addSlider = (prop, label, min, max, step = 1) => {
       const ctrl = folder.add(this.variant3Config, prop, min, max).step(step).name(label).listen()
       ctrl.onChange((value) => {
@@ -1799,6 +1826,7 @@ export default class App {
         }
       })
       this.variant3Controllers[prop] = ctrl
+      moveToScroller(ctrl)
       requestAnimationFrame(() => updateSliderValueLabel(ctrl, this.variant3Config[prop]))
       return ctrl
     }
@@ -1809,6 +1837,7 @@ export default class App {
         visualizer.setControlParams({ [prop]: !!value })
       })
       this.variant3Controllers[prop] = ctrl
+      moveToScroller(ctrl)
       return ctrl
     }
 
@@ -1818,6 +1847,7 @@ export default class App {
         visualizer.setControlParams({ [prop]: value })
       })
       this.variant3Controllers[prop] = ctrl
+      moveToScroller(ctrl)
       return ctrl
     }
 
