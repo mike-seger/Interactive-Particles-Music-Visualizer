@@ -1055,6 +1055,57 @@ export default class App {
         border-bottom: 1px solid #2b2f3a;
         box-sizing: border-box;
       }
+      .dg .fv3-controls .cr.fv3-load-row {
+        display: flex;
+        align-items: center;
+        padding: 4px 4px 6px;
+        border-top: 1px solid #2b2f3a;
+        border-bottom: 1px solid #2b2f3a;
+        box-sizing: border-box;
+      }
+      .dg .fv3-controls .cr.fv3-load-row .property-name {
+        width: 40%;
+        font-weight: 600;
+        text-transform: none;
+        padding-right: 6px;
+      }
+      .dg .fv3-controls .cr.fv3-load-row .c {
+        width: 60%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .dg .fv3-controls .cr.fv3-load-row select {
+        flex: 1 1 auto;
+        min-width: 140px;
+        background: #161921;
+        color: #e6e9f0;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 4px 6px;
+        height: 26px;
+        font-size: 12px;
+      }
+      .dg .fv3-controls .cr.fv3-load-row button {
+        height: 26px;
+        width: 36px;
+        min-width: 36px;
+        background: #1f2531;
+        color: #e6e9f0;
+        border: 1px solid #444;
+        border-radius: 4px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+      }
+      .dg .fv3-controls .cr.fv3-load-row button:hover {
+        border-color: #6ea8ff;
+        color: #fff;
+        background: rgba(110, 168, 255, 0.08);
+      }
       .dg .fv3-controls .cr.fv3-preset-line .property-name {
         width: 40%;
         font-weight: 600;
@@ -1739,33 +1790,6 @@ export default class App {
       }
     }
 
-    // Custom row at the top to open the overlay
-    const editLi = document.createElement('li')
-    editLi.className = 'cr fv3-edit-row'
-    const labelSpan = document.createElement('span')
-    labelSpan.className = 'property-name'
-    labelSpan.textContent = 'Presets'
-    const cDiv = document.createElement('div')
-    cDiv.className = 'c'
-    const btn = document.createElement('button')
-    btn.type = 'button'
-    btn.textContent = 'Edit'
-    btn.addEventListener('click', () => openOverlay())
-    cDiv.appendChild(btn)
-    editLi.appendChild(labelSpan)
-    editLi.appendChild(cDiv)
-
-    const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
-    if (listEl) {
-      const titleLi = listEl.querySelector('li.title')
-      if (titleLi?.parentElement === listEl) {
-        titleLi.insertAdjacentElement('afterend', editLi)
-      } else {
-        listEl.insertBefore(editLi, listEl.firstChild)
-      }
-      this.variant3PresetRow = editLi
-    }
-
     const addSlider = (prop, label, min, max, step = 1) => {
       const ctrl = folder.add(this.variant3Config, prop, min, max).step(step).name(label).listen()
       ctrl.onChange((value) => {
@@ -1798,14 +1822,48 @@ export default class App {
     }
 
     // Load preset dropdown (moved from overlay)
-    const loadPresetNames = Object.keys(mergedPresets())
-    this.variant3LoadController = folder.add(this.variant3PresetState, 'loadPreset', loadPresetNames).name('Load preset').listen()
-    this.variant3LoadController.onChange((value) => {
-      if (isSyncingPreset) return
-      onPresetSelect(value)
-    })
+    const addLoadRow = () => {
+      const li = document.createElement('li')
+      li.className = 'cr fv3-load-row'
+      const label = document.createElement('span')
+      label.className = 'property-name'
+      label.textContent = 'Load preset'
 
-    refreshLoadOptions()
+      const c = document.createElement('div')
+      c.className = 'c'
+
+      const select = document.createElement('select')
+      select.addEventListener('change', (e) => {
+        if (isSyncingPreset) return
+        onPresetSelect(e.target.value)
+      })
+      this.variant3LoadSelect = select
+
+      const editBtn = document.createElement('button')
+      editBtn.type = 'button'
+      editBtn.title = 'Edit presets'
+      editBtn.textContent = 'Edit'
+      editBtn.addEventListener('click', () => openOverlay())
+
+      c.appendChild(select)
+      c.appendChild(editBtn)
+
+      li.appendChild(label)
+      li.appendChild(c)
+
+      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+      const titleLi = listEl?.querySelector('li.title')
+      if (titleLi?.parentElement === listEl) {
+        titleLi.insertAdjacentElement('afterend', li)
+      } else if (listEl) {
+        listEl.insertBefore(li, listEl.firstChild)
+      }
+
+      refreshLoadOptions()
+      return li
+    }
+
+    addLoadRow()
 
     // Weighting / mode
     addDropdown('weightingMode', 'Weighting mode', ['ae', 'fv2'])
