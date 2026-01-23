@@ -962,7 +962,7 @@ export default class App {
         overflow-x: hidden;
       }
       .dg .fv3-controls .fv3-scroll {
-        max-height: 60vh;
+        max-height: 45vh;
         overflow-y: auto;
         overflow-x: hidden;
         margin: 0;
