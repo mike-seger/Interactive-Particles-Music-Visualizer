@@ -967,6 +967,7 @@ export default class App {
         overflow-x: hidden;
         margin: 0;
         padding: 0;
+        scrollbar-color: #2f3545 #0f1219;
       }
       .dg .fv3-controls ul {
         max-height: none;
@@ -1019,6 +1020,19 @@ export default class App {
         border-radius: 8px;
       }
       .dg .fv3-controls ul::-webkit-scrollbar-thumb:hover {
+        background: #3c4458;
+      }
+      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar {
+        width: 10px;
+      }
+      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-track {
+        background: #0f1219;
+      }
+      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb {
+        background: #2f3545;
+        border-radius: 8px;
+      }
+      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb:hover {
         background: #3c4458;
       }
 
@@ -1508,6 +1522,16 @@ export default class App {
       return value.toFixed(decimals)
     }
 
+    const sortObjectKeys = (obj) => {
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj
+      return Object.keys(obj)
+        .sort((a, b) => a.localeCompare(b))
+        .reduce((acc, key) => {
+          acc[key] = obj[key]
+          return acc
+        }, {})
+    }
+
     const roundParamsForStorage = (params) => {
       if (!params || typeof params !== 'object') return params
       const rounded = {}
@@ -1518,7 +1542,7 @@ export default class App {
           rounded[key] = val
         }
       })
-      return rounded
+      return sortObjectKeys(rounded)
     }
 
     const updateSliderValueLabel = (controller, value) => {
@@ -1778,11 +1802,17 @@ export default class App {
       downloadPreset: () => {
         const data = {
           name: (this.variant3PresetState.presetName || '').trim() || 'preset',
-          controls: roundParamsForStorage(visualizer.getControlParams()),
-          visualizer: 'Frequency Visualization 3'
+          visualizer: 'Frequency Visualization 3',
+          controls: roundParamsForStorage(visualizer.getControlParams())
         }
         const slug = data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'preset'
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+        // Object literal preserves insertion order; stringify without a restrictive replacer so control keys stay intact.
+        const json = JSON.stringify({
+          name: data.name,
+          visualizer: data.visualizer,
+          controls: data.controls
+        }, null, 2)
+        const blob = new Blob([json], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
@@ -2050,59 +2080,64 @@ export default class App {
 
     addLoadRow()
 
-    // Weighting / mode
-    addDropdown('weightingMode', 'Weighting mode', ['ae', 'fv2'])
-    addDropdown('spatialKernel', 'Smoothing kernel', ['wide', 'narrow'])
-    addToggle('useBinFloor', 'Use per-bin floor')
-    addDropdown('beatBoostEnabled', 'Beat accent enabled', [1, 0])
-    addSlider('analyserSmoothing', 'Analyser smoothing', 0.0, 1.0, 0.01)
+    const controlsToAdd = [
+      { type: 'dropdown', prop: 'weightingMode', label: 'Weighting mode', options: ['ae', 'fv2'] },
+      { type: 'dropdown', prop: 'spatialKernel', label: 'Smoothing kernel', options: ['wide', 'narrow'] },
+      { type: 'toggle', prop: 'useBinFloor', label: 'Use per-bin floor' },
+      { type: 'dropdown', prop: 'beatBoostEnabled', label: 'Beat accent enabled', options: [1, 0] },
+      { type: 'slider', prop: 'analyserSmoothing', label: 'Analyser smoothing', min: 0.0, max: 1.0, step: 0.01 },
 
-    // Kick / tilt (FV2 style)
-    addSlider('kickHz', 'Kick center Hz', 20, 200, 1)
-    addSlider('kickWidthOct', 'Kick width (oct)', 0.1, 2.0, 0.01)
-    addSlider('kickBoostDb', 'Kick boost (dB)', -12, 24, 0.25)
-    addSlider('subShelfDb', 'Sub shelf (dB)', -12, 24, 0.25)
-    addSlider('tiltLo', 'Tilt low mult', 0.1, 3.0, 0.01)
-    addSlider('tiltHi', 'Tilt high mult', 0.1, 2.5, 0.01)
+      { type: 'slider', prop: 'kickHz', label: 'Kick center Hz', min: 20, max: 200, step: 1 },
+      { type: 'slider', prop: 'kickWidthOct', label: 'Kick width (oct)', min: 0.1, max: 2.0, step: 0.01 },
+      { type: 'slider', prop: 'kickBoostDb', label: 'Kick boost (dB)', min: -12, max: 24, step: 0.25 },
+      { type: 'slider', prop: 'subShelfDb', label: 'Sub shelf (dB)', min: -12, max: 24, step: 0.25 },
+      { type: 'slider', prop: 'tiltLo', label: 'Tilt low mult', min: 0.1, max: 3.0, step: 0.01 },
+      { type: 'slider', prop: 'tiltHi', label: 'Tilt high mult', min: 0.1, max: 2.5, step: 0.01 },
 
-    // Per-bin floor controls
-    addSlider('floorAtkLow', 'Floor atk low', 0.0, 1.0, 0.01)
-    addSlider('floorRelLow', 'Floor rel low', 0.0, 1.0, 0.01)
-    addSlider('floorAtkHi', 'Floor atk high', 0.0, 1.0, 0.01)
-    addSlider('floorRelHi', 'Floor rel high', 0.0, 1.0, 0.01)
-    addSlider('floorStrengthLow', 'Floor strength low', 0.0, 1.5, 0.01)
-    addSlider('floorStrengthHi', 'Floor strength high', 0.0, 1.5, 0.01)
+      { type: 'slider', prop: 'floorAtkLow', label: 'Floor atk low', min: 0.0, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'floorRelLow', label: 'Floor rel low', min: 0.0, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'floorAtkHi', label: 'Floor atk high', min: 0.0, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'floorRelHi', label: 'Floor rel high', min: 0.0, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'floorStrengthLow', label: 'Floor strength low', min: 0.0, max: 1.5, step: 0.01 },
+      { type: 'slider', prop: 'floorStrengthHi', label: 'Floor strength high', min: 0.0, max: 1.5, step: 0.01 },
 
-    // Shelf / tone
-    addSlider('bassFreqHz', 'Bass boost freq (Hz)', 20, 140, 1)
-    addSlider('bassWidthHz', 'Boost width (Hz)', 1, 50, 1)
-    addSlider('bassGainDb', 'Boost gain (dB)', -6, 30, 0.5)
-    addSlider('hiRolloffDb', 'High rolloff (dB)', -24, 0, 0.5)
+      { type: 'slider', prop: 'bassFreqHz', label: 'Bass boost freq (Hz)', min: 20, max: 140, step: 1 },
+      { type: 'slider', prop: 'bassWidthHz', label: 'Boost width (Hz)', min: 1, max: 50, step: 1 },
+      { type: 'slider', prop: 'bassGainDb', label: 'Boost gain (dB)', min: -6, max: 30, step: 0.5 },
+      { type: 'slider', prop: 'hiRolloffDb', label: 'High rolloff (dB)', min: -24, max: 0, step: 0.5 },
 
-    // Beat accent
-    addSlider('beatBoost', 'Beat boost', 0.0, 2.0, 0.05)
+      { type: 'slider', prop: 'beatBoost', label: 'Beat boost', min: 0.0, max: 2.0, step: 0.05 },
 
-    // Temporal envelope
-    addSlider('attack', 'Attack', 0.01, 1.0, 0.01)
-    addSlider('release', 'Release', 0.01, 1.0, 0.01)
-    addSlider('noiseFloor', 'Noise floor', 0.0, 0.2, 0.001)
-    addSlider('peakCurve', 'Peak curve', 0.5, 4.0, 0.05)
+      { type: 'slider', prop: 'attack', label: 'Attack', min: 0.01, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'release', label: 'Release', min: 0.01, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'noiseFloor', label: 'Noise floor', min: 0.0, max: 0.2, step: 0.001 },
+      { type: 'slider', prop: 'peakCurve', label: 'Peak curve', min: 0.5, max: 4.0, step: 0.05 },
 
-    // dB window
-    addSlider('minDb', 'Min dB', -120, -10, 1)
-    addSlider('maxDb', 'Max dB', -60, 0, 1)
+      { type: 'slider', prop: 'minDb', label: 'Min dB', min: -120, max: -10, step: 1 },
+      { type: 'slider', prop: 'maxDb', label: 'Max dB', min: -60, max: 0, step: 1 },
 
-    // Baseline & threshold
-    addSlider('baselinePercentile', 'Baseline percentile', 0.01, 0.5, 0.005)
-    addSlider('baselineStrength', 'Baseline strength', 0.0, 1.0, 0.01)
-    addSlider('displayThreshold', 'Display threshold', 0.0, 0.05, 0.0005)
+      { type: 'slider', prop: 'baselinePercentile', label: 'Baseline percentile', min: 0.01, max: 0.5, step: 0.005 },
+      { type: 'slider', prop: 'baselineStrength', label: 'Baseline strength', min: 0.0, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'displayThreshold', label: 'Display threshold', min: 0.0, max: 0.05, step: 0.0005 },
 
-    // AGC
-    addSlider('targetPeak', 'Target peak', 0.1, 1.5, 0.01)
-    addSlider('minGain', 'Min gain', 0.05, 3.0, 0.01)
-    addSlider('maxGain', 'Max gain', 0.1, 5.0, 0.01)
-    addSlider('agcAttack', 'AGC attack', 0.0, 1.0, 0.01)
-    addSlider('agcRelease', 'AGC release', 0.0, 1.0, 0.01)
+      { type: 'slider', prop: 'targetPeak', label: 'Target peak', min: 0.1, max: 1.5, step: 0.01 },
+      { type: 'slider', prop: 'minGain', label: 'Min gain', min: 0.05, max: 3.0, step: 0.01 },
+      { type: 'slider', prop: 'maxGain', label: 'Max gain', min: 0.1, max: 5.0, step: 0.01 },
+      { type: 'slider', prop: 'agcAttack', label: 'AGC attack', min: 0.0, max: 1.0, step: 0.01 },
+      { type: 'slider', prop: 'agcRelease', label: 'AGC release', min: 0.0, max: 1.0, step: 0.01 }
+    ]
+
+    controlsToAdd
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .forEach((cfg) => {
+        if (cfg.type === 'slider') {
+          addSlider(cfg.prop, cfg.label, cfg.min, cfg.max, cfg.step)
+        } else if (cfg.type === 'dropdown') {
+          addDropdown(cfg.prop, cfg.label, cfg.options)
+        } else if (cfg.type === 'toggle') {
+          addToggle(cfg.prop, cfg.label)
+        }
+      })
 
     Object.values(this.variant3Controllers).forEach((ctrl) => {
       if (ctrl?.updateDisplay) ctrl.updateDisplay()

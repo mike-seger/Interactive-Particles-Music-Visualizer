@@ -1,25 +1,25 @@
 {
   "name": "Bass-peak",
+  "visualizer": "Frequency Visualization 3",
   "controls": {
-    "bassFreqHz": 130,
-    "bassWidthHz": 40,
-    "bassGainDb": 8,
-    "hiRolloffDb": -6,
+    "agcAttack": 0.18,
+    "agcRelease": 0.07,
     "attack": 0.75,
-    "release": 0.12,
-    "noiseFloor": 0.02,
-    "peakCurve": 1.25,
-    "beatBoost": 0.65,
-    "minDb": -80,
-    "maxDb": -18,
     "baselinePercentile": 0.18,
     "baselineStrength": 0.48,
+    "bassFreqHz": 130,
+    "bassGainDb": 8,
+    "bassWidthHz": 40,
+    "beatBoost": 0.65,
     "displayThreshold": 0.005,
-    "targetPeak": 0.95,
-    "minGain": 0.9,
+    "hiRolloffDb": -6,
+    "maxDb": -18,
     "maxGain": 1.22,
-    "agcAttack": 0.18,
-    "agcRelease": 0.07
-  },
-  "visualizer": "Frequency Visualization 3"
+    "minDb": -80,
+    "minGain": 0.9,
+    "noiseFloor": 0.02,
+    "peakCurve": 1.25,
+    "release": 0.12,
+    "targetPeak": 0.95
+  }
 }
