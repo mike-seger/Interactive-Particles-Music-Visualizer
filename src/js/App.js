@@ -126,6 +126,8 @@ export default class App {
     this.variant3Overlay = null
     this.variant3PresetApplied = false
 
+    this.bridgeGuiHotspotEnabled = false
+
     // Toast showing the current visualizer name
     this.visualizerToast = null
     this.visualizerToastHideTimer = null
@@ -475,6 +477,39 @@ export default class App {
     }
 
     this.update()
+
+    this.enableBridgeGuiHotspot()
+  }
+
+  enableBridgeGuiHotspot() {
+    if (this.bridgeGuiHotspotEnabled) return
+    const isEmbedded = window.parent && window.parent !== window
+    const params = new URLSearchParams(window.location.search || '')
+    const wantsHide = params.get('hideui') === '1' || params.get('autostart') === '1'
+    const guiContainer = document.querySelector('.dg.ac')
+    if (!guiContainer) return
+    const guiHidden = getComputedStyle(guiContainer).display === 'none'
+    if (!(isEmbedded && (wantsHide || guiHidden))) return
+
+    const hotspot = document.createElement('div')
+    hotspot.style.position = 'fixed'
+    hotspot.style.top = '0'
+    hotspot.style.right = '0'
+    hotspot.style.width = '200px'
+    hotspot.style.height = '200px'
+    hotspot.style.zIndex = '2600'
+    hotspot.style.cursor = 'pointer'
+    hotspot.style.background = 'transparent'
+    hotspot.title = 'Show controls'
+
+    hotspot.addEventListener('click', () => {
+      guiContainer.style.display = 'block'
+      guiContainer.style.pointerEvents = 'auto'
+      guiContainer.style.opacity = '1'
+    })
+
+    document.body.appendChild(hotspot)
+    this.bridgeGuiHotspotEnabled = true
   }
 
   resize() {
