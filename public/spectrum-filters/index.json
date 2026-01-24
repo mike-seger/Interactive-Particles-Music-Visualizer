@@ -1,7 +1,6 @@
 [
   "bass-peak.json",
-  "frequency-visualization.json",
-  "fv2-2.json",
+  "default.json",
   "spiky-spectrum.json",
   "wavy-spectrum.json"
 ]

@@ -1,5 +1,6 @@
 {
-  "name": "Frequency Visualization 2",
+  "name": "Spiky Spectrum",
+  "visualizer": "Frequency Visualization 3",
   "controls": {
     "agcAttack": 0.18,
     "agcRelease": 0.18,
