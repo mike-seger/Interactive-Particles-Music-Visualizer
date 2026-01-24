@@ -76,48 +76,78 @@
         }
         break;
         
-      case 'AUDIO_DATA':
-        // Receive frequency data from bridge and inject into AudioManager
-        if (window.App && window.App.audioManager && window.App.audioManager.audioAnalyser) {
-          if (msg.frequencyData && window.App.audioManager.audioAnalyser.data) {
-            const data = new Uint8Array(msg.frequencyData);
-            window.App.audioManager.audioAnalyser.data.set(data);
-            const usedPCM = (() => {
-              if (msg.timeData && Array.isArray(msg.timeData)) {
-                try {
-                  const t = new Uint8Array(msg.timeData);
-                  return refreshTimeDomainFromPCM(t);
-                } catch {
-                  return false;
-                }
-              }
-              return false;
-            })();
-            if (!usedPCM) {
-              try { refreshTimeDomainFromFreq(data); } catch { /* ignore */ }
-            }
-          } else {
-            // Debug: what's missing?
-            if (!window.__dataMissingLogged || Date.now() - window.__dataMissingLogged > 2000) {
-              console.warn('[Visualizer] ⚠️ App ready but data structure missing:', {
-                hasFrequencyData: !!msg.frequencyData,
-                hasAnalyserData: !!window.App.audioManager.audioAnalyser.data
-              });
-              window.__dataMissingLogged = Date.now();
-            }
+      case 'AUDIO_DATA': {
+        // Receive bridge audio. Prefer frequencyData; fall back to timeData->approx spectrum.
+        const am = window.App && window.App.audioManager;
+        const analyser = am && am.audioAnalyser;
+        if (!analyser || !analyser.data) break;
+
+        const hasFreq = !!msg.frequencyData;
+        const hasTime = Array.isArray(msg.timeData) || ArrayBuffer.isView(msg.timeData);
+
+        const writeFreq = (arr) => {
+          const dst = analyser.data;
+          if (!dst || !arr) return false;
+          const n = Math.min(dst.length, arr.length);
+          for (let i = 0; i < n; i++) dst[i] = arr[i];
+          if (typeof refreshTimeDomainFromFreq === 'function') {
+            try { refreshTimeDomainFromFreq(dst); } catch { /* ignore */ }
           }
-        } else {
-          // Debug: what specifically is missing?
-          if (!window.__audioDataWarningLogged || Date.now() - window.__audioDataWarningLogged > 2000) {
-            console.log('[Visualizer] ⏳ Audio data received but App not ready:', {
-              hasApp: !!window.App,
-              hasAudioManager: !!(window.App && window.App.audioManager),
-              hasAudioAnalyser: !!(window.App && window.App.audioManager && window.App.audioManager.audioAnalyser)
-            });
-            window.__audioDataWarningLogged = Date.now();
+          return true;
+        }
+
+        const writeFromPCM = (pcm) => {
+          if (!pcm) return false;
+          const dst = analyser.data;
+          const len = dst.length;
+          const chunk = Math.max(1, Math.floor(pcm.length / len));
+          for (let i = 0; i < len; i++) {
+            const start = i * chunk;
+            let acc = 0;
+            let c = 0;
+            for (let j = 0; j < chunk && start + j < pcm.length; j++) {
+              acc += Math.abs(pcm[start + j]);
+              c++;
+            }
+            const avg = c ? acc / c : 0;
+            dst[i] = Math.max(0, Math.min(255, Math.round(avg)));
+          }
+          if (typeof refreshTimeDomainFromPCM === 'function') {
+            try { refreshTimeDomainFromPCM(pcm); } catch { /* ignore */ }
+          }
+          return true;
+        }
+
+        let handled = false;
+
+        if (hasFreq) {
+          try {
+            const data = new Uint8Array(msg.frequencyData);
+            handled = writeFreq(data);
+          } catch (err) {
+            console.warn('[Visualizer] Failed to apply frequencyData', err);
           }
         }
+
+        if (!handled && hasTime) {
+          try {
+            const pcm = msg.timeData instanceof Uint8Array ? msg.timeData : new Uint8Array(msg.timeData);
+            handled = writeFromPCM(pcm);
+          } catch (err) {
+            console.warn('[Visualizer] Failed to derive spectrum from timeData', err);
+          }
+        }
+
+        if (!handled && (!window.__dataMissingLogged || Date.now() - window.__dataMissingLogged > 2000)) {
+          console.warn('[Visualizer] ⚠️ App ready but audio payload missing usable data:', {
+            hasFrequencyData: hasFreq,
+            hasTimeData: hasTime,
+            hasAnalyserData: !!analyser.data
+          });
+          window.__dataMissingLogged = Date.now();
+        }
         break;
+      }
         
       case 'BPM_DATA':
         // Receive BPM from bridge (already calculated)
