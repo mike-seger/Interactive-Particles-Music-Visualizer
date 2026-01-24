@@ -1222,7 +1222,7 @@ export default class App {
 
       /* Preset overlay */
       .fv3-overlay {
-        position: fixed;
+        position: absolute;
         inset: 0;
         background: rgba(8, 10, 16, 0.94);
         display: none;
@@ -1245,6 +1245,11 @@ export default class App {
         box-sizing: border-box;
         overflow: auto;
         max-height: 86vh;
+        position: relative;
+      }
+      .dg .fv3-controls.blur-active > :not(.fv3-overlay) {
+        filter: blur(3px);
+        pointer-events: none;
       }
       .fv3-overlay header {
         display: flex;
@@ -1337,6 +1342,53 @@ export default class App {
         font-size: 20px;
         line-height: 1;
         display: inline-block;
+      }
+      .fv3-overlay .fv3-confirm {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(8, 10, 16, 0.78);
+        z-index: 5;
+      }
+      .fv3-overlay .fv3-confirm .fv3-confirm-card {
+        min-width: 260px;
+        max-width: 360px;
+        padding: 14px 14px 12px;
+        border: 1px solid #3a3f4d;
+        border-radius: 10px;
+        background: #0f1219;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .fv3-overlay .fv3-confirm .msg {
+        font-size: 14px;
+        color: #e6e9f0;
+        line-height: 1.4;
+        text-align: center;
+      }
+      .fv3-overlay .fv3-confirm .actions {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+      }
+      .fv3-overlay .fv3-confirm button {
+        height: 30px;
+        min-width: 86px;
+        padding: 0 12px;
+        border-radius: 8px;
+        border: 1px solid #444;
+        background: #1f2531;
+        color: #e6e9f0;
+        cursor: pointer;
+        transition: border-color 120ms ease, background 120ms ease;
+      }
+      .fv3-overlay .fv3-confirm button:hover {
+        border-color: #6ea8ff;
+        background: rgba(110, 168, 255, 0.1);
       }
     `
     document.head.appendChild(style)
@@ -1596,6 +1648,8 @@ export default class App {
     // Preset save/load/upload/download controls
 
     let overlayNameInput = null
+    let overlayContentEl = null
+    let confirmEl = null
 
     const makeIconButton = (ligature, title, handler) => {
       const btn = document.createElement('button')
@@ -1616,6 +1670,77 @@ export default class App {
       if (overlayNameInput && overlayNameInput.value !== val) {
         overlayNameInput.value = val
       }
+    }
+
+    const confirmInOverlay = (message) => {
+      if (!overlayContentEl || !overlayContentEl.isConnected) {
+        const modal = this.variant3Overlay?.querySelector?.('.fv3-modal')
+        if (modal) {
+          overlayContentEl = modal
+        } else {
+          return Promise.resolve(window.confirm(message))
+        }
+      }
+
+      if (confirmEl) {
+        confirmEl.remove()
+        confirmEl = null
+      }
+
+      confirmEl = document.createElement('div')
+      confirmEl.className = 'fv3-confirm'
+
+      const cardEl = document.createElement('div')
+      cardEl.className = 'fv3-confirm-card'
+
+      const msgEl = document.createElement('div')
+      msgEl.className = 'msg'
+      msgEl.textContent = message
+
+      const actionsEl = document.createElement('div')
+      actionsEl.className = 'actions'
+
+      const makeButton = (label, intent) => {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = label
+        if (intent === 'danger') {
+          btn.style.borderColor = '#ff7b7b'
+          btn.style.color = '#ffdede'
+        }
+        return btn
+      }
+
+      const cleanup = () => {
+        if (confirmEl) {
+          confirmEl.remove()
+          confirmEl = null
+        }
+      }
+
+      const promise = new Promise((resolve) => {
+        const cancelBtn = makeButton('Cancel')
+        cancelBtn.addEventListener('click', () => {
+          cleanup()
+          resolve(false)
+        })
+
+        const deleteBtn = makeButton('Delete', 'danger')
+        deleteBtn.addEventListener('click', () => {
+          cleanup()
+          resolve(true)
+        })
+
+        actionsEl.appendChild(cancelBtn)
+        actionsEl.appendChild(deleteBtn)
+      })
+
+      cardEl.appendChild(msgEl)
+      cardEl.appendChild(actionsEl)
+      confirmEl.appendChild(cardEl)
+      overlayContentEl.appendChild(confirmEl)
+
+      return promise
     }
 
     const presetActions = {
@@ -1679,7 +1804,7 @@ export default class App {
         }
         input.click()
       },
-      deletePreset: () => {
+      deletePreset: async () => {
         const name = this.variant3PresetState.loadPreset || ''
         if (!name) {
           alert('Select a preset to delete first.')
@@ -1693,7 +1818,8 @@ export default class App {
           alert('Preset not found.')
           return
         }
-        if (!window.confirm(`Delete preset "${name}"?`)) return
+        const confirmed = await confirmInOverlay(`Delete preset "${name}"? This cannot be undone.`)
+        if (!confirmed) return
         delete presets[name]
         this.saveFV3Presets(presets)
         if (this.variant3PresetState.loadPreset === name) {
@@ -1708,6 +1834,11 @@ export default class App {
       if (this.variant3Overlay) {
         this.variant3Overlay.style.display = 'none'
       }
+      if (confirmEl) {
+        confirmEl.remove()
+        confirmEl = null
+      }
+      folder.domElement?.classList.remove('blur-active')
     }
 
     const buildOverlay = () => {
@@ -1717,6 +1848,7 @@ export default class App {
       overlay.className = 'fv3-overlay'
       const modal = document.createElement('div')
       modal.className = 'fv3-modal'
+      overlayContentEl = modal
 
       const header = document.createElement('header')
       const title = document.createElement('h3')
@@ -1772,11 +1904,11 @@ export default class App {
       modal.appendChild(actionsRow)
 
       overlay.appendChild(modal)
-      const container = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement || App.gui?.domElement || document.body
+      const container = folder?.domElement
       if (container && !container.style.position) {
         container.style.position = 'relative'
       }
-      container.appendChild(overlay)
+      if (container) container.appendChild(overlay)
       this.variant3Overlay = overlay
       refreshLoadOptions()
       syncPresetNameInputs(this.variant3PresetState.presetName)
@@ -1794,6 +1926,7 @@ export default class App {
           folder.domElement.style.overflow = 'visible'
           folder.domElement.style.maxHeight = '70vh'
           folder.domElement.style.height = 'auto'
+          folder.domElement.classList.add('blur-active')
         }
         relaxGuiHeights()
       }

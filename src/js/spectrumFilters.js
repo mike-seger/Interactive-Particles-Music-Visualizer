@@ -138,13 +138,20 @@ const inlinePresets = {
 }
 
 export async function loadSpectrumFilters() {
-  const base = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) ? import.meta.env.BASE_URL : '/'
-  const withBase = (path) => {
+  const rawBase = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) ? import.meta.env.BASE_URL : '/'
+  const normalizeBase = (base) => {
+    if (!base) return ''
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-    return `${trimmed}/${path.replace(/^\//, '')}`
+    return trimmed === '/' ? '' : trimmed
   }
 
-  const tryLoadDefaultFile = async () => {
+  const makeWithBase = (basePrefix) => (path) => {
+    const trimmedPath = path.replace(/^[\\/]/, '')
+    const trimmedBase = normalizeBase(basePrefix)
+    return trimmedBase ? `${trimmedBase}/${trimmedPath}` : `/${trimmedPath}`
+  }
+
+  const tryLoadDefaultFile = async (withBase) => {
     try {
       const res = await fetch(withBase('spectrum-filters/default.json'), { cache: 'no-cache' })
       if (!res.ok) throw new Error(`default fetch failed: ${res.status}`)
@@ -159,7 +166,7 @@ export async function loadSpectrumFilters() {
     }
   }
 
-  try {
+  const fetchPresetBundle = async (withBase) => {
     const indexRes = await fetch(withBase('spectrum-filters/index.json'), { cache: 'no-cache' })
     if (!indexRes.ok) throw new Error(`index fetch failed: ${indexRes.status}`)
     const files = await indexRes.json()
@@ -185,13 +192,31 @@ export async function loadSpectrumFilters() {
         result[entry[0]] = entry[1]
       }
     })
-    if (!Object.keys(result).length) {
-      console.warn('[SpectrumFilters] index fetched but empty; using inline presets')
-      return { ...inlinePresets }
-    }
     return result
-  } catch (err) {
-    console.warn('[SpectrumFilters] load failed; using inline presets', err)
-    return { ...inlinePresets }
   }
+
+  const primaryBase = normalizeBase(rawBase)
+  const tryBases = [primaryBase]
+  if (primaryBase) tryBases.push('') // fallback to root when base path fails (common when app hosted at /)
+
+  for (const basePrefix of tryBases) {
+    const withBase = makeWithBase(basePrefix)
+    try {
+      const presets = await fetchPresetBundle(withBase)
+      if (Object.keys(presets).length) {
+        return presets
+      }
+      console.warn('[SpectrumFilters] index fetched but empty; retrying fallback base')
+    } catch (err) {
+      console.warn(`[SpectrumFilters] load failed for base "${basePrefix || '/'}"`, err)
+    }
+  }
+
+  // As a last resort, try default.json under the primary base to seed a preset
+  const withPrimary = makeWithBase(primaryBase)
+  const defaultOnly = await tryLoadDefaultFile(withPrimary)
+  if (defaultOnly && Object.keys(defaultOnly).length) return defaultOnly
+
+  console.warn('[SpectrumFilters] falling back to inline presets')
+  return { ...inlinePresets }
 }
