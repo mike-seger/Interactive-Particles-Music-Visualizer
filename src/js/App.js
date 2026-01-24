@@ -976,6 +976,25 @@ export default class App {
       .dg .fv3-controls ul {
         scrollbar-color: #2f3545 #0f1219;
       }
+
+      /* Global dark inputs (helps Firefox render select in dark mode) */
+      .dg select,
+      .dg input[type="text"],
+      .dg input[type="number"],
+      .dg input[type="checkbox"] {
+        background: #161921;
+        color: #e6e9f0;
+        border: 1px solid #3a3f4d;
+        -moz-appearance: none;
+      }
+      .dg select:focus,
+      .dg input[type="text"]:focus,
+      .dg input[type="number"]:focus,
+      .dg input[type="checkbox"]:focus {
+        outline: 1px solid #6ea8ff;
+        border-color: #6ea8ff;
+        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
+      }
       .dg .fv3-controls::-webkit-scrollbar {
         width: 10px;
       }
