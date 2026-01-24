@@ -1361,6 +1361,7 @@ export default class App {
     this.variant3PresetState = null
     this.variant3LoadSelect = null
     this.variant3PresetRow = null
+    this.variant3ScrollContainer = null
     if (this.variant3FolderObserver) {
       this.variant3FolderObserver.disconnect()
       this.variant3FolderObserver = null
@@ -1799,7 +1800,9 @@ export default class App {
     }
 
     const ensureScrollContainer = () => {
-      if (this.variant3ScrollContainer) return this.variant3ScrollContainer
+      if (this.variant3ScrollContainer && this.variant3ScrollContainer.isConnected) {
+        return this.variant3ScrollContainer
+      }
       const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
       if (!listEl) return null
       const scroller = document.createElement('div')
