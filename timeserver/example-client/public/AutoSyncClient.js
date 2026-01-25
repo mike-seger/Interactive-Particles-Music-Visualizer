@@ -522,6 +522,10 @@ export default class AutoSyncClient {
         this._switchToLocal(data.timeMs || 0, !!data.running, now);
         this._lastSeekSeq = data.seekSeq || 0;
         console.log(`[AutoSyncClient] first connect, initialized lastSeekSeq=${this._lastSeekSeq}`);
+        // Immediately sync media to server position
+        if (this._mediaSync) {
+          this._mediaSync.resetForSeek(data.timeMs || 0, 'initial-sync');
+        }
       }
 
       // Detect server-side seek (jump action) by seekSeq change.
