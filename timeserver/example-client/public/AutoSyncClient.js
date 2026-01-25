@@ -11,7 +11,7 @@ class MediaSyncHandle {
     this._getTrackLengthMs = options.getTrackLengthMs;
     this._label = options.label || 'media';
     this._loop = !!options.loop;
-    this._seekThresholdMs = options.seekThresholdMs ?? 400; // begin corrective rate push when drift exceeds this
+    this._seekThresholdMs = options.seekThresholdMs ?? 200; // begin corrective rate push when drift exceeds this
     this._rateGain = options.rateGain ?? 0.0001; // rate delta per ms drift
     this._maxRateDelta = options.maxRateDelta ?? 0.15; // +/-15% default headroom for catch-up experiments
     this._stableRateDelta = options.stableRateDelta ?? 0.0003; // consider rate stable within this delta

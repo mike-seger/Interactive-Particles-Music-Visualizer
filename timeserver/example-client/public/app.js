@@ -82,7 +82,7 @@ function initClient() {
       loop: true,
       fallbackDurationMs: DEFAULT_TRACK_LEN_MS,
       getTrackLengthMs: () => trackLengthMs,
-      seekThresholdMs: 400,
+      seekThresholdMs: 200,
       maxRateDelta: 0.15,
       rateGain: 0.0002,
       maxRateStep: 0.003,
