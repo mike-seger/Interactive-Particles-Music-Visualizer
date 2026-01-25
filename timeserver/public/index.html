@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Time Sync Server</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.min.css" />
+    <style>
+        :root {
+            --bg: #0c0f16;
+            --panel: #121623;
+            --accent: #5ae6c8;
+            --text: #e8ecf2;
+            --muted: #8ea1c1;
+            --danger: #ff7b7b;
+            --shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+        }
+    
+        * {
+            box-sizing: border-box;
+        }
+    
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: radial-gradient(circle at 20% 20%, rgba(90, 230, 200, 0.08), transparent 30%),
+                radial-gradient(circle at 80% 0%, rgba(90, 230, 200, 0.06), transparent 26%),
+                linear-gradient(145deg, #0b0e18, #0f1322 40%, #0b0e18);
+            color: var(--text);
+            font-family: "DM Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+    
+        #app {
+            background: var(--panel);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
+            padding: 14px 16px 10px;
+            box-shadow: var(--shadow);
+            width: min(540px, 92vw);
+            min-width: 300px;
+        }
+    
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+    
+        h1 {
+            font-size: 18px;
+            letter-spacing: 0.8px;
+            margin: 0;
+            font-weight: 600;
+        }
+    
+        .clock {
+            font-size: 34px;
+            letter-spacing: 1.4px;
+            margin: 10px 0 6px;
+            color: var(--accent);
+        }
+    
+        .row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+    
+        .tag {
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text);
+        }
+    
+        .tag.running {
+            background: rgba(90, 230, 200, 0.12);
+            border-color: rgba(90, 230, 200, 0.4);
+        }
+    
+        .tag.paused {
+            background: rgba(255, 123, 123, 0.08);
+            border-color: rgba(255, 123, 123, 0.35);
+            color: #ffdede;
+        }
+    
+        .tag.detached {
+            background: rgba(255, 193, 79, 0.08);
+            border-color: rgba(255, 193, 79, 0.4);
+            color: #ffe3a1;
+        }
+    
+        #gui {
+            margin-top: 8px;
+        }
+    
+        .toast {
+            position: fixed;
+            bottom: 14px;
+            right: 14px;
+            background: #0b0e18;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 12px;
+            letter-spacing: 0.3px;
+            color: var(--text);
+            opacity: 0;
+            transition: opacity 0.25s ease;
+            pointer-events: none;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+        }
+    
+        .toast.ok {
+            border-color: rgba(90, 230, 200, 0.4);
+        }
+    
+        .toast.error {
+            border-color: rgba(255, 123, 123, 0.5);
+            color: #ffdede;
+        }
+    
+        :root {
+            --gui-bg: #191d28;
+            --gui-input-bg: #0d484e;
+            --gui-button-bg: #3a6ea5;
+            --gui-button-hover: #4a8acc;
+            --gui-text: #ffffff;
+            --gui-border: #282b36;
+        }
+
+        .lil-gui {
+            --background-color: var(--gui-bg) !important;
+            --text-color: var(--gui-text) !important;
+            border: 1px solid rgba(255, 255, 255, 0.05) !important;
+            border-radius: 10px !important;
+        }
+
+        .lil-gui.root {
+            padding: 7px !important;
+        }
+
+        .lil-gui.root>.title {
+            display: none !important;
+        }
+
+        .lil-gui input {
+            background-color: var(--gui-input-bg) !important;
+            color: var(--gui-text) !important;
+            border: 1px solid var(--gui-border) !important;
+        }
+
+        .lil-gui button {
+            background-color: var(--gui-button-bg) !important;
+            color: var(--gui-text) !important;
+        }
+
+        .lil-gui button:hover {
+            background-color: var(--gui-button-hover) !important;
+        }
+    
+        a {
+            color: var(--accent);
+        }
+    
+        #clients {
+            margin-top: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            overflow: hidden;
+        }
+    
+        .clients-title {
+            padding: 6px 10px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--muted);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    
+        .clients-table-wrap {
+            max-height: 140px;
+            overflow-y: auto;
+        }
+    
+        .clients-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            table-layout: fixed;
+        }
+    
+        .clients-table th,
+        .clients-table td {
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            white-space: nowrap;
+            text-overflow: ellipsis;
+            overflow: hidden;
+        }
+    
+        .clients-table th {
+            color: var(--muted);
+            font-weight: 500;
+        }
+    
+        .clients-table th:nth-child(1),
+        .clients-table td:nth-child(1) {
+            width: 12ch;
+        }
+
+        .clients-table th:nth-child(3),
+        .clients-table td:nth-child(3) {
+            width: 16ch;
+        }
+
+        .clients-table th:nth-child(4),
+        .clients-table td:nth-child(4) {
+            width: 10ch;
+        }
+
+        .clients-table th:nth-child(2),
+        .clients-table td:nth-child(2) {
+            width: auto;
+        }
+    
+        .clients-empty {
+            padding: 10px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--muted);
+        }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Time Sync Server</h1>
+        <span id="status" class="tag paused">paused</span>
+      </header>
+      <div class="clock" id="clock">00:00:00.000</div>
+      <div id="gui"></div>
+      <div id="clients">
+        <div class="clients-title">Clients</div>
+        <div class="clients-table-wrap">
+          <table class="clients-table">
+            <thead>
+              <tr><th>Connected</th><th>Name</th><th>IP</th><th>Port</th></tr>
+            </thead>
+            <tbody id="clients-body"></tbody>
+          </table>
+          <div id="clients-empty" class="clients-empty">No clients connected</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.18/dist/lil-gui.umd.min.js"></script>
+    <script type="module" src="/admin.js"></script>
+  </body>
+</html>

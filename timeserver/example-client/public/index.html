@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Example Sync Client</title>
+    <style>
+      :root {
+        --bg: #0b0e18;
+        --panel: #121623;
+        --accent: #5ae6c8;
+        --muted: #8ea1c1;
+        --text: #e8ecf2;
+        --danger: #ff7b7b;
+        --shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, #0b0e18, #101427 50%, #0b0e18);
+        font-family: "DM Mono", "SFMono-Regular", "Menlo", "Consolas", monospace;
+        color: var(--text);
+        padding: 24px;
+      }
+
+      #app {
+        background: var(--panel);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 14px;
+        padding: 16px 18px 14px;
+        box-shadow: var(--shadow);
+        width: min(480px, 94vw);
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+        letter-spacing: 0.8px;
+      }
+
+      .row { margin-bottom: 12px; }
+      label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+      input[type="text"] {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-family: inherit;
+      }
+
+      .flex { display: flex; align-items: center; gap: 10px; }
+      .button {
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.05);
+        color: var(--text);
+        cursor: pointer;
+        font-family: inherit;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      .button:hover { background: rgba(255, 255, 255, 0.08); }
+      .button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .clock {
+        font-size: 32px;
+        letter-spacing: 1.2px;
+        color: var(--accent);
+        margin: 6px 0 2px;
+        text-align: right;
+      }
+
+      .sub {
+        font-size: 12px;
+        color: var(--muted);
+        text-align: right;
+        margin-bottom: 12px;
+      }
+
+      .tag {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        letter-spacing: 0.4px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        color: var(--text);
+      }
+      .tag.ok { border-color: rgba(90, 230, 200, 0.6); background: rgba(90, 230, 200, 0.1); }
+      .tag.warn { border-color: rgba(255, 123, 123, 0.6); background: rgba(255, 123, 123, 0.1); color: #ffdede; }
+
+      .status-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+      .small { font-size: 12px; color: var(--muted); }
+
+      .checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .notice { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--accent);
+      }
+      .range-row { display: flex; align-items: center; gap: 10px; }
+      .range-value { font-size: 12px; color: var(--muted); min-width: 96px; text-align: right; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <h1>Example Sync Client</h1>
+
+      <div class="row">
+        <label for="serverUrl">Time Sync Server URL</label>
+        <input id="serverUrl" type="text" value="http://localhost:4000" />
+      </div>
+
+      <div class="row flex">
+        <button id="playPause" class="button">Play</button>
+        <label class="checkbox">
+          <input id="syncEnabled" type="checkbox" checked />
+          Follow time sync server
+        </label>
+      </div>
+
+      <div class="status-row">
+        <div class="small">Connection: <span id="connStatus" class="tag warn">disconnected</span></div>
+        <div class="small">Track length: <span id="trackLength">loading…</span></div>
+      </div>
+
+      <div class="clock" id="playback">00:00:00.000</div>
+      <div class="sub" id="sourceLabel">following server time</div>
+
+      <div class="row">
+        <label for="position">Position</label>
+        <div class="range-row">
+          <input id="position" type="range" min="0" max="3600000" step="100" value="0" />
+          <div class="range-value" id="positionValue">00:00:00.000</div>
+        </div>
+      </div>
+    </div>
+
+    
+    <!-- <audio id="audio" src="/sample.mp3"></audio> -->
+    <audio id="audio" src="http://michaels-macmini-2023:8080/player/video/sample.mp3"></audio>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
