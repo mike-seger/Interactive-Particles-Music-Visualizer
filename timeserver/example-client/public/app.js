@@ -75,19 +75,6 @@ function handleServerState(state) {
   positionValue.textContent = formatTime(predictedMs);
 }
 
-function render() {
-  const now = performance.now();
-  const rawTime = syncClient ? syncClient.getTime(now) : 0;
-  const current = mapTimeToTrack(rawTime);
-  playbackEl.textContent = formatTime(current);
-  if (!isScrubbing && positionSlider) {
-    positionSlider.value = String(Math.floor(current));
-    positionValue.textContent = formatTime(current);
-  }
-
-  requestAnimationFrame(render);
-}
-
 function initClient() {
   if (syncClient) syncClient.detach();
   syncClient = new AutoSyncClient({
@@ -95,6 +82,14 @@ function initClient() {
     name: defaultClientName,
     onStatus: handleStatus,
     onServerState: handleServerState,
+    onTime: (rawMs) => {
+      const current = mapTimeToTrack(rawMs);
+      playbackEl.textContent = formatTime(current);
+      if (!isScrubbing && positionSlider) {
+        positionSlider.value = String(Math.floor(current));
+        positionValue.textContent = formatTime(current);
+      }
+    },
   });
 
   if (audioEl) {
@@ -146,12 +141,12 @@ syncCheckbox.addEventListener('change', () => {
   sourceLabel.textContent = synced ? 'following server time' : 'local playback';
   if (!syncClient) return;
   if (!synced) {
-    syncClient.detach();
+    syncClient.setFollowing(false);
     setConnStatus(syncClient.isConnected() ? 'connected (not following)' : 'disconnected', syncClient.isConnected());
     // When leaving sync mode, keep audio where it is without forcing corrections.
   } else {
     syncClient.setServerUrl(serverUrlInput.value.trim());
-    syncClient.attach();
+    syncClient.setFollowing(true);
   }
 });
 
@@ -194,7 +189,6 @@ if (positionSlider) {
 
 playPauseBtn.disabled = syncCheckbox.checked;
 initClient();
-render();
 if (positionSlider) {
   positionSlider.max = String(trackLengthMs);
   positionSlider.value = '0';

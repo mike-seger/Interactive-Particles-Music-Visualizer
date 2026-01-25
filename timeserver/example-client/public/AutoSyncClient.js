@@ -223,12 +223,14 @@ export default class AutoSyncClient {
       name = 'client',
       onStatus = () => {},
       onServerState = () => {},
+      onTime = null,
     } = options;
 
     this._serverUrl = serverUrl;
     this._name = name;
     this._onStatus = onStatus;
     this._onServerState = onServerState;
+    this._onTime = typeof onTime === 'function' ? onTime : null;
 
     this._es = null;
     this._following = true;
@@ -237,17 +239,50 @@ export default class AutoSyncClient {
     this._localState = { offsetMs: 0, startedAt: performance.now(), playing: false };
 
     this._mediaSync = null;
+    this._timeRaf = null;
 
     this._reconnectTimer = null;
     this._backoffMs = 1500;
     this._backoffMax = 10000;
 
     this.attach();
+    this._startTimeLoop();
+  }
+
+  _startTimeLoop() {
+    const tick = () => {
+      const now = performance.now();
+      const t = this.getTime(now);
+      if (this._onTime) {
+        try {
+          this._onTime(t);
+        } catch (err) {
+          // ignore callback errors
+        }
+      }
+      this._timeRaf = requestAnimationFrame(tick);
+    };
+    if (!this._timeRaf) this._timeRaf = requestAnimationFrame(tick);
+  }
+
+  _stopTimeLoop() {
+    if (this._timeRaf) {
+      cancelAnimationFrame(this._timeRaf);
+      this._timeRaf = null;
+    }
   }
 
   setServerUrl(url) {
     this._serverUrl = url || this._serverUrl;
     if (this._following) this._reconnectSoon(true);
+  }
+
+  setFollowing(enable) {
+    if (enable) {
+      this.attach();
+    } else {
+      this.detach();
+    }
   }
 
   attach() {
