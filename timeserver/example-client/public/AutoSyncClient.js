@@ -114,6 +114,21 @@ class MediaSyncHandle {
       return;
     }
 
+    // Once stable rate is locked, keep using it permanently unless drift exceeds threshold.
+    if (this._stableLocked && !this._correctingDrift && Math.abs(driftMs) <= this._seekThresholdMs) {
+      const holdRate = this._stableHoldRate ?? this._baseRate;
+      this._el.playbackRate = holdRate;
+      this._lastRateApplied = holdRate;
+      this._prevDriftMs = driftMs;
+      if (now - this._lastLog > this._logEveryMs) {
+        const elapsedMs = now - (this._startAtMs || now);
+        const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
+        this._log(`t=${elapsedMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms stable`);
+        this._lastLog = now;
+      }
+      return;
+    }
+
     const wantPlay = this._shouldPlay?.();
     if (wantPlay && this._el.paused) {
       this._el.play().catch(() => {});
@@ -133,20 +148,32 @@ class MediaSyncHandle {
     const rateDelta = clamp(-this._driftEmaMs * this._rateGain, -this._maxRateDelta, this._maxRateDelta);
     const nextRate = clamp(this._baseRate + rateDelta, this._baseRate - this._maxRateDelta, this._baseRate + this._maxRateDelta);
 
-    // If already in a correction phase, hold the locked target rate and only watch for sign flip.
+    // If already in a correction phase, hold the locked target rate and only watch for sign flip or near-zero.
     if (this._correctingDrift) {
       const driftSign = Math.sign(driftMs);
-      if (this._correctionSign !== 0 && driftSign !== 0 && driftSign !== this._correctionSign) {
-        // Drift crossed zero; restore stable rate and exit correction.
+      const driftFlipped = this._correctionSign !== 0 && driftSign !== 0 && driftSign !== this._correctionSign;
+      const driftSmall = Math.abs(driftMs) <= this._seekThresholdMs * 0.1; // close to zero
+      if (driftFlipped || driftSmall) {
+        // Drift crossed zero or is close enough; restore stable rate and enter hold.
         this._correctingDrift = false;
         this._correctionDesiredDelta = null;
         this._correctionTargetRate = null;
         this._correctionBaseRate = null;
         this._correctionSign = 0;
-        this._el.playbackRate = this._stableHoldRate ?? this._baseRate;
-        this._lastRateApplied = this._el.playbackRate;
+        const holdRate = this._stableHoldRate ?? this._baseRate;
+        this._el.playbackRate = holdRate;
+        this._lastRateApplied = holdRate;
+        this._postCorrectionHoldUntilMs = now + this._postCorrectionHoldMs;
         this._driftEmaMs = 0;
         this._lastEmaUpdate = now;
+        this._prevDriftMs = driftMs;
+        if (now - this._lastLog > this._logEveryMs) {
+          const elapsedMs = now - (this._startAtMs || now);
+          const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
+          this._log(`t=${elapsedMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms hold`);
+          this._lastLog = now;
+        }
+        return; // CRITICAL: return to prevent adaptive rate from running
       } else {
         const targetRate = this._correctionTargetRate ?? this._stableHoldRate ?? this._baseRate;
         this._el.playbackRate = targetRate;
