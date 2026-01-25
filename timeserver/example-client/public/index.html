@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en">
-  <head>
+<head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Example Sync Client</title>
@@ -117,40 +117,43 @@
       }
       .range-row { display: flex; align-items: center; gap: 10px; }
       .range-value { font-size: 12px; color: var(--muted); min-width: 96px; text-align: right; }
+
+      #medium {
+        height:60px;
+      }
     </style>
-  </head>
-  <body>
+</head>
+<body>
     <div id="app">
-      <h1>Example Sync Client</h1>
+        <h1>Example Sync Client</h1>
 
-      <div class="row">
-        <label for="serverUrl">Time Sync Server URL</label>
-        <input id="serverUrl" type="text" value="http://localhost:4000" />
-      </div>
-
-      <div class="row flex">
-        <button id="playPause" class="button">Play</button>
-        <label class="checkbox">
-          <input id="syncEnabled" type="checkbox" checked />
-          Sync
-        </label>
-      </div>
-
-      <div class="status-row">
-        <div class="small">Connection: <span id="connStatus" class="tag warn">disconnected</span></div>
-      </div>
-
-      <div class="row">
-        <div class="range-row">
-          <input id="position" type="range" min="0" max="3600000" step="100" value="0" />
-          <div class="range-value" id="positionValue">00:00:00.000</div>
+        <div class="row">
+            <label for="serverUrl">Time Sync Server URL</label>
+            <input id="serverUrl" type="text" value="http://localhost:4000" />
         </div>
-      </div>
+
+        <div class="row flex">
+            <button id="playPause" class="button">Play</button>
+            <label class="checkbox" style="margin-top:6px;">
+                <input id="syncEnabled" type="checkbox" checked />
+                Sync
+            </label>
+            <span class="small">Connection: <span id="connStatus" class="tag warn">disconnected</span></span>
+        </div>
+
+        <div class="row">
+            <div class="range-row">
+                <input id="position" type="range" min="0" max="3600000" step="100" value="0" />
+                <div class="range-value" id="positionValue">00:00:00.000</div>
+            </div>
+        </div>
     </div>
 
-    
+
     <!-- <audio id="audio" src="/sample.mp3"></audio> -->
-    <audio id="audio" src="http://michaels-macmini-2023:8080/player/video/sample.mp3"></audio>
+    <video id="medium" src="http://michaels-macmini-2023:8080/player/video/sample.mp4"></video>
+    <!-- <audio id="medium" src="http://michaels-macmini-2023:8080/player/video/sample.mp3"></audio> -->
     <script type="module" src="/app.js"></script>
-  </body>
+</body>
+
 </html>

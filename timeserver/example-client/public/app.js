@@ -6,7 +6,7 @@ const playPauseBtn = document.getElementById('playPause');
 const syncCheckbox = document.getElementById('syncEnabled');
 const positionSlider = document.getElementById('position');
 const positionValue = document.getElementById('positionValue');
-const audioEl = document.getElementById('audio');
+const mediaEl = document.getElementById('medium');
 
 const DEFAULT_TRACK_LEN_MS = 60 * 60 * 1000; // fallback until audio metadata loads
 const defaultClientName = 'example-client';
@@ -18,13 +18,13 @@ let audioUnlocked = false;
 let mediaSync = null;
 
 function unlockAudio() {
-  if (!audioEl || audioUnlocked) return;
+  if (!mediaEl || audioUnlocked) return;
   audioUnlocked = true;
   // Try a muted play/pause to satisfy autoplay policies.
-  audioEl.muted = true;
-  audioEl.play().then(() => {
-    audioEl.pause();
-    audioEl.muted = false;
+  mediaEl.muted = true;
+  mediaEl.play().then(() => {
+    mediaEl.pause();
+    mediaEl.muted = false;
   }).catch(() => {
     // If this fails, user will need to click Play; avoid spamming logs.
   });
@@ -88,8 +88,8 @@ function initClient() {
     },
   });
 
-  if (audioEl) {
-    mediaSync = syncClient.attachMedia(audioEl, {
+  if (mediaEl) {
+    mediaSync = syncClient.attachMedia(mediaEl, {
       label: 'media-sync',
       loop: true,
       fallbackDurationMs: DEFAULT_TRACK_LEN_MS,
@@ -114,17 +114,17 @@ function togglePlay() {
   if (currentlyPlaying) {
     syncClient.setLocalPlaying(false);
     playPauseBtn.textContent = 'Play';
-    audioEl?.pause();
+    mediaEl?.pause();
   } else {
     // Resume from current displayed time.
     syncClient.setLocalPosition(syncClient.getTime());
     syncClient.setLocalPlaying(true);
     playPauseBtn.textContent = 'Pause';
-    if (audioEl) {
+    if (mediaEl) {
       const target = mapTimeToTrack(syncClient.getTime());
       logSeek('local-resume', target / 1000);
       mediaSync?.setOffsetMs(target, 'local-resume');
-      audioEl.play().catch(() => {});
+      mediaEl.play().catch(() => {});
     }
   }
 }
@@ -157,7 +157,7 @@ if (positionSlider) {
     positionValue.textContent = formatTime(val);
     if (!syncCheckbox.checked || !(syncClient && syncClient.isConnected())) {
       syncClient?.setLocalPosition(val);
-      if (audioEl) audioEl.currentTime = mapTimeToTrack(val) / 1000;
+      if (mediaEl) mediaEl.currentTime = mapTimeToTrack(val) / 1000;
     }
   });
 
@@ -167,13 +167,13 @@ if (positionSlider) {
     positionValue.textContent = formatTime(val);
     if (syncCheckbox.checked && syncClient?.isConnected()) {
       syncClient.jump(val);
-      if (audioEl) {
+      if (mediaEl) {
         logSeek('user-jump-synced', val / 1000);
         mediaSync?.setOffsetMs(val, 'user-jump-synced');
       }
     } else {
       syncClient?.setLocalPosition(val);
-      if (audioEl) {
+      if (mediaEl) {
         logSeek('user-jump-local', val / 1000);
         mediaSync?.setOffsetMs(val, 'user-jump-local');
       }
@@ -190,23 +190,23 @@ if (positionSlider) {
   positionValue.textContent = '00:00:00.000';
 }
 
-if (audioEl) {
+if (mediaEl) {
   window.addEventListener('pointerdown', unlockAudio, { once: true });
-  audioEl.addEventListener('timeupdate', () => {
-    console.log(`[audio] timeupdate current=${audioEl.currentTime.toFixed(3)}s paused=${audioEl.paused}`);
+  mediaEl.addEventListener('timeupdate', () => {
+    console.log(`[audio] timeupdate current=${mediaEl.currentTime.toFixed(3)}s paused=${mediaEl.paused}`);
   });
-  audioEl.addEventListener('loadedmetadata', () => {
-    if (Number.isFinite(audioEl.duration)) {
-      trackLengthMs = audioEl.duration * 1000;
+  mediaEl.addEventListener('loadedmetadata', () => {
+    if (Number.isFinite(mediaEl.duration)) {
+      trackLengthMs = mediaEl.duration * 1000;
       if (positionSlider) {
         positionSlider.max = String(trackLengthMs);
       }
-      console.log(`[audio] metadata loaded duration=${audioEl.duration.toFixed(3)}s`);
+      console.log(`[audio] metadata loaded duration=${mediaEl.duration.toFixed(3)}s`);
     }
   });
 
   // Ensure looping so modulo mapping aligns.
-  audioEl.loop = true;
+  mediaEl.loop = true;
   // Start paused until user interacts.
-  audioEl.pause();
+  mediaEl.pause();
 }
