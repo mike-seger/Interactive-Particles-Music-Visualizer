@@ -21,6 +21,7 @@ class MediaSyncHandle {
     this._maxRateStep = options.maxRateStep ?? 0.001; // limit per-iteration rate change to avoid jumps
     this._freezeForever = options.freezeForever ?? true; // once frozen, stay frozen (no adaptive rate updates)
     this._driftTightThresholdMs = options.driftTightThresholdMs ?? 90; // target drift window while frozen
+    this._seekOvershootRatio = options.seekOvershootRatio ?? 0.15; // apply 15% overshoot when seeking to correct drift
     this._logEveryMs = options.logEveryMs ?? 1000;
     this._fallbackDurationMs = options.fallbackDurationMs ?? 60 * 60 * 1000;
     this._seekCooldownMs = options.seekCooldownMs ?? 2000; // minimum gap between seeks
@@ -87,6 +88,12 @@ class MediaSyncHandle {
     return clampedMs / 1000;
   }
 
+  _seekTargetWithOvershoot(baseTargetSec, driftMs) {
+    const baseTargetMs = baseTargetSec * 1000;
+    const overshootMs = baseTargetMs - driftMs * this._seekOvershootRatio;
+    return this._mapToTrackSeconds(overshootMs);
+  }
+
   _syncOnce() {
     if (!this._el || typeof this._getTimeMs !== 'function') return;
     const now = performance.now();
@@ -122,8 +129,9 @@ class MediaSyncHandle {
       this._el.playbackRate = this._frozenRate;
       const sinceLastSeek = now - this._lastSeek;
       if (Math.abs(driftMs) > this._driftTightThresholdMs && sinceLastSeek > this._postStableFreezeMs) {
-        this._log(`seek(frozen) -> ${targetSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms rate ${this._frozenRate.toFixed(4)})`);
-        this._el.currentTime = targetSec;
+        const seekSec = this._seekTargetWithOvershoot(targetSec, driftMs);
+        this._log(`seek(frozen) -> ${seekSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms rate ${this._frozenRate.toFixed(4)})`);
+        this._el.currentTime = seekSec;
         this._lastSeek = now;
         this._driftEmaMs = 0;
         this._lastEmaUpdate = now;
@@ -169,8 +177,9 @@ class MediaSyncHandle {
 
     // Stability-driven seek: once stability window achieved and drift remains beyond threshold.
     if (stableEnough && Math.abs(driftMs) > this._seekThresholdMs && (now - this._lastStableSeek) > this._stableSeekCooldownMs) {
-      this._log(`seek(stable) -> ${targetSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms rate ${steppedRate.toFixed(4)} span ${stableSpan.toFixed(6)} stableFor=${stableForMs.toFixed(0)}ms)`);
-      this._el.currentTime = targetSec;
+      const seekSec = this._seekTargetWithOvershoot(targetSec, driftMs);
+      this._log(`seek(stable) -> ${seekSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms rate ${steppedRate.toFixed(4)} span ${stableSpan.toFixed(6)} stableFor=${stableForMs.toFixed(0)}ms)`);
+      this._el.currentTime = seekSec;
       this._el.playbackRate = nextRate;
       this._lastSeek = now;
       this._lastStableSeek = now;
@@ -188,8 +197,9 @@ class MediaSyncHandle {
     if (Math.abs(driftMs) > this._seekThresholdMs) {
       const sinceLastSeek = now - this._lastSeek;
       if (sinceLastSeek > this._seekCooldownMs && (worsening || atCap)) {
-        this._log(`seek -> ${targetSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms)`);
-        this._el.currentTime = targetSec;
+        const seekSec = this._seekTargetWithOvershoot(targetSec, driftMs);
+        this._log(`seek -> ${seekSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms)`);
+        this._el.currentTime = seekSec;
         this._el.playbackRate = this._baseRate;
         this._lastSeek = now;
         this._driftEmaMs = 0;

@@ -127,10 +127,14 @@
     <div id="app">
         <h1>Example Sync Client</h1>
 
-        <div class="row">
+        <div class="row" style="display: flex; align-items: center; gap: 1rem;">
+            <label for="serverUrl" style="white-space: nowrap; margin-top:7px;">Time Sync Server URL</label>
+            <input id="serverUrl" type="text" value="http://localhost:4000" style="flex: 1;" />
+        </div>
+        <!-- <div class="row">
             <label for="serverUrl">Time Sync Server URL</label>
             <input id="serverUrl" type="text" value="http://localhost:4000" />
-        </div>
+        </div> -->
 
         <div class="row flex">
             <button id="playPause" class="button">Play</button>
