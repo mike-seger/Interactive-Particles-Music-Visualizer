@@ -14,21 +14,7 @@ const defaultClientName = 'example-client';
 let syncClient = null;
 let isScrubbing = false;
 let trackLengthMs = DEFAULT_TRACK_LEN_MS;
-let audioUnlocked = false;
 let mediaSync = null;
-
-function unlockAudio() {
-  if (!mediaEl || audioUnlocked) return;
-  audioUnlocked = true;
-  // Try a muted play/pause to satisfy autoplay policies.
-  mediaEl.muted = true;
-  mediaEl.play().then(() => {
-    mediaEl.pause();
-    mediaEl.muted = false;
-  }).catch(() => {
-    // If this fails, user will need to click Play; avoid spamming logs.
-  });
-}
 
 function logSeek(reason, targetSec, driftSec = null) {
   const driftMsg = driftSec === null ? '' : ` drift=${(driftSec * 1000).toFixed(1)}ms`;
@@ -86,6 +72,8 @@ function initClient() {
         positionValue.textContent = formatTime(current);
       }
     },
+    followOnStart: false,
+    playLocalOnDetach: false,
   });
 
   if (mediaEl) {
@@ -97,10 +85,11 @@ function initClient() {
       seekThresholdMs: 400,
       maxRateDelta: 0.15,
       rateGain: 0.0002,
+      maxRateStep: 0.003,
       seekCooldownMs: 5000,
       driftEmaHalfLifeMs: 900,
       worseningMarginMs: 50,
-      shouldPlay: () => audioUnlocked && (syncClient.isFollowing() ? syncClient.isRemoteRunning() : syncClient.isLocalPlaying()),
+      shouldPlay: () => (syncClient.isFollowing() ? syncClient.isRemoteRunning() : syncClient.isLocalPlaying()),
     });
   }
 }
@@ -136,8 +125,8 @@ syncCheckbox.addEventListener('change', () => {
   playPauseBtn.disabled = synced;
   if (!syncClient) return;
   if (!synced) {
-    syncClient.setFollowing(false);
-    setConnStatus(syncClient.isConnected() ? 'connected' : 'disconnected', syncClient.isConnected());
+    syncClient.setFollowing(false, { playLocal: false });
+    setConnStatus('detached', false);
     // When leaving sync mode, keep audio where it is without forcing corrections.
   } else {
     syncClient.setServerUrl(serverUrlInput.value.trim());
@@ -184,14 +173,15 @@ if (positionSlider) {
 
 playPauseBtn.disabled = syncCheckbox.checked;
 initClient();
+syncCheckbox.checked = false;
+playPauseBtn.disabled = false;
+setConnStatus('detached', false);
 if (positionSlider) {
   positionSlider.max = String(trackLengthMs);
   positionSlider.value = '0';
   positionValue.textContent = '00:00:00.000';
 }
-
 if (mediaEl) {
-  window.addEventListener('pointerdown', unlockAudio, { once: true });
   mediaEl.addEventListener('timeupdate', () => {
     console.log(`[audio] timeupdate current=${mediaEl.currentTime.toFixed(3)}s paused=${mediaEl.paused}`);
   });
