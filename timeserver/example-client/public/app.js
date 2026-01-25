@@ -103,9 +103,12 @@ function initClient() {
       loop: true,
       fallbackDurationMs: DEFAULT_TRACK_LEN_MS,
       getTrackLengthMs: () => trackLengthMs,
-      seekThresholdMs: 1800,
-      maxRateDelta: 0.02,
-      rateGain: 0.0001,
+      seekThresholdMs: 400,
+      maxRateDelta: 0.15,
+      rateGain: 0.0002,
+      seekCooldownMs: 5000,
+      driftEmaHalfLifeMs: 900,
+      worseningMarginMs: 50,
       shouldPlay: () => audioUnlocked && (syncClient.isFollowing() ? syncClient.isRemoteRunning() : syncClient.isLocalPlaying()),
     });
   }

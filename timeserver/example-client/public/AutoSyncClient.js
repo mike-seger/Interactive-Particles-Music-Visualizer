@@ -11,16 +11,23 @@ class MediaSyncHandle {
     this._getTrackLengthMs = options.getTrackLengthMs;
     this._label = options.label || 'media';
     this._loop = !!options.loop;
-    this._seekThresholdMs = options.seekThresholdMs ?? 1500; // seek when >1.5s off
+    this._seekThresholdMs = options.seekThresholdMs ?? 400; // seek when >0.4s off
     this._rateGain = options.rateGain ?? 0.0001; // rate delta per ms drift
-    this._maxRateDelta = options.maxRateDelta ?? 0.02; // +/-2%
+    this._maxRateDelta = options.maxRateDelta ?? 0.15; // +/-15% default headroom for catch-up experiments
     this._logEveryMs = options.logEveryMs ?? 1000;
     this._fallbackDurationMs = options.fallbackDurationMs ?? 60 * 60 * 1000;
+    this._seekCooldownMs = options.seekCooldownMs ?? 2000; // minimum gap between seeks
+    this._driftEmaHalfLifeMs = options.driftEmaHalfLifeMs ?? 1500;
+    this._worseningMarginMs = options.worseningMarginMs ?? 50; // require drift to get worse by this margin before seek
     this._baseRate = Number.isFinite(options.baseRate) ? options.baseRate : (mediaEl?.playbackRate || 1);
 
     this._raf = null;
     this._lastLog = 0;
     this._lastSeek = 0;
+    this._startAtMs = performance.now();
+    this._lastEmaUpdate = 0;
+    this._driftEmaMs = 0;
+    this._prevDriftMs = null;
     this._running = true;
     this._onReady = this._handleReady.bind(this);
     this._el?.addEventListener('loadedmetadata', this._onReady);
@@ -86,19 +93,38 @@ class MediaSyncHandle {
     const isReady = this._el.readyState >= 1; // HAVE_METADATA or better
     if (!isReady || !wantPlay) return;
 
+    const dt = this._lastEmaUpdate ? (now - this._lastEmaUpdate) : 0;
+    const halfLife = Math.max(1, this._driftEmaHalfLifeMs);
+    const alpha = dt > 0 ? 1 - Math.exp(-Math.LN2 * dt / halfLife) : 1;
+    this._driftEmaMs = (1 - alpha) * this._driftEmaMs + alpha * driftMs;
+    this._lastEmaUpdate = now;
+
+    const rateDelta = clamp(-this._driftEmaMs * this._rateGain, -this._maxRateDelta, this._maxRateDelta);
+    const nextRate = clamp(this._baseRate + rateDelta, this._baseRate - this._maxRateDelta, this._baseRate + this._maxRateDelta);
+    const atCap = Math.abs(rateDelta) >= this._maxRateDelta * 0.8;
+    const worsening = this._prevDriftMs !== null && Math.abs(driftMs) > Math.abs(this._prevDriftMs) + this._worseningMarginMs;
+
+    this._el.playbackRate = nextRate;
+
     if (Math.abs(driftMs) > this._seekThresholdMs) {
-      this._log(`seek -> ${targetSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms)`);
-      this._el.currentTime = targetSec;
-      this._el.playbackRate = this._baseRate;
-      this._lastSeek = now;
-    } else {
-      const rateDelta = clamp(-driftMs * this._rateGain, -this._maxRateDelta, this._maxRateDelta);
-      const nextRate = this._baseRate + rateDelta;
-      this._el.playbackRate = clamp(nextRate, this._baseRate - this._maxRateDelta, this._baseRate + this._maxRateDelta);
+      const sinceLastSeek = now - this._lastSeek;
+      if (sinceLastSeek > this._seekCooldownMs && (worsening || atCap)) {
+        this._log(`seek -> ${targetSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms)`);
+        this._el.currentTime = targetSec;
+        this._el.playbackRate = this._baseRate;
+        this._lastSeek = now;
+        this._driftEmaMs = 0;
+        this._lastEmaUpdate = now;
+        this._prevDriftMs = driftMs;
+        return;
+      }
     }
 
+    this._prevDriftMs = driftMs;
+
     if (now - this._lastLog > this._logEveryMs) {
-      this._log(`drift=${driftMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)}`);
+      const elapsedMs = now - (this._startAtMs || now);
+      this._log(`t=${elapsedMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms ema=${this._driftEmaMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)}`);
       this._lastLog = now;
     }
   }
