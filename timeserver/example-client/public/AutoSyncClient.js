@@ -14,6 +14,10 @@ class MediaSyncHandle {
     this._seekThresholdMs = options.seekThresholdMs ?? 400; // seek when >0.4s off
     this._rateGain = options.rateGain ?? 0.0001; // rate delta per ms drift
     this._maxRateDelta = options.maxRateDelta ?? 0.15; // +/-15% default headroom for catch-up experiments
+    this._stableRateDelta = options.stableRateDelta ?? 0.0003; // consider rate stable within this delta
+    this._stableRateWindowMs = options.stableRateWindowMs ?? 10000; // require stability for this window
+    this._stableSeekCooldownMs = options.stableSeekCooldownMs ?? 20000; // minimum gap between stability seeks
+    this._postStableFreezeMs = options.postStableFreezeMs ?? 60000; // hold rate fixed for 60s after stability seek
     this._logEveryMs = options.logEveryMs ?? 1000;
     this._fallbackDurationMs = options.fallbackDurationMs ?? 60 * 60 * 1000;
     this._seekCooldownMs = options.seekCooldownMs ?? 2000; // minimum gap between seeks
@@ -24,10 +28,17 @@ class MediaSyncHandle {
     this._raf = null;
     this._lastLog = 0;
     this._lastSeek = 0;
+    this._lastStableSeek = 0;
     this._startAtMs = performance.now();
     this._lastEmaUpdate = 0;
     this._driftEmaMs = 0;
     this._prevDriftMs = null;
+    this._lastRateApplied = null;
+    this._rateStableSinceMs = 0;
+    this._stableMinRate = null;
+    this._stableMaxRate = null;
+    this._frozenRate = null;
+    this._frozenUntilMs = 0;
     this._running = true;
     this._onReady = this._handleReady.bind(this);
     this._el?.addEventListener('loadedmetadata', this._onReady);
@@ -99,12 +110,69 @@ class MediaSyncHandle {
     this._driftEmaMs = (1 - alpha) * this._driftEmaMs + alpha * driftMs;
     this._lastEmaUpdate = now;
 
+    // If frozen after a stability seek, hold playbackRate steady.
+    if (this._frozenRate !== null && now < this._frozenUntilMs) {
+      this._el.playbackRate = this._frozenRate;
+      this._prevDriftMs = driftMs;
+      if (now - this._lastLog > this._logEveryMs) {
+        const elapsedMs = now - (this._startAtMs || now);
+        this._log(`t=${elapsedMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms ema=${this._driftEmaMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)} stableFor=0ms span=0 frozen=true`);
+        this._lastLog = now;
+      }
+      return;
+    }
+
+    if (this._frozenRate !== null && now >= this._frozenUntilMs) {
+      this._frozenRate = null;
+    }
+
     const rateDelta = clamp(-this._driftEmaMs * this._rateGain, -this._maxRateDelta, this._maxRateDelta);
     const nextRate = clamp(this._baseRate + rateDelta, this._baseRate - this._maxRateDelta, this._baseRate + this._maxRateDelta);
     const atCap = Math.abs(rateDelta) >= this._maxRateDelta * 0.8;
     const worsening = this._prevDriftMs !== null && Math.abs(driftMs) > Math.abs(this._prevDriftMs) + this._worseningMarginMs;
 
     this._el.playbackRate = nextRate;
+
+    // Track rate stability window and span.
+    if (this._lastRateApplied === null || Math.abs(nextRate - this._lastRateApplied) > this._stableRateDelta) {
+      this._rateStableSinceMs = 0;
+      this._stableMinRate = nextRate;
+      this._stableMaxRate = nextRate;
+    } else {
+      this._stableMinRate = this._stableMinRate === null ? nextRate : Math.min(this._stableMinRate, nextRate);
+      this._stableMaxRate = this._stableMaxRate === null ? nextRate : Math.max(this._stableMaxRate, nextRate);
+      const span = this._stableMaxRate - this._stableMinRate;
+      if (span <= this._stableRateDelta) {
+        if (this._rateStableSinceMs === 0) this._rateStableSinceMs = now;
+      } else {
+        this._rateStableSinceMs = 0;
+        this._stableMinRate = nextRate;
+        this._stableMaxRate = nextRate;
+      }
+    }
+    this._lastRateApplied = nextRate;
+
+    const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
+    const stableSpan = (this._stableMaxRate !== null && this._stableMinRate !== null) ? (this._stableMaxRate - this._stableMinRate) : 0;
+    const stableEnough = stableForMs >= this._stableRateWindowMs && stableSpan <= this._stableRateDelta;
+
+    // Stability-driven seek: once stability window achieved and drift remains beyond threshold.
+    if (stableEnough && Math.abs(driftMs) > this._seekThresholdMs && (now - this._lastStableSeek) > this._stableSeekCooldownMs) {
+      this._log(`seek(stable) -> ${targetSec.toFixed(3)}s (drift ${driftMs.toFixed(1)}ms rate ${nextRate.toFixed(4)} span ${stableSpan.toFixed(6)})`);
+      this._el.currentTime = targetSec;
+      this._el.playbackRate = nextRate;
+      this._lastSeek = now;
+      this._lastStableSeek = now;
+      this._driftEmaMs = 0;
+      this._lastEmaUpdate = now;
+      this._prevDriftMs = driftMs;
+      this._rateStableSinceMs = 0;
+      this._stableMinRate = nextRate;
+      this._stableMaxRate = nextRate;
+      this._frozenRate = nextRate;
+      this._frozenUntilMs = now + this._postStableFreezeMs;
+      return;
+    }
 
     if (Math.abs(driftMs) > this._seekThresholdMs) {
       const sinceLastSeek = now - this._lastSeek;
@@ -124,7 +192,10 @@ class MediaSyncHandle {
 
     if (now - this._lastLog > this._logEveryMs) {
       const elapsedMs = now - (this._startAtMs || now);
-      this._log(`t=${elapsedMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms ema=${this._driftEmaMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)}`);
+      const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
+      const stableSpan = (this._stableMaxRate !== null && this._stableMinRate !== null) ? (this._stableMaxRate - this._stableMinRate) : 0;
+      const frozenFlag = this._frozenRate !== null && now < this._frozenUntilMs;
+      this._log(`t=${elapsedMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms ema=${this._driftEmaMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms span=${stableSpan.toFixed(6)} frozen=${frozenFlag}`);
       this._lastLog = now;
     }
   }
