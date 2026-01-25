@@ -3,6 +3,15 @@
 
 const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
 
+const formatTime = (ms) => {
+  const totalSec = Math.floor(ms / 1000);
+  const millis = Math.floor(ms % 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${millis.toString().padStart(3, '0')}`;
+};
+
 class MediaSyncHandle {
   constructor(mediaEl, options) {
     this._el = mediaEl;
@@ -132,7 +141,7 @@ class MediaSyncHandle {
       this._lastRateApplied = holdRate;
       this._prevDriftMs = driftMs;
       if (now - this._lastLog > this._logEveryMs) {
-        this._log(`t=${targetMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} hold`);
+        this._log(`t=${formatTime(targetMs)} drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} hold`);
         this._lastLog = now;
       }
       // If drift grows too large during hold, abort early.
@@ -143,17 +152,8 @@ class MediaSyncHandle {
     }
 
     // Once stable rate is locked, keep using it permanently unless drift exceeds threshold.
-    if (this._stableLocked && !this._correctingDrift && Math.abs(driftMs) <= this._seekThresholdMs) {
-      const holdRate = this._stableHoldRate ?? this._baseRate;
-      this._el.playbackRate = holdRate;
-      this._lastRateApplied = holdRate;
-      this._prevDriftMs = driftMs;
-      if (now - this._lastLog > this._logEveryMs) {
-        this._log(`t=${targetMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} stable`);
-        this._lastLog = now;
-      }
-      return;
-    }
+    // Don't return early - let it flow to correction check below.
+    const shouldUseStableRate = this._stableLocked && !this._correctingDrift && Math.abs(driftMs) <= this._seekThresholdMs;
 
     const wantPlay = this._shouldPlay?.();
     if (wantPlay && this._el.paused) {
@@ -195,7 +195,7 @@ class MediaSyncHandle {
         this._prevDriftMs = driftMs;
         if (now - this._lastLog > this._logEveryMs) {
           const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
-          this._log(`t=${targetMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms hold`);
+          this._log(`t=${formatTime(targetMs)} drift=${driftMs.toFixed(1)}ms rate=${holdRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms hold`);
           this._lastLog = now;
         }
         return; // CRITICAL: return to prevent adaptive rate from running
@@ -206,7 +206,7 @@ class MediaSyncHandle {
         this._prevDriftMs = driftMs;
         if (now - this._lastLog > this._logEveryMs) {
           const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
-          this._log(`t=${targetMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${targetRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms corr desiredDelta=${(this._correctionDesiredDelta ?? 0).toFixed(6)} targetRate=${(this._correctionTargetRate ?? targetRate).toFixed(6)}`);
+          this._log(`t=${formatTime(targetMs)} drift=${driftMs.toFixed(1)}ms rate=${targetRate.toFixed(4)} stableFor=${stableForMs.toFixed(0)}ms corr desiredDelta=${(this._correctionDesiredDelta ?? 0).toFixed(6)} targetRate=${(this._correctionTargetRate ?? targetRate).toFixed(6)}`);
           this._lastLog = now;
         }
         return;
@@ -291,15 +291,22 @@ class MediaSyncHandle {
       }
     }
 
+    // If stable rate is locked and drift is small, use stable rate.
+    if (shouldUseStableRate) {
+      const holdRate = this._stableHoldRate ?? this._baseRate;
+      this._el.playbackRate = holdRate;
+      this._lastRateApplied = holdRate;
+    }
+
     this._prevDriftMs = driftMs;
 
     if (now - this._lastLog > this._logEveryMs) {
       const stableForMs = this._rateStableSinceMs ? now - this._rateStableSinceMs : 0;
       const stableLog = !this._stableLocked && this._rateStableSinceMs ? ` stableFor=${stableForMs.toFixed(0)}ms` : '';
-      const corrFlag = this._correctingDrift ? 'corr' : 'nocorr';
+      const corrFlag = this._correctingDrift ? 'corr' : (shouldUseStableRate ? 'stable' : 'nocorr');
       const deltaLog = this._correctionDesiredDelta !== null ? ` desiredDelta=${this._correctionDesiredDelta.toFixed(6)} targetRate=${(this._correctionTargetRate ?? 0).toFixed(6)} appliedRate=${(correctionAppliedRate ?? this._el.playbackRate).toFixed(6)}` : '';
       const holdFlag = this._postCorrectionHoldUntilMs && now < this._postCorrectionHoldUntilMs ? ' hold' : '';
-      this._log(`t=${targetMs.toFixed(0)}ms drift=${driftMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)}${stableLog} ${corrFlag}${deltaLog}${holdFlag}`);
+      this._log(`t=${formatTime(targetMs)} drift=${driftMs.toFixed(1)}ms rate=${this._el.playbackRate.toFixed(4)}${stableLog} ${corrFlag}${deltaLog}${holdFlag}`);
       this._lastLog = now;
     }
   }
