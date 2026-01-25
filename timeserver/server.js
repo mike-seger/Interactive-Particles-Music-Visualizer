@@ -25,7 +25,7 @@ function nowMs() {
 }
 
 function loadState() {
-  const base = { offsetMs: 0, running: false, startAt: null, detached: false };
+  const base = { offsetMs: 0, running: false, startAt: null, detached: false, seekSeq: 0 };
   if (!fs.existsSync(STATE_FILE)) return { ...base };
   try {
     const parsed = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
@@ -56,15 +56,19 @@ function setRunning(on) {
   state.startAt = null;
 }
 
-function setOffset(ms) {
+function setOffset(ms, bumpSeekSeq = false) {
   if (state.detached) return;
   const next = Number.isFinite(ms) ? Math.max(0, ms) : 0;
   state.offsetMs = next;
   if (state.running) state.startAt = nowMs();
+  if (bumpSeekSeq) {
+    state.seekSeq = (state.seekSeq || 0) + 1;
+    console.log(`[timeserver] seekSeq bumped to ${state.seekSeq}, offsetMs=${next}`);
+  }
 }
 
 function resetClock() {
-  setOffset(0);
+  setOffset(0, true);
 }
 
 function serializeState() {
@@ -74,6 +78,7 @@ function serializeState() {
     offsetMs: state.offsetMs,
     detached: state.detached,
     serverNowMs: nowMs(),
+    seekSeq: state.seekSeq || 0,
   };
 }
 
@@ -148,7 +153,7 @@ function handleControl(body, query) {
       resetClock();
       break;
     case 'jump':
-      setOffset(Number(body.offsetMs));
+      setOffset(Number(body.offsetMs), true);
       break;
     case 'detach':
       state.detached = true;
@@ -231,7 +236,9 @@ function handleSse(req, res, parsedUrl) {
 
 function broadcast() {
   if (!clients.size || state.detached) return;
-  const payload = `data: ${JSON.stringify(serializeState())}\n\n`;
+  const stateObj = serializeState();
+  console.log(`[timeserver] broadcasting: seekSeq=${stateObj.seekSeq}, timeMs=${stateObj.timeMs}`);
+  const payload = `data: ${JSON.stringify(stateObj)}\n\n`;
   for (const res of clients.keys()) {
     res.write(payload);
   }

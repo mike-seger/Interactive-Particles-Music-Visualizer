@@ -57,8 +57,38 @@ class MediaSyncHandle {
   setOffsetMs(offsetMs, reason = 'external-set') {
     if (!this._el || !Number.isFinite(offsetMs)) return;
     const targetSec = this._mapToTrackSeconds(offsetMs);
-    this._log(`seek -> ${targetSec.toFixed(3)}s (${reason})`);
-    this._el.currentTime = targetSec;
+    this._log(`seek -> ${targetSec.toFixed(3)}s (${reason}), readyState=${this._el.readyState}`);
+    if (this._el.readyState >= 1) {
+      this._el.currentTime = targetSec;
+    } else {
+      // Media not ready; queue seek for when metadata loads.
+      const doSeek = () => {
+        this._el.removeEventListener('loadedmetadata', doSeek);
+        this._el.currentTime = targetSec;
+        this._log(`deferred seek -> ${targetSec.toFixed(3)}s`);
+      };
+      this._el.addEventListener('loadedmetadata', doSeek, { once: true });
+    }
+  }
+
+  resetForSeek(offsetMs, reason = 'server-seek') {
+    // Reset all rate-correction state and perform an immediate seek.
+    this._stableLocked = false;
+    this._stableHoldRate = null;
+    this._stableMinRate = null;
+    this._stableMaxRate = null;
+    this._rateStableSinceMs = 0;
+    this._correctingDrift = false;
+    this._correctionTargetRate = null;
+    this._correctionDesiredDelta = null;
+    this._correctionBaseRate = null;
+    this._correctionSign = 0;
+    this._postCorrectionHoldUntilMs = 0;
+    this._driftEmaMs = 0;
+    this._prevDriftMs = null;
+    this._lastRateApplied = null;
+    if (this._el && Number.isFinite(this._baseRate)) this._el.playbackRate = this._baseRate;
+    this.setOffsetMs(offsetMs, reason);
   }
 
   _handleReady() {
@@ -306,8 +336,9 @@ export default class AutoSyncClient {
     this._es = null;
     this._following = false;
     this._connected = false;
-    this._serverState = { timeMs: 0, running: false, at: performance.now(), serverNowMs: Date.now() };
+    this._serverState = { timeMs: 0, running: false, at: performance.now(), serverNowMs: Date.now(), seekSeq: 0 };
     this._localState = { offsetMs: 0, startedAt: performance.now(), playing: false };
+    this._lastSeekSeq = 0;
 
     this._mediaSync = null;
     this._timeRaf = null;
@@ -483,18 +514,36 @@ export default class AutoSyncClient {
     try {
       const data = JSON.parse(ev.data || '{}');
       const now = performance.now();
+      console.log(`[AutoSyncClient] received SSE: seekSeq=${data.seekSeq}, timeMs=${data.timeMs}, lastSeekSeq=${this._lastSeekSeq}`);
 
       if (!this._connected) {
-        // First successful message: align local to server.
+        // First successful message: align local to server and sync seekSeq.
         this._switchToLocal(data.timeMs || 0, !!data.running, now);
+        this._lastSeekSeq = data.seekSeq || 0;
+        console.log(`[AutoSyncClient] first connect, initialized lastSeekSeq=${this._lastSeekSeq}`);
       }
+
+      // Detect server-side seek (jump action) by seekSeq change.
+      const incomingSeekSeq = data.seekSeq || 0;
+      const serverJumped = this._connected && incomingSeekSeq !== this._lastSeekSeq;
+      console.log(`[AutoSyncClient] serverJumped=${serverJumped} (connected=${this._connected}, incoming=${incomingSeekSeq}, last=${this._lastSeekSeq})`);
 
       this._serverState = {
         timeMs: data.timeMs || 0,
         running: !!data.running,
         at: now,
         serverNowMs: data.serverNowMs || Date.now(),
+        seekSeq: incomingSeekSeq,
       };
+      this._lastSeekSeq = incomingSeekSeq;
+
+      // If server jumped, force MediaSyncHandle to seek immediately.
+      if (serverJumped) {
+        console.log(`[AutoSyncClient] server jumped: seekSeq ${incomingSeekSeq}, timeMs=${data.timeMs}, hasMediaSync=${!!this._mediaSync}`);
+        if (this._mediaSync) {
+          this._mediaSync.resetForSeek(data.timeMs || 0, 'server-jump');
+        }
+      }
 
       this._connected = true;
       this._backoffMs = 1500;
