@@ -1,14 +1,11 @@
 import AutoSyncClient from './AutoSyncClient.js';
 
-const playbackEl = document.getElementById('playback');
-const sourceLabel = document.getElementById('sourceLabel');
 const connStatusEl = document.getElementById('connStatus');
 const serverUrlInput = document.getElementById('serverUrl');
 const playPauseBtn = document.getElementById('playPause');
 const syncCheckbox = document.getElementById('syncEnabled');
 const positionSlider = document.getElementById('position');
 const positionValue = document.getElementById('positionValue');
-const trackLengthEl = document.getElementById('trackLength');
 const audioEl = document.getElementById('audio');
 
 const DEFAULT_TRACK_LEN_MS = 60 * 60 * 1000; // fallback until audio metadata loads
@@ -84,7 +81,6 @@ function initClient() {
     onServerState: handleServerState,
     onTime: (rawMs) => {
       const current = mapTimeToTrack(rawMs);
-      playbackEl.textContent = formatTime(current);
       if (!isScrubbing && positionSlider) {
         positionSlider.value = String(Math.floor(current));
         positionValue.textContent = formatTime(current);
@@ -138,11 +134,10 @@ playPauseBtn.addEventListener('click', togglePlay);
 syncCheckbox.addEventListener('change', () => {
   const synced = syncCheckbox.checked;
   playPauseBtn.disabled = synced;
-  sourceLabel.textContent = synced ? 'following server time' : 'local playback';
   if (!syncClient) return;
   if (!synced) {
     syncClient.setFollowing(false);
-    setConnStatus(syncClient.isConnected() ? 'connected (not following)' : 'disconnected', syncClient.isConnected());
+    setConnStatus(syncClient.isConnected() ? 'connected' : 'disconnected', syncClient.isConnected());
     // When leaving sync mode, keep audio where it is without forcing corrections.
   } else {
     syncClient.setServerUrl(serverUrlInput.value.trim());
@@ -206,7 +201,6 @@ if (audioEl) {
       if (positionSlider) {
         positionSlider.max = String(trackLengthMs);
       }
-      if (trackLengthEl) trackLengthEl.textContent = formatTime(trackLengthMs);
       console.log(`[audio] metadata loaded duration=${audioEl.duration.toFixed(3)}s`);
     }
   });
@@ -216,5 +210,3 @@ if (audioEl) {
   // Start paused until user interacts.
   audioEl.pause();
 }
-
-if (trackLengthEl) trackLengthEl.textContent = formatTime(trackLengthMs);

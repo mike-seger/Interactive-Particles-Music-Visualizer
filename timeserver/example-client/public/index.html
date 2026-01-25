@@ -132,20 +132,15 @@
         <button id="playPause" class="button">Play</button>
         <label class="checkbox">
           <input id="syncEnabled" type="checkbox" checked />
-          Follow time sync server
+          Sync
         </label>
       </div>
 
       <div class="status-row">
         <div class="small">Connection: <span id="connStatus" class="tag warn">disconnected</span></div>
-        <div class="small">Track length: <span id="trackLength">loading…</span></div>
       </div>
 
-      <div class="clock" id="playback">00:00:00.000</div>
-      <div class="sub" id="sourceLabel">following server time</div>
-
       <div class="row">
-        <label for="position">Position</label>
         <div class="range-row">
           <input id="position" type="range" min="0" max="3600000" step="100" value="0" />
           <div class="range-value" id="positionValue">00:00:00.000</div>
