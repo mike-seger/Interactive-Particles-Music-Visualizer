@@ -2,10 +2,8 @@ import AutoSyncClient from './AutoSyncClient.js';
 
 const connStatusEl = document.getElementById('connStatus');
 const serverUrlInput = document.getElementById('serverUrl');
-const playPauseBtn = document.getElementById('playPause');
 const syncCheckbox = document.getElementById('syncEnabled');
 const positionSlider = document.getElementById('position');
-const positionValue = document.getElementById('positionValue');
 const mediaEl = document.getElementById('medium');
 
 const DEFAULT_TRACK_LEN_MS = 60 * 60 * 1000; // fallback until audio metadata loads
@@ -55,7 +53,6 @@ function handleServerState(state) {
   // Use predicted time (includes delta since last server tick) to reduce apparent lag.
   const predictedMs = syncClient ? mapTimeToTrack(syncClient.getTime()) : mapTimeToTrack(state.timeMs || 0);
   positionSlider.value = String(Math.floor(predictedMs));
-  positionValue.textContent = formatTime(predictedMs);
 }
 
 function initClient() {
@@ -66,11 +63,10 @@ function initClient() {
     onStatus: handleStatus,
     onServerState: handleServerState,
     onTime: (rawMs) => {
-      const current = mapTimeToTrack(rawMs);
-      if (!isScrubbing && positionSlider) {
-        positionSlider.value = String(Math.floor(current));
-        positionValue.textContent = formatTime(current);
-      }
+      //const current = mapTimeToTrack(rawMs);
+      // if (!isScrubbing && positionSlider) {
+      //   positionSlider.value = String(Math.floor(current));
+      // }
     },
     followOnStart: false,
     playLocalOnDetach: false,
@@ -94,40 +90,12 @@ function initClient() {
   }
 }
 
-function togglePlay() {
-  if (syncCheckbox.checked && syncClient?.isConnected()) {
-    return; // when synced, follow server
-  }
-  if (!syncClient) return;
-  const currentlyPlaying = syncClient.isLocalPlaying();
-  if (currentlyPlaying) {
-    syncClient.setLocalPlaying(false);
-    playPauseBtn.textContent = 'Play';
-    mediaEl?.pause();
-  } else {
-    // Resume from current displayed time.
-    syncClient.setLocalPosition(syncClient.getTime());
-    syncClient.setLocalPlaying(true);
-    playPauseBtn.textContent = 'Pause';
-    if (mediaEl) {
-      const target = mapTimeToTrack(syncClient.getTime());
-      logSeek('local-resume', target / 1000);
-      mediaSync?.setOffsetMs(target, 'local-resume');
-      mediaEl.play().catch(() => {});
-    }
-  }
-}
-
-playPauseBtn.addEventListener('click', togglePlay);
-
 syncCheckbox.addEventListener('change', () => {
   const synced = syncCheckbox.checked;
-  playPauseBtn.disabled = synced;
   if (!syncClient) return;
   if (!synced) {
     syncClient.setFollowing(false, { playLocal: false });
     setConnStatus('detached', false);
-    // When leaving sync mode, keep audio where it is without forcing corrections.
   } else {
     syncClient.setServerUrl(serverUrlInput.value.trim());
     syncClient.setFollowing(true);
@@ -143,7 +111,6 @@ if (positionSlider) {
   positionSlider.addEventListener('input', () => {
     isScrubbing = true;
     const val = Number(positionSlider.value) || 0;
-    positionValue.textContent = formatTime(val);
     if (!syncCheckbox.checked || !(syncClient && syncClient.isConnected())) {
       syncClient?.setLocalPosition(val);
       if (mediaEl) mediaEl.currentTime = mapTimeToTrack(val) / 1000;
@@ -153,7 +120,6 @@ if (positionSlider) {
   positionSlider.addEventListener('change', () => {
     const val = mapTimeToTrack(Number(positionSlider.value) || 0);
     positionSlider.value = String(val);
-    positionValue.textContent = formatTime(val);
     if (syncCheckbox.checked && syncClient?.isConnected()) {
       syncClient.jump(val);
       if (mediaEl) {
@@ -171,15 +137,12 @@ if (positionSlider) {
   });
 }
 
-playPauseBtn.disabled = syncCheckbox.checked;
 initClient();
 syncCheckbox.checked = false;
-playPauseBtn.disabled = false;
 setConnStatus('detached', false);
 if (positionSlider) {
   positionSlider.max = String(trackLengthMs);
   positionSlider.value = '0';
-  positionValue.textContent = '00:00:00.000';
 }
 if (mediaEl) {
   mediaEl.addEventListener('timeupdate', () => {

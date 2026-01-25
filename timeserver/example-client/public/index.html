@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Example Sync Client</title>
+    <link rel="icon" href="data:,">
     <style>
       :root {
         --bg: #0b0e18;
@@ -137,7 +138,7 @@
         </div> -->
 
         <div class="row flex">
-            <button id="playPause" class="button">Play</button>
+            <!-- <button id="playPause" class="button">Play</button> -->
             <label class="checkbox" style="margin-top:6px;">
               <input id="syncEnabled" type="checkbox" />
                 Sync
@@ -148,16 +149,16 @@
         <div class="row">
             <div class="range-row">
                 <input id="position" type="range" min="0" max="3600000" step="100" value="0" />
-                <div class="range-value" id="positionValue">00:00:00.000</div>
+                <!-- <div class="range-value" id="positionValue">00:00:00.000</div> -->
             </div>
         </div>
     </div>
 
 
     <!-- <audio id="audio" src="/sample.mp3"></audio> -->
-    <video id="medium" src="http://michaels-macmini-2023:8080/player/video/time-sync-300s.mp4
+    <video id="medium" src="http://michaels-macmini-2023:8080/player/video/support-media/time-sync-300s.mp4
     "></video>
-    <!-- <audio id="medium" src="http://michaels-macmini-2023:8080/player/video/time-sync-300s.mp3"></audio> -->
+    <!-- <audio id="medium" src="http://michaels-macmini-2023:8080/player/video/support-media/time-sync-300s.mp3"></audio> -->
     <script type="module" src="/app.js"></script>
 </body>
 
