@@ -3,6 +3,8 @@
 
 const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
 
+const STABLE_RATE_STORAGE_KEY = 'mediasync_stable_rate';
+
 const formatTime = (ms) => {
   const totalSec = Math.floor(ms / 1000);
   const millis = Math.floor(ms % 1000);
@@ -32,6 +34,7 @@ class MediaSyncHandle {
     this._driftEmaHalfLifeMs = options.driftEmaHalfLifeMs ?? 1500;
     this._baseRate = Number.isFinite(options.baseRate) ? options.baseRate : (mediaEl?.playbackRate || 1);
 
+    // Initialize all state properties first
     this._raf = null;
     this._lastLog = 0;
     this._startAtMs = performance.now();
@@ -43,13 +46,40 @@ class MediaSyncHandle {
     this._stableMinRate = null;
     this._stableMaxRate = null;
     this._stableHoldRate = null;
-    this._stableLocked = false;
+
+    // Try to restore previously saved stable rate from localStorage
+    try {
+      const saved = localStorage.getItem(STABLE_RATE_STORAGE_KEY);
+      if (saved) {
+        const savedRate = parseFloat(saved);
+        if (Number.isFinite(savedRate) && savedRate > 0.5 && savedRate < 2.0) {
+          this._stableHoldRate = savedRate;
+          // Initialize drift EMA to match restored rate so it doesn't reconverge from baseRate
+          this._driftEmaMs = -(savedRate - this._baseRate) / this._rateGain;
+          // Mark as already applied so adaptive control doesn't recalculate on first sync
+          this._lastRateApplied = savedRate;
+          // Lock as stable immediately since we restored a previously stable rate
+          this._stableLocked = true;
+          this._rateStableSinceMs = this._startAtMs;
+          this._log(`restored stable rate from storage: ${savedRate.toFixed(4)}, driftEma=${this._driftEmaMs.toFixed(1)}ms, locked`);
+          // Set initial playback rate if media element exists
+          if (this._el) {
+            this._el.playbackRate = savedRate;
+          }
+        }
+      }
+    } catch (err) {
+      // localStorage might not be available
+    }
+    this._stableLocked = this._stableLocked || false;
     this._correctingDrift = false;
     this._correctionDesiredDelta = null;
     this._correctionTargetRate = null;
     this._correctionBaseRate = null;
     this._correctionSign = 0;
     this._postCorrectionHoldUntilMs = 0;
+    this._correctionCount = 0;
+    this._lastCorrectionEndMs = 0;
     this._running = true;
     this._onReady = this._handleReady.bind(this);
     this._el?.addEventListener('loadedmetadata', this._onReady);
@@ -82,8 +112,10 @@ class MediaSyncHandle {
 
   resetForSeek(offsetMs, reason = 'server-seek') {
     // Reset all rate-correction state and perform an immediate seek.
+    // Preserve stable rate if we had one - use it as starting point for next convergence.
+    const preservedStableRate = this._stableHoldRate;
+    
     this._stableLocked = false;
-    this._stableHoldRate = null;
     this._stableMinRate = null;
     this._stableMaxRate = null;
     this._rateStableSinceMs = 0;
@@ -93,10 +125,31 @@ class MediaSyncHandle {
     this._correctionBaseRate = null;
     this._correctionSign = 0;
     this._postCorrectionHoldUntilMs = 0;
-    this._driftEmaMs = 0;
     this._prevDriftMs = null;
     this._lastRateApplied = null;
-    if (this._el && Number.isFinite(this._baseRate)) this._el.playbackRate = this._baseRate;
+    this._correctionCount = 0;
+    this._lastCorrectionEndMs = 0;
+    
+    // If we had a stable rate, start from there instead of baseRate.
+    // Initialize drift EMA to match the preserved rate so it doesn't immediately drop back to baseRate.
+    if (this._el && preservedStableRate && Number.isFinite(preservedStableRate)) {
+      this._el.playbackRate = preservedStableRate;
+      this._lastRateApplied = preservedStableRate;
+      // Calculate drift EMA that would produce this rate: rateDelta = -driftEmaMs * rateGain
+      // nextRate = baseRate + rateDelta, so: preservedRate = baseRate + (-driftEmaMs * rateGain)
+      // Therefore: driftEmaMs = -(preservedRate - baseRate) / rateGain
+      this._driftEmaMs = -(preservedStableRate - this._baseRate) / this._rateGain;
+      // Lock as stable immediately since we're preserving a previously stable rate
+      this._stableLocked = true;
+      this._rateStableSinceMs = performance.now();
+      this._log(`reset: starting from preserved stable rate ${preservedStableRate.toFixed(4)}, driftEma=${this._driftEmaMs.toFixed(1)}ms, locked`);
+    } else {
+      this._driftEmaMs = 0;
+      if (this._el && Number.isFinite(this._baseRate)) {
+        this._el.playbackRate = this._baseRate;
+      }
+    }
+    
     this.setOffsetMs(offsetMs, reason);
   }
 
@@ -181,12 +234,25 @@ class MediaSyncHandle {
       const driftSmall = Math.abs(driftMs) <= this._seekThresholdMs * 0.1; // close to zero
       if (driftFlipped || driftSmall) {
         // Drift crossed zero or is close enough; restore stable rate and enter hold.
+        this._lastCorrectionEndMs = now;
+        
+        // If we've had 3+ corrections in rapid succession, the stable rate is wrong.
+        let holdRate = this._stableHoldRate ?? this._baseRate;
+        if (this._correctionCount >= 3) {
+          holdRate = this._baseRate;
+          this._stableHoldRate = this._baseRate;
+          this._correctionCount = 0;
+          this._log(`oscillation detected (early exit), updated stable rate to baseRate: ${this._baseRate.toFixed(4)}`);
+          try {
+            localStorage.setItem(STABLE_RATE_STORAGE_KEY, this._baseRate.toString());
+          } catch (err) {}
+        }
+        
         this._correctingDrift = false;
         this._correctionDesiredDelta = null;
         this._correctionTargetRate = null;
         this._correctionBaseRate = null;
         this._correctionSign = 0;
-        const holdRate = this._stableHoldRate ?? this._baseRate;
         this._el.playbackRate = holdRate;
         this._lastRateApplied = holdRate;
         this._postCorrectionHoldUntilMs = now + this._postCorrectionHoldMs;
@@ -246,6 +312,12 @@ class MediaSyncHandle {
       this._stableLocked = true;
       this._stableHoldRate = steppedRate;
       this._rateStableSinceMs = now;
+      // Persist stable rate to localStorage for future sessions
+      try {
+        localStorage.setItem(STABLE_RATE_STORAGE_KEY, steppedRate.toString());
+      } catch (err) {
+        // localStorage might not be available
+      }
     }
 
     // If stableLocked, use a temporary rate correction to drive drift to zero over 5s; hold the target until drift crosses zero.
@@ -257,11 +329,21 @@ class MediaSyncHandle {
       if (!this._correctingDrift && Math.abs(driftMs) > this._seekThresholdMs) {
         const driftSec = driftMs / 1000;
         this._correctionDesiredDelta = -driftSec / 5; // rate delta needed to clear current drift in 5s
-        const baseForCorrection = this._lastRateApplied ?? this._el.playbackRate ?? this._stableHoldRate ?? this._baseRate;
-        this._correctionBaseRate = baseForCorrection;
-        this._correctionTargetRate = clamp(baseForCorrection + this._correctionDesiredDelta, this._baseRate - this._maxRateDelta, this._baseRate + this._maxRateDelta);
+        // Always use baseRate as the base for correction to avoid compounding drift
+        this._correctionBaseRate = this._baseRate;
+        this._correctionTargetRate = clamp(this._baseRate + this._correctionDesiredDelta, this._baseRate - this._maxRateDelta, this._baseRate + this._maxRateDelta);
         this._correctionSign = driftSign;
         this._correctingDrift = true;
+        
+        // Track correction frequency to detect oscillation
+        const timeSinceLastCorrection = this._lastCorrectionEndMs ? (now - this._lastCorrectionEndMs) : Infinity;
+        if (timeSinceLastCorrection < 15000) { // corrections happening within 15s of each other
+          this._correctionCount++;
+        } else {
+          this._correctionCount = 1; // reset if it's been a while
+        }
+        this._log(`starting correction #${this._correctionCount} (last correction ${(timeSinceLastCorrection/1000).toFixed(1)}s ago)`);
+        
         this._el.playbackRate = this._correctionTargetRate; // jump immediately for faster burn-down
         this._lastRateApplied = this._correctionTargetRate;
         this._driftEmaMs = 0;
@@ -270,14 +352,32 @@ class MediaSyncHandle {
         const driftFlipped = this._correctionSign !== 0 && driftSign !== 0 && driftSign !== this._correctionSign;
         const driftSmall = Math.abs(driftMs) <= this._seekThresholdMs * 0.1; // close enough to zero (~40ms if threshold 400)
         if (driftFlipped || driftSmall) {
-          // Drift crossed zero or is sufficiently close; restore stable rate and enter hold.
+          // Drift crossed zero or is sufficiently close
+          this._lastCorrectionEndMs = now;
+          
+          // If we've had 3+ corrections in rapid succession, the stable rate is wrong.
+          // Update it to the baseRate which should be correct.
+          let rateToUse = this._stableHoldRate;
+          if (this._correctionCount >= 3) {
+            rateToUse = this._baseRate;
+            this._stableHoldRate = this._baseRate;
+            this._correctionCount = 0;
+            this._log(`oscillation detected, updated stable rate to baseRate: ${this._baseRate.toFixed(4)}`);
+            // Persist updated stable rate
+            try {
+              localStorage.setItem(STABLE_RATE_STORAGE_KEY, this._baseRate.toString());
+            } catch (err) {
+              // localStorage might not be available
+            }
+          }
+          
           this._correctingDrift = false;
           this._correctionDesiredDelta = null;
           this._correctionTargetRate = null;
           this._correctionBaseRate = null;
           this._correctionSign = 0;
-          this._el.playbackRate = this._stableHoldRate;
-          this._lastRateApplied = this._stableHoldRate;
+          this._el.playbackRate = rateToUse;
+          this._lastRateApplied = rateToUse;
           this._postCorrectionHoldUntilMs = now + this._postCorrectionHoldMs;
           this._driftEmaMs = 0;
           this._lastEmaUpdate = now;
@@ -291,11 +391,23 @@ class MediaSyncHandle {
       }
     }
 
-    // If stable rate is locked and drift is small, use stable rate.
+    // If stable rate is locked and drift is small, use stable rate with fine-tuning.
+    // When drift persists above 10ms, apply gentle adaptive correction to nudge toward zero.
     if (shouldUseStableRate) {
       const holdRate = this._stableHoldRate ?? this._baseRate;
-      this._el.playbackRate = holdRate;
-      this._lastRateApplied = holdRate;
+      
+      // Apply fine-tuning if drift is persistently outside ±10ms range
+      if (Math.abs(driftMs) > 10) {
+        // Use very gentle adaptive correction: small rate gain for fine-tuning
+        const fineRateDelta = clamp(-this._driftEmaMs * this._rateGain * 0.5, -0.01, 0.01); // ±1% max for fine-tuning
+        const fineTunedRate = clamp(holdRate + fineRateDelta, holdRate - 0.01, holdRate + 0.01);
+        this._el.playbackRate = fineTunedRate;
+        this._lastRateApplied = fineTunedRate;
+      } else {
+        // Drift is very small, use exact stable rate
+        this._el.playbackRate = holdRate;
+        this._lastRateApplied = holdRate;
+      }
     }
 
     this._prevDriftMs = driftMs;
@@ -515,13 +627,11 @@ export default class AutoSyncClient {
     try {
       const data = JSON.parse(ev.data || '{}');
       const now = performance.now();
-      console.log(`[AutoSyncClient] received SSE: seekSeq=${data.seekSeq}, timeMs=${data.timeMs}, lastSeekSeq=${this._lastSeekSeq}`);
 
       if (!this._connected) {
         // First successful message: align local to server and sync seekSeq.
         this._switchToLocal(data.timeMs || 0, !!data.running, now);
         this._lastSeekSeq = data.seekSeq || 0;
-        console.log(`[AutoSyncClient] first connect, initialized lastSeekSeq=${this._lastSeekSeq}`);
         // Immediately sync media to server position
         if (this._mediaSync) {
           this._mediaSync.resetForSeek(data.timeMs || 0, 'initial-sync');
@@ -531,7 +641,6 @@ export default class AutoSyncClient {
       // Detect server-side seek (jump action) by seekSeq change.
       const incomingSeekSeq = data.seekSeq || 0;
       const serverJumped = this._connected && incomingSeekSeq !== this._lastSeekSeq;
-      console.log(`[AutoSyncClient] serverJumped=${serverJumped} (connected=${this._connected}, incoming=${incomingSeekSeq}, last=${this._lastSeekSeq})`);
 
       this._serverState = {
         timeMs: data.timeMs || 0,
@@ -544,7 +653,6 @@ export default class AutoSyncClient {
 
       // If server jumped, force MediaSyncHandle to seek immediately.
       if (serverJumped) {
-        console.log(`[AutoSyncClient] server jumped: seekSeq ${incomingSeekSeq}, timeMs=${data.timeMs}, hasMediaSync=${!!this._mediaSync}`);
         if (this._mediaSync) {
           this._mediaSync.resetForSeek(data.timeMs || 0, 'server-jump');
         }

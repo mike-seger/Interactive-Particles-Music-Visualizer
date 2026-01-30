@@ -237,7 +237,6 @@ function handleSse(req, res, parsedUrl) {
 function broadcast() {
   if (!clients.size || state.detached) return;
   const stateObj = serializeState();
-  console.log(`[timeserver] broadcasting: seekSeq=${stateObj.seekSeq}, timeMs=${stateObj.timeMs}`);
   const payload = `data: ${JSON.stringify(stateObj)}\n\n`;
   for (const res of clients.keys()) {
     res.write(payload);
