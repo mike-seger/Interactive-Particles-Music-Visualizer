@@ -20,6 +20,12 @@
   window.__bridgeAudioElement = null;
   window.__bridgeAudioContext = null;
   window.__bridgeAnalyser = null;
+
+  // Bridge audio watchdog (debug)
+  window.__bridgeLastAudioDataAt = 0;
+  window.__bridgeLastAudioAvg = 0;
+  window.__bridgeLastAudioMax = 0;
+  window.__bridgeWatchdogStarted = false;
   
   // Store BPM audio buffer received from bridge
   window.__bridgeBPMBuffer = null;
@@ -85,6 +91,154 @@
         const hasFreq = !!msg.frequencyData;
         const hasTime = Array.isArray(msg.timeData) || ArrayBuffer.isView(msg.timeData);
 
+        const toByteSpectrum = (payload) => {
+          if (!payload) return null;
+
+          // If the payload is an ArrayBuffer, it is assumed to already be byte spectrum.
+          if (payload instanceof ArrayBuffer) {
+            return new Uint8Array(payload);
+          }
+
+          // Typed arrays / DataViews
+          if (ArrayBuffer.isView(payload)) {
+            // If already bytes, use as-is.
+            if (payload instanceof Uint8Array) return payload;
+
+            // If it is a 1-byte-per-element typed view (e.g. Int8Array), reinterpret.
+            if (payload.BYTES_PER_ELEMENT === 1) {
+              return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+            }
+
+            // Float arrays are common when parent uses getFloatFrequencyData() or normalized bins.
+            if (payload instanceof Float32Array || payload instanceof Float64Array) {
+              // Detect whether it's normalized (0..1) or dB (negative).
+              let min = Infinity;
+              let max = -Infinity;
+              for (let i = 0; i < payload.length; i++) {
+                const v = payload[i];
+                if (v < min) min = v;
+                if (v > max) max = v;
+              }
+
+              const out = new Uint8Array(payload.length);
+              if (max <= 1.5 && min >= 0) {
+                // Normalized 0..1
+                for (let i = 0; i < payload.length; i++) {
+                  out[i] = Math.max(0, Math.min(255, Math.round(payload[i] * 255)));
+                }
+                return out;
+              }
+
+              if (max <= 0 && min < 0) {
+                // Likely dB values (e.g. -100..0). Map to 0..255.
+                const minDb = -100;
+                const maxDb = 0;
+                const range = maxDb - minDb;
+                for (let i = 0; i < payload.length; i++) {
+                  const clamped = Math.max(minDb, Math.min(maxDb, payload[i]));
+                  out[i] = Math.max(0, Math.min(255, Math.round(((clamped - minDb) / range) * 255)));
+                }
+                return out;
+              }
+
+              // Fallback: clamp numeric values directly.
+              for (let i = 0; i < payload.length; i++) {
+                out[i] = Math.max(0, Math.min(255, Math.round(payload[i])));
+              }
+              return out;
+            }
+
+            // Other numeric typed arrays (Int16Array, Uint16Array, etc): clamp.
+            try {
+              const out = new Uint8Array(payload.length);
+              for (let i = 0; i < payload.length; i++) {
+                out[i] = Math.max(0, Math.min(255, Math.round(payload[i])));
+              }
+              return out;
+            } catch {
+              return null;
+            }
+          }
+
+          // Plain JS array
+          if (Array.isArray(payload)) {
+            let min = Infinity;
+            let max = -Infinity;
+            for (let i = 0; i < payload.length; i++) {
+              const v = Number(payload[i]);
+              if (!Number.isFinite(v)) continue;
+              if (v < min) min = v;
+              if (v > max) max = v;
+            }
+
+            const out = new Uint8Array(payload.length);
+            if (max <= 1.5 && min >= 0) {
+              for (let i = 0; i < payload.length; i++) out[i] = Math.max(0, Math.min(255, Math.round(Number(payload[i]) * 255)));
+              return out;
+            }
+            if (max <= 0 && min < 0) {
+              const minDb = -100;
+              const maxDb = 0;
+              const range = maxDb - minDb;
+              for (let i = 0; i < payload.length; i++) {
+                const v = Number(payload[i]);
+                const clamped = Math.max(minDb, Math.min(maxDb, v));
+                out[i] = Math.max(0, Math.min(255, Math.round(((clamped - minDb) / range) * 255)));
+              }
+              return out;
+            }
+            for (let i = 0; i < payload.length; i++) out[i] = Math.max(0, Math.min(255, Math.round(Number(payload[i]) || 0)));
+            return out;
+          }
+
+          return null;
+        }
+
+        const maybeLogIncoming = (payload, label) => {
+          if (window.__bridgeAudioPayloadLogged) return;
+          try {
+            let len = null;
+            let min = Infinity;
+            let max = -Infinity;
+
+            if (payload instanceof ArrayBuffer) {
+              const view = new Uint8Array(payload);
+              len = view.length;
+              for (let i = 0; i < view.length; i++) {
+                const v = view[i];
+                if (v < min) min = v;
+                if (v > max) max = v;
+              }
+            } else if (ArrayBuffer.isView(payload)) {
+              len = payload.length;
+              for (let i = 0; i < payload.length; i++) {
+                const v = payload[i];
+                if (v < min) min = v;
+                if (v > max) max = v;
+              }
+            } else if (Array.isArray(payload)) {
+              len = payload.length;
+              for (let i = 0; i < payload.length; i++) {
+                const v = Number(payload[i]);
+                if (!Number.isFinite(v)) continue;
+                if (v < min) min = v;
+                if (v > max) max = v;
+              }
+            }
+
+            window.__bridgeAudioPayloadLogged = true;
+            console.log('[Visualizer] Bridge AUDIO_DATA payload sample', {
+              label,
+              type: payload && payload.constructor ? payload.constructor.name : typeof payload,
+              length: len,
+              min: Number.isFinite(min) ? min : null,
+              max: Number.isFinite(max) ? max : null,
+            });
+          } catch {
+            window.__bridgeAudioPayloadLogged = true;
+          }
+        }
+
         const writeFreq = (arr) => {
           const dst = analyser.data;
           if (!dst || !arr) return false;
@@ -122,7 +276,8 @@
 
         if (hasFreq) {
           try {
-            const data = new Uint8Array(msg.frequencyData);
+            maybeLogIncoming(msg.frequencyData, 'frequencyData');
+            const data = toByteSpectrum(msg.frequencyData);
             handled = writeFreq(data);
           } catch (err) {
             console.warn('[Visualizer] Failed to apply frequencyData', err);
@@ -136,6 +291,21 @@
           } catch (err) {
             console.warn('[Visualizer] Failed to derive spectrum from timeData', err);
           }
+        }
+
+        if (handled && analyser && analyser.data) {
+          // Track basic stats to help debug “silent” streams.
+          const data = analyser.data;
+          let sum = 0;
+          let max = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = data[i] || 0;
+            sum += v;
+            if (v > max) max = v;
+          }
+          window.__bridgeLastAudioDataAt = Date.now();
+          window.__bridgeLastAudioAvg = data.length ? sum / data.length : 0;
+          window.__bridgeLastAudioMax = max;
         }
 
         if (!handled && (!window.__dataMissingLogged || Date.now() - window.__dataMissingLogged > 2000)) {
@@ -176,6 +346,43 @@
   // In bridge mode, create fake App structure for audio data
   if (bridgeMode) {
     console.log('[Visualizer] Setting up passive bridge mode');
+
+    // Watchdog: warn if AUDIO_DATA stops arriving (or stays near-silent).
+    // Throttled to avoid console spam.
+    if (!window.__bridgeWatchdogStarted) {
+      window.__bridgeWatchdogStarted = true;
+      let lastWarnAt = 0;
+      const warnEveryMs = 3000;
+      const staleAfterMs = 1500;
+
+      setInterval(() => {
+        const now = Date.now();
+        const last = window.__bridgeLastAudioDataAt || 0;
+        if (!last || now - last > staleAfterMs) {
+          if (now - lastWarnAt > warnEveryMs) {
+            lastWarnAt = now;
+            console.warn('[Visualizer] ⚠️ No bridge AUDIO_DATA received recently', {
+              msSinceLast: last ? (now - last) : null,
+              lastAvg: window.__bridgeLastAudioAvg,
+              lastMax: window.__bridgeLastAudioMax,
+              hint: 'Parent should postMessage({type:"AUDIO_DATA", frequencyData|timeData}) continuously.'
+            });
+          }
+        } else {
+          // Data is flowing; optionally warn about near-silence.
+          const avg = window.__bridgeLastAudioAvg || 0;
+          const max = window.__bridgeLastAudioMax || 0;
+          if (max <= 2 && avg <= 0.5 && now - lastWarnAt > warnEveryMs) {
+            lastWarnAt = now;
+            console.warn('[Visualizer] ⚠️ Bridge AUDIO_DATA looks near-silent', {
+              lastAvg: avg,
+              lastMax: max,
+              hint: 'Check parent analyser wiring / gain / CORS / muted element.'
+            });
+          }
+        }
+      }, 750);
+    }
     
     // Create fake App.audioManager structure immediately
     window.App = {

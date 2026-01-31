@@ -22,8 +22,12 @@ class VideoSyncClient {
         // Optional behavior flags (kept on toggleButtonConfig for backwards compatibility)
         const config = toggleButtonConfig || null;
         this.autoConnect = config?.autoConnect !== undefined ? !!config.autoConnect : true;
-        this.pauseOnInit = config?.pauseOnInit !== undefined ? !!config.pauseOnInit : this.autoConnect;
-        this.enableWebAudio = config?.enableWebAudio !== undefined ? !!config.enableWebAudio : true;
+        // IMPORTANT: default to NOT pausing on init. In bridge/player setups, pausing the media
+        // element can stop analyser streaming to the visualizer.
+        this.pauseOnInit = config?.pauseOnInit !== undefined ? !!config.pauseOnInit : false;
+        // IMPORTANT: default to NOT creating a MediaElementSource. A media element can only be
+        // connected to one MediaElementSourceNode, so doing this here can break other analysers.
+        this.enableWebAudio = config?.enableWebAudio !== undefined ? !!config.enableWebAudio : false;
         
         // Loop prevention
         this.lastSeekCommandId = null;
