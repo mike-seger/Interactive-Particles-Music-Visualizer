@@ -40,6 +40,7 @@ import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visuali
 import { loadSpectrumFilters } from './spectrumFilters'
 import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
+import { VideoSyncClient } from './sync-client/SyncClient.mjs'
 import AudioManager from './managers/AudioManager'
 
 export default class App {
@@ -199,6 +200,7 @@ export default class App {
     const playPauseBtn = document.getElementById('play-pause-btn')
     const muteBtn = document.getElementById('mute-btn')
     const micBtn = document.getElementById('mic-btn')
+    const syncButton = document.getElementById('syncButton')
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
 
@@ -240,8 +242,72 @@ export default class App {
       scheduleIdle()
     }
 
+    const getSyncServerAddress = () => {
+      const params = new URLSearchParams(window.location.search || '')
+      return params.get('sync') || params.get('syncServer') || null
+    }
+
     // Make the overlay visible and interactive initially
     resetVisibility()
+
+    // Sync client toggle (optional)
+    if (syncButton && App.audioManager?.audio && !this.syncClient) {
+      const serverAddress = getSyncServerAddress() || 'localhost:5001'
+
+      const getMainWindowAssetUrl = (assetPath) => {
+        const normalized = assetPath.replace(/^\/+/, '')
+
+        const getBaseHref = () => {
+          // Prefer top window document base (same-origin only).
+          try {
+            const topBase = window.top?.document?.baseURI
+            if (topBase) return topBase
+          } catch (e) {
+            // Cross-origin iframe
+          }
+
+          // Next best: top window location (same-origin only)
+          try {
+            const topHref = window.top?.location?.href
+            if (topHref) return topHref
+          } catch (e) {
+            // Cross-origin iframe
+          }
+
+          // Fallbacks in the current frame
+          return document.baseURI || window.location.href
+        }
+
+        try {
+          return new URL(normalized, getBaseHref()).toString()
+        } catch (e) {
+          return normalized
+        }
+      }
+
+      // NOTE: AudioManager already uses WebAudio + createMediaElementSource(audio).
+      // Creating a second media element source in SyncClient can throw.
+      this.syncClient = new VideoSyncClient(App.audioManager.audio, null, serverAddress, {
+        container: syncButton,
+        svgUrl: getMainWindowAssetUrl('img/link.svg'),
+        size: 56,
+        colorConnected: '#cc0000',
+        colorDisconnected: '#ffffff',
+        colorUnavailable: '#a8b3c7',
+        autoConnect: false,
+        pauseOnInit: false,
+        enableWebAudio: false,
+        onBeforeToggle: () => {
+          // Ensure the visualizer's AudioContext is active when user toggles sync.
+          try {
+            App.audioManager?.audioContext?.resume?.()
+          } catch (e) {
+            // ignore
+          }
+          return true
+        },
+      })
+    }
 
     const updatePlayState = () => {
       if (!App.audioManager?.audio) return

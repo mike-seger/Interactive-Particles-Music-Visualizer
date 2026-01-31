@@ -13,10 +13,17 @@ class VideoSyncClient {
         this.toggleButtonConfig = toggleButtonConfig;
         this.socket = null;
         this.audioContext = null;
+        this.heartbeatInterval = null;
         this.masterTimeOffset = 0;
         this.isSynchronized = false;
         this.mediaReady = false;
         this.scheduledPlayTime = null;
+
+        // Optional behavior flags (kept on toggleButtonConfig for backwards compatibility)
+        const config = toggleButtonConfig || null;
+        this.autoConnect = config?.autoConnect !== undefined ? !!config.autoConnect : true;
+        this.pauseOnInit = config?.pauseOnInit !== undefined ? !!config.pauseOnInit : this.autoConnect;
+        this.enableWebAudio = config?.enableWebAudio !== undefined ? !!config.enableWebAudio : true;
         
         // Loop prevention
         this.lastSeekCommandId = null;
@@ -49,23 +56,30 @@ class VideoSyncClient {
             this.updateButtonState('disconnected');
         }
         
-        // Create Web Audio context for precise timing
-        try {
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            console.log('Audio context created');
-        } catch (error) {
-            console.warn('AudioContext creation failed:', error);
-            this.audioContext = null;
+        if (this.enableWebAudio) {
+            // Create Web Audio context for precise timing
+            try {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                console.log('Audio context created');
+            } catch (error) {
+                console.warn('AudioContext creation failed:', error);
+                this.audioContext = null;
+            }
+            
+            // Connect audio through Web Audio API
+            this.connectWebAudio();
         }
-        
-        // Connect audio through Web Audio API
-        this.connectWebAudio();
         
         // Start media ready detection immediately
         this.startMediaReadyDetection();
-        
-        // Connect to sync server
-        this.connectWebSocket();
+
+        // Connect to sync server (optional: allow UI to initiate connection)
+        if (this.autoConnect) {
+            this.connectWebSocket();
+        } else {
+            this.updateStatus('Disconnected');
+            this.updateButtonState('disconnected');
+        }
         
         // Setup media event listeners (including seek capture)
         this.setupMediaEvents();
@@ -187,11 +201,13 @@ class VideoSyncClient {
     
     startMediaReadyDetection() {
         console.log('Starting media ready detection...');
-        
-        // Pause immediately to prevent autoplay from interfering with sync
-        if (!this.video.paused) {
-            console.log('Pausing video to wait for sync');
-            this.video.pause();
+
+        if (this.pauseOnInit) {
+            // Pause immediately to prevent autoplay from interfering with sync
+            if (!this.video.paused) {
+                console.log('Pausing video to wait for sync');
+                this.video.pause();
+            }
             this.video.currentTime = 0;
         }
         
@@ -417,7 +433,10 @@ class VideoSyncClient {
             this.requestSync();
             
             // Start heartbeat
-            setInterval(() => {
+            if (this.heartbeatInterval) {
+                clearInterval(this.heartbeatInterval);
+            }
+            this.heartbeatInterval = setInterval(() => {
                 if (this.socket && this.socket.readyState === WebSocket.OPEN) {
                     this.socket.send(JSON.stringify({
                         type: 'heartbeat',
@@ -930,6 +949,10 @@ class VideoSyncClient {
         }
         if (this.mediaReadyCheckInterval) {
             clearInterval(this.mediaReadyCheckInterval);
+        }
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
         }
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.close();
