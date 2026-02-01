@@ -5,7 +5,13 @@
 #define R iResolution.xy
 #define ss(a,b,t) smoothstep(a,b,t)
 #define N normalize
+// Buffer A expects iChannel0 to be its previous frame (self-feedback).
+// Audio is sampled from iChannel3 (our runner provides audio as a fallback there).
 #define T(uv) texture(iChannel0, uv).r
+
+// Boost the input FFT amplitude so the effect is more visible.
+// Adjust this if your audio source is quiet.
+#define FFT_GAIN 5.0
 
 // Dave Hoskins https://www.shadertoy.com/view/4djSRW
 float hash11(float p)
@@ -72,8 +78,9 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     float rng = hash13(vec3(fragCoord, iFrame));
     
     // music
-    float fft = texture(iChannel1, vec2(abs(uv.x-.5)*2., 0.0)).r;
-    fft = min(.7, fft * 2.);
+    // Read FFT from the audio texture (row 0 is centered around y ~= 0.25)
+    float fft = texture(iChannel3, vec2(abs(uv.x-.5)*2., 0.25)).r;
+    fft = min(.7, fft * (2.0 * FFT_GAIN));
     fft += .1;
     
     // noise

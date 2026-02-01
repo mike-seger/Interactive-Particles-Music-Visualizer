@@ -1,41 +1,5 @@
 import * as THREE from 'three'
-import ReativeParticles from './entities/reactive-particles/ReactiveParticles'
-import FrequencyRings from './entities/frequency-rings/FrequencyRings'
-import PlasmaField from './entities/plasma/PlasmaField'
-import AudioParticles from './entities/audio-particles/AudioParticles'
-import Iris from './entities/iris/Iris'
-import CircularWave from './entities/circular-wave/CircularWave'
-import CircularAudioWave from './entities/circular-audio-wave/CircularAudioWave'
-import AudioFabric from './entities/audio-fabric/AudioFabric'
-import CircularSpectrum from './entities/circular-spectrum/CircularSpectrum'
-import SphereLines from './entities/sphere-lines/SphereLines'
-import AudibleSpiral from './entities/audible-spiral/AudibleSpiral'
-import Audible3dSpiral from './entities/audible-3d-spiral/Audible3dSpiral'
-import Audible3dSpiralLines from './entities/audible-3d-spiral-lines/Audible3dSpiralLines'
-import AudioMesh from './entities/audio-mesh/AudioMesh'
-import WaveformVisualizer from './entities/waveform-visualizer/WaveformVisualizer'
-import AnimatedBlob from './entities/animated-blob/AnimatedBlob'
-import WebGLBlob from './entities/webgl-blob/WebGLBlob'
-import Fluid from './entities/fluid/Fluid'
-import Water from './entities/water/Water'
-import KevsPlasma from './entities/kevs-plasma/KevsPlasma'
-import FrequencyBars from './entities/frequency-bars/FrequencyBars'
-import AudioOscilloscope from './entities/oscilloscope/Oscilloscope'
-import DeepParticles from './entities/deep-particles/DeepParticles'
-import DeepLights from './entities/deep-lights/DeepLights'
-import AudioSphere from './entities/audio-sphere/AudioSphere'
-import SimplePlasma from './entities/simple-plasma/SimplePlasma'
-import SparklingBoxes from './entities/sparkling-boxes/SparklingBoxes'
-import TubesCursor from './entities/tubes-cursor/TubesCursor'
-import RandomFlowers from './entities/random-flowers/RandomFlowers'
-import Fireworks from './entities/fireworks/Fireworks'
-import FireworksNight from './entities/fireworks-night/FireworksNight'
-import FireworksShader from './entities/fireworks-shader/FireworksShader'
-import ThreeDAudioVisualizer from './entities/3d-audio-visualizer/ThreeDAudioVisualizer'
-import FrequencyVisualization from './entities/frequency-visualization/FrequencyVisualization'
-import FrequencyVisualization2 from './entities/frequency-visualization2/FrequencyVisualization'
-import FrequencyVisualization3 from './entities/frequency-visualization3/FrequencyVisualization'
-import PulseWaves from './entities/pulse-waves/PulseWaves'
+import { ENTITY_VISUALIZER_NAMES, createEntityVisualizerByName } from './visualizers/entityRegistry'
 import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
 import { loadSpectrumFilters } from './spectrumFilters'
 import * as dat from 'dat.gui'
@@ -57,46 +21,7 @@ export default class App {
   // Visualizer management
   static currentVisualizer = null
   static visualizerType = 'Reactive Particles'
-  static visualizerList = [
-    'Animated Blob',
-    '3D Audio Visualizer',
-    'Audible Spiral',
-    'Audible 3d Spiral',
-    'Audible 3d Spiral Lines',
-    'Audio Fabric',
-    'Audio Mesh',
-    'Audio Particles',
-    'Audio Sphere',
-    'Circular Audio Wave',
-    'Circular Spectrum',
-    'Circular Wave',
-    'Deep Lights',
-    'Deep Particles',
-    'Fireworks',
-    'Fireworks Night',
-    'Fireworks Shader',
-    'Fluid',
-    'Frequency Bars',
-    'Frequency Visualization',
-    'Frequency Visualization 2',
-    'Frequency Visualization 3',
-    'Frequency Rings',
-    'Iris',
-    'Sparkling Boxes',
-    'Tubes Cursor',
-    'Kevs Plasma',
-    'Oscilloscope',
-    'Plasma Field',
-    'Pulse Waves',
-    'Reactive Particles',
-    'Random Flowers',
-    'Simple Plasma',
-    'Sphere Lines',
-    'Water',
-    'Waveform Visualizer',
-    'WebGL Blob',
-    ...SHADER_VISUALIZER_NAMES,
-  ]
+  static visualizerList = [...ENTITY_VISUALIZER_NAMES, ...SHADER_VISUALIZER_NAMES]
 
   constructor() {
     this.onClickBinder = () => this.init()
@@ -203,6 +128,19 @@ export default class App {
     const syncButton = document.getElementById('syncButton')
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
+    const fpsDisplay = document.getElementById('fps-display')
+
+    // Optional FPS counter (standalone UI only)
+    this.fpsDisplay = fpsDisplay || null
+    if (this.fpsDisplay && !this.fpsState) {
+      this.fpsState = {
+        prevFrameAt: 0,
+        sampleStartAt: 0,
+        frames: 0,
+        fpsEma: 0,
+      }
+      this.fpsDisplay.textContent = 'FPS: --'
+    }
 
     const rendererRoot = this.renderer?.domElement?.parentElement || document.querySelector('.content') || document.body
 
@@ -587,8 +525,10 @@ export default class App {
     this.renderer.setSize(this.width, this.height)
   }
 
-  update() {
-    requestAnimationFrame(() => this.update())
+  update(now) {
+    requestAnimationFrame((t) => this.update(t))
+
+    this.tickFpsCounter(Number.isFinite(now) ? now : performance.now())
 
     // Update visualizer with audio data
     const audioData = App.audioManager ? {
@@ -609,6 +549,34 @@ export default class App {
       this.renderer.render(this.scene, this.camera)
     }
   }
+
+  tickFpsCounter(now) {
+    if (!this.fpsDisplay || !this.fpsState) return
+
+    const state = this.fpsState
+    if (!state.sampleStartAt) {
+      state.sampleStartAt = now
+      state.prevFrameAt = now
+      state.frames = 0
+      return
+    }
+
+    state.frames += 1
+    const dtMs = now - state.prevFrameAt
+    state.prevFrameAt = now
+
+    const elapsedMs = now - state.sampleStartAt
+    if (elapsedMs < 500) return
+
+    const fps = (state.frames * 1000) / elapsedMs
+    state.fpsEma = state.fpsEma ? (state.fpsEma * 0.8 + fps * 0.2) : fps
+    state.frames = 0
+    state.sampleStartAt = now
+
+    const fpsText = Number.isFinite(state.fpsEma) ? state.fpsEma.toFixed(1) : '--'
+    const dtText = Number.isFinite(dtMs) ? dtMs.toFixed(1) : '--'
+    this.fpsDisplay.textContent = `FPS: ${fpsText} (${dtText}ms)`
+  }
   
   switchVisualizer(type, { notify = true } = {}) {
     // Normalize legacy/slugs to display names.
@@ -625,140 +593,33 @@ export default class App {
 
     // Reset camera/scene transforms to defaults so visualizers don't leak state
     this.resetView()
-    
+
     // Clear App.holder (Three.js scene objects)
     while (App.holder.children.length > 0) {
       App.holder.remove(App.holder.children[0])
     }
-    
+
     // Clear renderer
     this.renderer.clear()
-    
+
     // Create new visualizer
     const shaderVisualizer = createShaderVisualizerByName(type)
-    if (shaderVisualizer) {
-      App.currentVisualizer = shaderVisualizer
-    } else {
-      switch (type) {
-      case 'Reactive Particles':
-        App.currentVisualizer = new ReativeParticles()
-        break
-      case 'Audible Spiral':
-        App.currentVisualizer = new AudibleSpiral()
-        break
-      case 'Audible 3d Spiral':
-        App.currentVisualizer = new Audible3dSpiral()
-        break
-      case 'Audible 3d Spiral Lines':
-        App.currentVisualizer = new Audible3dSpiralLines()
-        break
-      case 'Frequency Rings':
-        App.currentVisualizer = new FrequencyRings()
-        break
-      case 'Plasma Field':
-        App.currentVisualizer = new PlasmaField()
-        break
-      case 'Audio Particles':
-        App.currentVisualizer = new AudioParticles()
-        break
-      case 'Iris':
-        App.currentVisualizer = new Iris()
-        break
-      case 'Circular Wave':
-        App.currentVisualizer = new CircularWave()
-        break
-      case 'Circular Audio Wave':
-        App.currentVisualizer = new CircularAudioWave()
-        break
-      case 'Audio Fabric':
-        App.currentVisualizer = new AudioFabric()
-        break
-      case 'Random Flowers':
-        App.currentVisualizer = new RandomFlowers()
-        break
-      case 'Circular Spectrum':
-        App.currentVisualizer = new CircularSpectrum()
-        break
-      case 'Sphere Lines':
-        App.currentVisualizer = new SphereLines()
-        break
-      case 'Audio Mesh':
-        App.currentVisualizer = new AudioMesh()
-        break
-      case 'Waveform Visualizer':
-        App.currentVisualizer = new WaveformVisualizer()
-        break
-      case 'Animated Blob':
-        App.currentVisualizer = new AnimatedBlob()
-        break
-      case '3D Audio Visualizer':
-        App.currentVisualizer = new ThreeDAudioVisualizer()
-        break
-      case 'WebGL Blob':
-        App.currentVisualizer = new WebGLBlob()
-        break
-      case 'Fluid':
-        App.currentVisualizer = new Fluid()
-        break
-      case 'Water':
-        App.currentVisualizer = new Water()
-        if (typeof App.currentVisualizer.setRenderer === 'function') {
-          App.currentVisualizer.setRenderer(this.renderer)
-        }
-        break
-      case 'Kevs Plasma':
-        App.currentVisualizer = new KevsPlasma()
-        break
-      case 'Frequency Bars':
-        App.currentVisualizer = new FrequencyBars()
-        break
-      case 'Frequency Visualization':
-        App.currentVisualizer = new FrequencyVisualization()
-        break
-      case 'Frequency Visualization 2':
-        App.currentVisualizer = new FrequencyVisualization2()
-        break
-      case 'Frequency Visualization 3':
-        App.currentVisualizer = new FrequencyVisualization3()
-        break
-      case 'Oscilloscope':
-        App.currentVisualizer = new AudioOscilloscope()
-        break
-      case 'Deep Particles':
-        App.currentVisualizer = new DeepParticles()
-        break
-      case 'Fireworks':
-        App.currentVisualizer = new Fireworks()
-        break
-      case 'Fireworks Night':
-        App.currentVisualizer = new FireworksNight()
-        break
-      case 'Fireworks Shader':
-        App.currentVisualizer = new FireworksShader()
-        break
-      case 'Deep Lights':
-        App.currentVisualizer = new DeepLights()
-        break
-      case 'Audio Sphere':
-        App.currentVisualizer = new AudioSphere()
-        break
-      case 'Sparkling Boxes':
-        App.currentVisualizer = new SparklingBoxes()
-        break
-      case 'Tubes Cursor':
-        App.currentVisualizer = new TubesCursor()
-        break
-      case 'Simple Plasma':
-        App.currentVisualizer = new SimplePlasma()
-        break
-      case 'Pulse Waves':
-        App.currentVisualizer = new PulseWaves()
-        break
-      default:
-        App.currentVisualizer = new ReativeParticles()
-      }
+    App.currentVisualizer = shaderVisualizer || createEntityVisualizerByName(type)
+
+    if (!App.currentVisualizer) {
+      const fallbackName = ENTITY_VISUALIZER_NAMES.includes('Reactive Particles')
+        ? 'Reactive Particles'
+        : ENTITY_VISUALIZER_NAMES[0]
+
+      App.currentVisualizer = (fallbackName ? createEntityVisualizerByName(fallbackName) : null)
+        || createShaderVisualizerByName(SHADER_VISUALIZER_NAMES[0])
     }
-    
+
+    if (!App.currentVisualizer) {
+      console.warn('No visualizers available to instantiate')
+      return
+    }
+
     App.currentVisualizer.init()
 
     if (type === 'Frequency Visualization 3') {

@@ -1064,6 +1064,7 @@ function createSyncClient(mediaElementId, statusElementIdOrHandler = null) {
 //         container: '#element-id' or DOMElement,
 //         svgUrl: './img/icon.svg',
 //         size: 40,
+//         iconScale: 0.62, // optional: scale SVG within button (0..1)
 //         colorConnected: '#cc0000',
 //         colorDisconnected: '#ffffff',
 //         colorUnavailable: '#a8b3c7',
