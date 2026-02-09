@@ -112,7 +112,7 @@ export default class SimpleParticles extends THREE.Object3D {
     const positions = this._positions
     const colors = this._colors
 
-    const audioLift = (bass * 2.0 + mid * 1.0 + treble * 0.5) * 4.0
+    const audioLift = (bass * 2.0 + mid * 1.0 + treble * 0.5) * 1.5
 
     for (let i = 0; i < particleCount; i++) {
       const baseRadius = orbits[i * 6]
@@ -135,10 +135,10 @@ export default class SimpleParticles extends THREE.Object3D {
       const radiusFraction = baseRadius / cloudRadius
       positions[i * 3 + 1] = Math.cos(phi) * radius + audioLift * radiusFraction * Math.sin(angle * 2.0)
 
-      const brightness = 0.35 + (bass + mid + treble) * 0.5
-      colors[i * 3] = brightness * 0.7
-      colors[i * 3 + 1] = brightness * 0.8
-      colors[i * 3 + 2] = brightness * 1.0
+      const brightness = 0.4 + (bass + mid + treble) * 0.5
+      colors[i * 3] = brightness * 0.51      // R - steelblue: 70/255
+      colors[i * 3 + 1] = brightness * 0.7  // G - steelblue: 130/255
+      colors[i * 3 + 2] = brightness * 1.0   // B - steelblue: 180/255
     }
 
     this._geometry.getAttribute('position').needsUpdate = true
