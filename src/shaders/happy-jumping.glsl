@@ -78,7 +78,7 @@ vec4 opU( vec4 d1, vec4 d2 )
 
 //------------------------------------------------------------------
 
-#define ZERO (min(iFrame,0))
+#define ZERO 0
 
 //------------------------------------------------------------------
 
@@ -112,7 +112,7 @@ vec4 map( in vec3 pos, float atime )
     float rot = -0.25*(-1.0 + 2.0*t4);
     float rc = cos(rot);
     float rs = sin(rot);
-    q.xy = mat2x2(rc,rs,-rs,rc)*q.xy;
+    q.xy = mat2(rc,rs,-rs,rc)*q.xy;
     vec3 r = q;
 	href = q.y;
     q.yz = vec2( dot(uu,q.yz), dot(vv,q.yz) );
@@ -164,7 +164,7 @@ vec4 map( in vec3 pos, float atime )
     vec3 h = r;
     float hr = sin(0.791*atime);
     hr = 0.7*sign(hr)*smoothstep(0.5,0.7,abs(hr));
-    h.xz = mat2x2(cos(hr),sin(hr),-sin(hr),cos(hr))*h.xz;
+    h.xz = mat2(cos(hr),sin(hr),-sin(hr),cos(hr))*h.xz;
     vec3 hq = vec3( abs(h.x), h.yz );
    	float d  = sdEllipsoid( h-vec3(0.0,0.20,0.02), vec3(0.08,0.2,0.15) );
 	float d2 = sdSphere( h-vec3(0.0,0.21,-0.1), 0.2 );
@@ -215,7 +215,7 @@ vec4 map( in vec3 pos, float atime )
     res.x = smin( res.x, eyeball, 0.03 );
     
     vec3 cq = hq-vec3(0.1,0.34,0.08);
-    cq.xy = mat2x2(0.8,0.6,-0.6,0.8)*cq.xy;
+    cq.xy = mat2(0.8,0.6,-0.6,0.8)*cq.xy;
     d = sdEllipsoid( cq, vec3(0.06,0.03,0.03) );
     res.x = smin( res.x, d, 0.03 );
 
@@ -258,8 +258,9 @@ vec4 raycast( in vec3 ro, in vec3 rd, float time )
     
     // raymarch scene
     float t = tmin;
-    for( int i=0; i<256 && t<tmax; i++ )
+    for( int i=0; i<256; i++ )
     {
+        if( t>=tmax ) break;
         vec4 h = map( ro+rd*t, time );
         if( abs(h.x)<(0.0005*t) )
         { 
@@ -289,7 +290,8 @@ float calcSoftshadow( in vec3 ro, in vec3 rd, float time )
 		float h = map( ro + rd*t, time ).x;
         res = min( res, mix(1.0,16.0*h/t, hsha) );
         t += clamp( h, 0.05, 0.40 );
-        if( res<0.005 || t>tmax ) break;
+        if( res<0.005 ) break;
+        if( t>tmax ) break;
     }
     return clamp( res, 0.0, 1.0 );
 }
@@ -305,14 +307,11 @@ vec3 calcNormal( in vec3 pos, float time )
 					  e.yxy*map( pos + e.yxy, time ).x + 
 					  e.xxx*map( pos + e.xxx, time ).x );
 #else
-    // inspired by tdhooper and klems - a way to prevent the compiler from inlining map() 4 times
-    vec3 n = vec3(0.0);
-    for( int i=ZERO; i<4; i++ )
-    {
-        vec3 e = 0.5773*(2.0*vec3((((i+3)>>1)&1),((i>>1)&1),(i&1))-1.0);
-        n += e*map(pos+0.001*e,time).x;
-    }
-    return normalize(n);
+    vec2 e = vec2(1.0,-1.0)*0.5773*0.001;
+    return normalize( e.xyy*map( pos + e.xyy, time ).x + 
+                      e.yyx*map( pos + e.yyx, time ).x + 
+                      e.yxy*map( pos + e.yxy, time ).x + 
+                      e.xxx*map( pos + e.xxx, time ).x );
 #endif    
 }
 
@@ -320,7 +319,7 @@ float calcOcclusion( in vec3 pos, in vec3 nor, float time )
 {
 	float occ = 0.0;
     float sca = 1.0;
-    for( int i=ZERO; i<5; i++ )
+    for( int i=0; i<5; i++ )
     {
         float h = 0.01 + 0.11*float(i)/4.0;
         vec3 opos = pos + h*nor;
@@ -440,21 +439,9 @@ mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
 void mainImage( out vec4 fragColor, in vec2 fragCoord )
 {
     vec3 tot = vec3(0.0);
-#if AA>1
-    for( int m=ZERO; m<AA; m++ )
-    for( int n=ZERO; n<AA; n++ )
     {
-        // pixel coordinates
-        vec2 o = vec2(float(m),float(n)) / float(AA) - 0.5;
-        vec2 p = (-iResolution.xy + 2.0*(fragCoord+o))/iResolution.y;
-        // time coordinate (motion blurred, shutter=0.5)
-        // see https://www.shadertoy.com/view/4sBGD1
-        float d = 0.5+0.5*sin(fragCoord.x*147.0)*sin(fragCoord.y*131.0);
-        float time = iTime - 0.5*(1.0/24.0)*(float(m*AA+n)+d)/float(AA*AA);
-#else    
         vec2 p = (-iResolution.xy + 2.0*fragCoord)/iResolution.y;
         float time = iTime;
-#endif
         time += -2.6;
         time *= 0.9;
         
@@ -491,10 +478,7 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
         col = pow( col, vec3(0.4545) );
 
         tot += col;
-#if AA>1
     }
-    tot /= float(AA*AA);
-#endif
 
     // s-surve    
     tot = clamp(tot,0.0,1.0);
