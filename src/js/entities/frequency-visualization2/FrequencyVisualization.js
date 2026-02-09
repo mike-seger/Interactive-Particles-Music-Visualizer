@@ -428,9 +428,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
     // This visualizer relies on crisp pixel-scale geometry; if auto-quality
     // drops pixelRatio too low, bars/gaps become comically thick.
-    this.qualityConstraints = {
-      minPixelRatio: (Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio >= 2) ? 0.75 : 1,
-    }
+    this.qualityConstraints = { minPixelRatio: 1 }
 
     this._mesh = null
     this._mat = null

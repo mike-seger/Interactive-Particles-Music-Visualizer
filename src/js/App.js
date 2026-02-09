@@ -195,6 +195,24 @@ export default class App {
     this.qualityWindow = { frames: 0, sumDt: 0, maxDt: 0 }
   }
 
+  _snapPixelRatio(value, { min = 0.25, max = 2 } = {}) {
+    const v = Number.isFinite(value) ? value : 1
+    const allowed = [0.25, 0.5, 1, 2]
+    const candidates = allowed.filter((r) => r >= min - 1e-6 && r <= max + 1e-6)
+    if (candidates.length === 0) return Math.max(min, Math.min(max, v))
+    let best = candidates[0]
+    let bestErr = Math.abs(v - best)
+    for (let i = 1; i < candidates.length; i += 1) {
+      const r = candidates[i]
+      const err = Math.abs(v - r)
+      if (err < bestErr) {
+        bestErr = err
+        best = r
+      }
+    }
+    return best
+  }
+
   getStoredPlaybackPosition() {
     try {
       const value = window.localStorage.getItem(this.storageKeys.playbackPosition)
@@ -678,9 +696,10 @@ export default class App {
 
       if (!hasPixelRatioOverride) {
         const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
-        const cap = deviceDpr >= 2 ? 0.75 : 1
-        this.debugPixelRatio = Math.min(deviceDpr, cap)
-        qualityReason = `auto(dpr=${deviceDpr} cap=${cap})`
+        const cap = deviceDpr >= 2 ? 1 : 1
+        const seeded = Math.min(deviceDpr, cap)
+        this.debugPixelRatio = this._snapPixelRatio(seeded, { min: 0.25, max: deviceDpr })
+        qualityReason = `auto(dpr=${deviceDpr} seed=${seeded} snap=${this.debugPixelRatio})`
       } else {
         qualityReason = autoQualityDynamicOverride === true ? 'auto(with pixelRatio seed)' : 'auto(with pixelRatio override)'
       }
@@ -1587,7 +1606,8 @@ export default class App {
       }
 
       const nextRatioRaw = currentRatio * factor
-      const nextRatio = Math.max(minRatio, Math.min(maxRatio, nextRatioRaw))
+      const clamped = Math.max(minRatio, Math.min(maxRatio, nextRatioRaw))
+      const nextRatio = this._snapPixelRatio(clamped, { min: minRatio, max: maxRatio })
       const delta = Math.abs(nextRatio - currentRatio)
 
       const minDelta = Math.max(0.005, currentRatio * 0.02)
