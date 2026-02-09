@@ -256,4 +256,10 @@ html:not(.icons-ready) #player-controls button {
     width: 100%;
     margin: 0;
   }
+
+  /* Base styling; sizing is handled in JS based on label */
+  .close-button {
+    box-sizing: border-box;
+    max-width: 100%;
+  }
 }

@@ -913,8 +913,6 @@ export default class App {
     if (!noDefaults) {
       const injected = new Set()
       const defaults = {
-        perf: '1',
-        gpuInfo: '1',
         // Baseline defaults (can be overridden by URL params or per-visualizer overrides).
         // Note: we still treat injected defaults as "soft" (not hard user overrides).
         dpr: String(globalDefaults.pixelRatio ?? 2),
@@ -953,6 +951,8 @@ export default class App {
       isTruthyParam(urlParams, 'perf') ||
       isTruthyParam(urlParams, 'debugPerf') ||
       isTruthyParam(urlParams, 'debugperf')
+
+    const qualityLogsEnabled = wantsPerf
 
     // Extra debug toggles useful for isolating rAF pacing vs GPU-bound rendering.
     // - `&skipRender=1` (or `&render=0`) bypasses `renderer.render`.
@@ -1110,11 +1110,13 @@ export default class App {
 
           this.quality.refreshHz = snapped
           this.quality.targetFps = snapped
-          console.log('[Quality] refresh probe', {
-            medianDtMs: Number(mid.toFixed(2)),
-            measuredHz: Number(hz.toFixed(1)),
-            snappedHz: snapped,
-          })
+          if (qualityLogsEnabled) {
+            console.log('[Quality] refresh probe', {
+              medianDtMs: Number(mid.toFixed(2)),
+              measuredHz: Number(hz.toFixed(1)),
+              snappedHz: snapped,
+            })
+          }
         }
 
         requestAnimationFrame(step)
@@ -1127,21 +1129,23 @@ export default class App {
 
     try {
       const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : null
-      console.log('[Quality]', {
-        autoQuality: this.autoQualityEnabled,
-        dynamic: this.autoQualityDynamic,
-        dynamicRequested: this.autoQualityDynamicRequested,
-        reason: qualityReason,
-        defaultsInjected: Array.isArray(this._injectedDefaultParams ? Array.from(this._injectedDefaultParams) : null)
-          ? Array.from(this._injectedDefaultParams)
-          : null,
-        deviceDpr,
-        pixelRatio: this.debugPixelRatio,
-        antialias: this.debugAntialias,
-        pixelRatioOverridden: hasPixelRatioOverride,
-        pixelRatioLocked: this.pixelRatioLocked,
-        antialiasOverridden: hasAaOverride,
-      })
+      if (qualityLogsEnabled) {
+        console.log('[Quality]', {
+          autoQuality: this.autoQualityEnabled,
+          dynamic: this.autoQualityDynamic,
+          dynamicRequested: this.autoQualityDynamicRequested,
+          reason: qualityReason,
+          defaultsInjected: Array.isArray(this._injectedDefaultParams ? Array.from(this._injectedDefaultParams) : null)
+            ? Array.from(this._injectedDefaultParams)
+            : null,
+          deviceDpr,
+          pixelRatio: this.debugPixelRatio,
+          antialias: this.debugAntialias,
+          pixelRatioOverridden: hasPixelRatioOverride,
+          pixelRatioLocked: this.pixelRatioLocked,
+          antialiasOverridden: hasAaOverride,
+        })
+      }
     } catch (e) {
       // ignore
     }
@@ -1162,6 +1166,7 @@ export default class App {
       }
     }
     this.perfEnabled = wantsPerf
+    this.qualityLogsEnabled = qualityLogsEnabled
     if (this.perfEnabled) {
       this.perfState = {
         visualizerUpdateMs: 0,
@@ -1272,7 +1277,7 @@ export default class App {
       try {
         const clamped = Math.max(0.25, Math.min(4, this.debugPixelRatio))
         this.renderer.setPixelRatio(clamped)
-        console.log('[Perf] pixelRatio override:', clamped)
+        if (this.perfEnabled) console.log('[Perf] pixelRatio override:', clamped)
 
         // Keep quality bounds in sync with an explicitly set starting ratio.
         if (this.quality) {
@@ -1374,9 +1379,18 @@ export default class App {
       guiContainer.style.maxWidth = 'calc(100vw - 24px)'
       guiContainer.style.boxSizing = 'border-box'
 
-      // Also set on the root in case autoPlace behavior differs.
-      guiRoot.style.position = 'relative'
+      // Also set on the root (more robust than relying on the wrapper).
+      // This ensures the GUI (including the collapsed "Open Controls" button)
+      // remains pinned to the top-right gutter.
+      guiRoot.style.position = 'fixed'
+      guiRoot.style.right = '12px'
+      guiRoot.style.left = 'auto'
+      guiRoot.style.top = '12px'
       guiRoot.style.zIndex = '2500'
+      guiRoot.style.pointerEvents = 'auto'
+      // Neutralize dat.GUI's auto-place float/margin so right alignment is exact.
+      guiRoot.style.float = 'none'
+      guiRoot.style.marginRight = '0'
     }
 
     this.createManagers()
@@ -1826,17 +1840,19 @@ export default class App {
       if (!this.quality.lastStatusAt || (nowMs - this.quality.lastStatusAt) >= 5000) {
         this.quality.lastStatusAt = nowMs
         const cur = this.renderer.getPixelRatio?.() || 1
-        console.log('[Quality] status', {
-          targetFps: this.quality.targetFps,
-          refreshHz: this.quality.refreshHz,
-          pixelRatio: Number(cur.toFixed(3)),
-          minPixelRatio: this.quality.minPixelRatio,
-          maxPixelRatio: this.quality.maxPixelRatio,
-          settled: !!this.quality.settled,
-          rafEmaDtMs: Number.isFinite(this.quality.rafEmaDtMs) ? Number(this.quality.rafEmaDtMs.toFixed(2)) : null,
-          gpuEmaMs: Number.isFinite(this.quality.gpuEmaMs) ? Number(this.quality.gpuEmaMs.toFixed(2)) : null,
-          metric: this.quality.lastMetric,
-        })
+        if (this.qualityLogsEnabled) {
+          console.log('[Quality] status', {
+            targetFps: this.quality.targetFps,
+            refreshHz: this.quality.refreshHz,
+            pixelRatio: Number(cur.toFixed(3)),
+            minPixelRatio: this.quality.minPixelRatio,
+            maxPixelRatio: this.quality.maxPixelRatio,
+            settled: !!this.quality.settled,
+            rafEmaDtMs: Number.isFinite(this.quality.rafEmaDtMs) ? Number(this.quality.rafEmaDtMs.toFixed(2)) : null,
+            gpuEmaMs: Number.isFinite(this.quality.gpuEmaMs) ? Number(this.quality.gpuEmaMs.toFixed(2)) : null,
+            metric: this.quality.lastMetric,
+          })
+        }
       }
 
       const targetFps = Math.max(10, Math.min(240, this.quality.targetFps || 60))
@@ -1941,13 +1957,15 @@ export default class App {
             this.qualityWindow.sumDt = 0
             this.qualityWindow.maxDt = 0
           }
-          console.log('[Quality] adjust', {
-            targetFps,
-            targetFrameMs: Number(targetFrameMs.toFixed(2)),
-            action: 'disableAA',
-            basis,
-            metric: Number(rafMetric.toFixed(2)),
-          })
+          if (this.qualityLogsEnabled) {
+            console.log('[Quality] adjust', {
+              targetFps,
+              targetFrameMs: Number(targetFrameMs.toFixed(2)),
+              action: 'disableAA',
+              basis,
+              metric: Number(rafMetric.toFixed(2)),
+            })
+          }
           return
         }
       }
@@ -2029,14 +2047,16 @@ export default class App {
       this._persistAutoQualityForCurrentVisualizer()
       this._syncPerformanceQualityControls(App.visualizerType)
 
-      console.log('[Quality] adjust', {
-        targetFps,
-        targetFrameMs: Number(targetFrameMs.toFixed(2)),
-        from: Number(currentRatio.toFixed(3)),
-        to: Number(nextRatio.toFixed(3)),
-        basis,
-        metric: metric != null ? Number(metric.toFixed(2)) : null,
-      })
+      if (this.qualityLogsEnabled) {
+        console.log('[Quality] adjust', {
+          targetFps,
+          targetFrameMs: Number(targetFrameMs.toFixed(2)),
+          from: Number(currentRatio.toFixed(3)),
+          to: Number(nextRatio.toFixed(3)),
+          basis,
+          metric: metric != null ? Number(metric.toFixed(2)) : null,
+        })
+      }
     } catch (e) {
       // ignore
     }
@@ -2454,15 +2474,61 @@ export default class App {
       guiContainer.style.maxWidth = 'calc(100vw - 24px)'
       guiContainer.style.boxSizing = 'border-box'
 
-      // dat.GUI renders the toggle button (`Close Controls`) as a sibling of
-      // the root panel element. Ensure it matches the panel width.
+      // dat.GUI renders the toggle button (`Open/Close Controls`) as a sibling of
+      // the root panel element. When closed it shows `Open Controls` and should
+      // size-to-label; when open it shows `Close Controls` and should match panel width.
       const closeBtn = guiContainer.querySelector?.('.close-button')
       if (closeBtn && closeBtn.style) {
-        closeBtn.style.width = `${desiredGuiWidth}px`
-        closeBtn.style.maxWidth = '100%'
-        closeBtn.style.boxSizing = 'border-box'
-        closeBtn.style.margin = '0'
-        closeBtn.style.display = 'block'
+        const syncCloseBtnSizing = () => {
+          try {
+            const label = (closeBtn.textContent || '').trim()
+            const isOpenControls = label.toLowerCase() === 'open controls'
+
+            closeBtn.style.maxWidth = '100%'
+            closeBtn.style.boxSizing = 'border-box'
+
+            if (isOpenControls) {
+              closeBtn.style.width = 'fit-content'
+              // Right-align to the panel border.
+              // (margin-left:auto won't work if dat.GUI toggles absolute positioning.)
+              closeBtn.style.display = 'block'
+              closeBtn.style.position = 'relative'
+              closeBtn.style.float = 'right'
+              closeBtn.style.left = 'auto'
+              closeBtn.style.right = '0'
+              closeBtn.style.marginLeft = '0'
+              closeBtn.style.marginRight = '0'
+              // Only add horizontal padding for the small "Open Controls" pill.
+              closeBtn.style.paddingLeft = '12px'
+              closeBtn.style.paddingRight = '12px'
+            } else {
+              closeBtn.style.width = '100%'
+              closeBtn.style.display = 'block'
+              // Restore any overrides so the default dat.GUI spacing applies.
+              closeBtn.style.paddingLeft = ''
+              closeBtn.style.paddingRight = ''
+              closeBtn.style.position = ''
+              closeBtn.style.float = ''
+              closeBtn.style.left = ''
+              closeBtn.style.right = ''
+              closeBtn.style.marginLeft = ''
+              closeBtn.style.marginRight = ''
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        // Update now (based on current label).
+        syncCloseBtnSizing()
+
+        // Update after toggles too.
+        if (!closeBtn.dataset?.closeSizingBound) {
+          closeBtn.dataset.closeSizingBound = '1'
+          closeBtn.addEventListener('click', () => {
+            window.setTimeout(syncCloseBtnSizing, 0)
+          })
+        }
       }
     } catch (e) {
       // ignore
