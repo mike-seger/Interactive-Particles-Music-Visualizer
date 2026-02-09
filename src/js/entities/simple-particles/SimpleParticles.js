@@ -8,7 +8,7 @@ export default class SimpleParticles extends THREE.Object3D {
 
     this.params = {
       particleCount: 3000,
-      cloudRadius: 18,
+      cloudRadius: 31,
       size: 0.5,
       orbitSpeed: 0.15,
     }
@@ -30,19 +30,22 @@ export default class SimpleParticles extends THREE.Object3D {
     const { particleCount, cloudRadius, size } = this.params
     const positions = new Float32Array(particleCount * 3)
     const colors = new Float32Array(particleCount * 3)
-    const orbits = new Float32Array(particleCount * 5)
+    const orbits = new Float32Array(particleCount * 6)
 
     for (let i = 0; i < particleCount; i++) {
-      const radius = Math.pow(Math.random(), 0.4) * cloudRadius
+      const minRadius = cloudRadius * 0.3
+      const radius = minRadius + Math.pow(Math.random(), 0.4) * (cloudRadius - minRadius)
       const theta = Math.random() * Math.PI * 2
       const phi = Math.acos(2 * Math.random() - 1)
       const speedMul = 0.5 + Math.random() * 1.0
+      const radialPhase = Math.random() * Math.PI * 2  // random phase for radial oscillation
 
-      orbits[i * 5] = radius
-      orbits[i * 5 + 1] = theta
-      orbits[i * 5 + 2] = phi
-      orbits[i * 5 + 3] = speedMul
-      orbits[i * 5 + 4] = Math.cos(phi) * radius  // baseY
+      orbits[i * 6] = radius
+      orbits[i * 6 + 1] = theta
+      orbits[i * 6 + 2] = phi
+      orbits[i * 6 + 3] = speedMul
+      orbits[i * 6 + 4] = Math.cos(phi) * radius  // baseY
+      orbits[i * 6 + 5] = radialPhase
 
       positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
       positions[i * 3 + 1] = Math.cos(phi) * radius
@@ -92,7 +95,7 @@ export default class SimpleParticles extends THREE.Object3D {
     this.add(points)
     points.position.set(0, 0, 0)
 
-    App.camera.position.set(0, 0, 45)
+    App.camera.position.set(0, 0, 28)
     App.camera.lookAt(0, 0, 0)
   }
 
@@ -112,21 +115,25 @@ export default class SimpleParticles extends THREE.Object3D {
     const audioLift = (bass * 2.0 + mid * 1.0 + treble * 0.5) * 4.0
 
     for (let i = 0; i < particleCount; i++) {
-      const radius = orbits[i * 5]
-      const baseAngle = orbits[i * 5 + 1]
-      const phi = orbits[i * 5 + 2]
-      const speedMul = orbits[i * 5 + 3]
-      const baseY = orbits[i * 5 + 4]
+      const baseRadius = orbits[i * 6]
+      const baseAngle = orbits[i * 6 + 1]
+      const phi = orbits[i * 6 + 2]
+      const speedMul = orbits[i * 6 + 3]
+      const baseY = orbits[i * 6 + 4]
+      const radialPhase = orbits[i * 6 + 5]
 
       const angle = baseAngle + t * orbitSpeed * speedMul
+
+      // Radial oscillation: +/-20% of base radius, each particle has its own phase
+      const radius = baseRadius * (1.0 + 0.5 * Math.sin(t * 0.5 + radialPhase))
 
       // Orbit on a tilted plane based on phi — preserves spherical shape
       const sinPhi = Math.sin(phi)
       positions[i * 3] = Math.cos(angle) * sinPhi * radius
       positions[i * 3 + 2] = Math.sin(angle) * sinPhi * radius
 
-      const radiusFraction = radius / cloudRadius
-      positions[i * 3 + 1] = baseY + audioLift * radiusFraction * Math.sin(angle * 2.0)
+      const radiusFraction = baseRadius / cloudRadius
+      positions[i * 3 + 1] = Math.cos(phi) * radius + audioLift * radiusFraction * Math.sin(angle * 2.0)
 
       const brightness = 0.35 + (bass + mid + treble) * 0.5
       colors[i * 3] = brightness * 0.7
