@@ -1439,6 +1439,16 @@ export default class App {
       const v = App.currentVisualizer
       if (v?.rendersSelf) return
 
+      const getVisualizerQualityConstraints = () => {
+        try {
+          if (!v) return null
+          if (typeof v.getQualityConstraints === 'function') return v.getQualityConstraints() || null
+          return v.qualityConstraints || null
+        } catch {
+          return null
+        }
+      }
+
       const nowMs = Number.isFinite(frameNow) ? frameNow : performance.now()
 
       // Periodic status log (helps confirm the loop is running).
@@ -1498,8 +1508,11 @@ export default class App {
       }
 
       const currentRatio = this.renderer.getPixelRatio?.() || 1
-      const minRatio = this.quality.minPixelRatio
-      const maxRatio = this.quality.maxPixelRatio
+      const constraints = getVisualizerQualityConstraints()
+      const constraintMin = Number.isFinite(constraints?.minPixelRatio) ? constraints.minPixelRatio : null
+      const constraintMax = Number.isFinite(constraints?.maxPixelRatio) ? constraints.maxPixelRatio : null
+      const minRatio = Math.max(this.quality.minPixelRatio, constraintMin != null ? constraintMin : this.quality.minPixelRatio)
+      const maxRatio = Math.min(this.quality.maxPixelRatio, constraintMax != null ? constraintMax : this.quality.maxPixelRatio)
 
       // Use rAF cadence (frame pacing) to decide when to degrade.
       // GPU timer queries can be noisy and are not required for the 80% policy.

@@ -270,9 +270,12 @@ vec3 renderAt(vec2 fragCoord) {
       float binIdx = floor(xLocal / pitch);
       float localX = xLocal - binIdx * pitch;
 
-      // Double the gap size: (1.0 - fill) * 2.0 * 0.5 = (1.0 - fill)
-      float pad = max(1.0, floor(pitch * (1.0 - fill)));
-      float barW = max(1.0, (pitch - 2.0 * pad));
+      // Compute an integer bar width from the fill ratio and use the leftover
+      // pixels as a uniform gap. This keeps bar widths and gaps consistent.
+      float barW = max(1.0, floor(pitch * fill));
+      barW = min(barW, pitch);
+      float gap = max(0.0, pitch - barW);
+      float padL = floor(gap * 0.5);
 
       float x = (binIdx + 0.5) / bins;
       float uStart = skip / max(1.0, binsAll);
@@ -298,14 +301,14 @@ vec3 renderAt(vec2 fragCoord) {
       else if (binIdx < 1.5) s *= 0.66;
 
       float heightPx = floor((maxH * heightScale) * s);
-      // Allow near-silent bins to stay thin instead of enforcing full bar width
-      float minHPx = max(1.0, barW * 0.35);
+      // Silence baseline thickness: keep it ~2px.
+      float minHPx = 2.0;
       heightPx = max(heightPx, minHPx);
 
       float yLocalUp = fc.y - baseY;
       float yLocalDown = baseY - fc.y;
 
-      float cx = (localX - pitch * 0.5);
+      float cx = (localX - (padL + barW * 0.5));
       float cyUp = (yLocalUp - heightPx * 0.5);
       float cyDn = (yLocalDown - heightPx * 0.5);
 
@@ -328,9 +331,9 @@ vec3 renderAt(vec2 fragCoord) {
       // Mirror extension for reflection so they meet flat at the baseline
       float distDn = sdRoundBox(vec2(cx, cyDnExt) + distort, halfSizeExt, radius);
 
-      // Wide smoothstep for optical defocus/scattering
-      // Stack blur simulation (radius 7)
-      float blurAmt = 7.0; 
+      // Wide smoothstep for optical defocus/scattering.
+      // Keep very small bars crisp so silence doesn't look like a thick baseline.
+      float blurAmt = min(7.0, max(1.0, floor(heightPx * 0.5)));
       float fillUp = smoothstep(blurAmt, -blurAmt, distUp);
       
       // Mask the extended bottom part below the baseline
@@ -340,7 +343,7 @@ vec3 renderAt(vec2 fragCoord) {
       // Boost alpha curve to maintain core brightness despite heavy blur
       fillUp = pow(fillUp, 0.7);
 
-      float aaRefl = 7.0;
+      float aaRefl = blurAmt;
       float fillDn = smoothstep(aaRefl, -aaRefl, distDn);
       
       // Mask extended reflection part bleeding into sky
@@ -410,6 +413,12 @@ export default class FrequencyVisualization extends THREE.Object3D {
   constructor() {
     super()
     this.name = 'Frequency Visualization'
+
+    // This visualizer relies on crisp pixel-scale geometry; if auto-quality
+    // drops pixelRatio too low, bars/gaps become comically thick.
+    this.qualityConstraints = {
+      minPixelRatio: (Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio >= 2) ? 0.75 : 1,
+    }
 
     this._mesh = null
     this._mat = null
