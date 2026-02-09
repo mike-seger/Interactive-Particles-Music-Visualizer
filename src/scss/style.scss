@@ -235,3 +235,25 @@ html:not(.icons-ready) #player-controls button {
   color: rgba(255, 255, 255, 0.8);
   text-align: center;
 }
+
+/* dat.GUI (visualizer dropdown) layout fixes */
+.dg {
+  /* Remove the small left indent so the rows are flush */
+  ul,
+  li,
+  .cr,
+  .cr .c,
+  .cr .property-name {
+    margin-left: 0;
+    padding-left: 0;
+    box-sizing: border-box;
+  }
+
+  /* Keep selects aligned and let the panel width be controlled by JS measurement */
+  select {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    margin: 0;
+  }
+}

@@ -26,7 +26,6 @@ precision highp float;
 varying vec2 vUv;
 
 uniform vec3 iResolution;
-uniform float uPixelRatio;
 uniform float iTime;
 uniform sampler2D iChannel0;
 
@@ -161,9 +160,8 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 }
 
 vec3 renderAt(vec2 fragCoord) {
-  // Use continuous coordinates so changing internal render resolution (pixelRatio)
-  // doesn't create uneven stepping artifacts.
-  vec2 fc = fragCoord;
+  // Use pixel coordinates for perfectly regular tiles.
+  vec2 fc = floor(fragCoord);
   vec2 uv = fc.xy / iResolution.xy;
   vec3 col = vec3(0.0);
   
@@ -404,8 +402,7 @@ vec3 renderAt(vec2 fragCoord) {
 }
 
 void main() {
-  vec2 fragCoord = gl_FragCoord.xy / max(0.001, uPixelRatio);
-  gl_FragColor = vec4(renderAt(fragCoord), 1.0);
+  gl_FragColor = vec4(renderAt(gl_FragCoord.xy), 1.0);
 }
 `
 
@@ -487,7 +484,6 @@ export default class FrequencyVisualization extends THREE.Object3D {
       fragmentShader: FRAG,
       uniforms: {
         iResolution: { value: new THREE.Vector3(1, 1, 1) },
-        uPixelRatio: { value: 1 },
         iTime: { value: 0 },
         iChannel0: { value: this._audioTex },
         uVBars: { value: this._vBars },
@@ -748,11 +744,32 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
   _syncResolution() {
     if (!this._mat) return
-    const pr = App.renderer?.getPixelRatio?.() || 1
-    const w = Math.max(1, window.innerWidth || 1)
-    const h = Math.max(1, window.innerHeight || 1)
+
+    // IMPORTANT: This shader uses `gl_FragCoord` (drawing-buffer pixels), so
+    // `iResolution` must also be in drawing-buffer pixels. If we feed it CSS
+    // pixels (`window.innerWidth/Height`) while the renderer uses a non-1
+    // pixelRatio, the image will shrink/shift into the corner.
+    let w = Math.max(1, window.innerWidth || 1)
+    let h = Math.max(1, window.innerHeight || 1)
+    try {
+      const r = App.renderer
+      if (r && typeof r.getDrawingBufferSize === 'function') {
+        const v = new THREE.Vector2()
+        r.getDrawingBufferSize(v)
+        if (Number.isFinite(v.x) && v.x > 0) w = Math.floor(v.x)
+        if (Number.isFinite(v.y) && v.y > 0) h = Math.floor(v.y)
+      } else if (r && typeof r.getPixelRatio === 'function') {
+        const pr = r.getPixelRatio() || 1
+        if (Number.isFinite(pr) && pr > 0) {
+          w = Math.floor(w * pr)
+          h = Math.floor(h * pr)
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     this._mat.uniforms.iResolution.value.set(w, h, 1)
-    if (this._mat.uniforms.uPixelRatio) this._mat.uniforms.uPixelRatio.value = pr
 
     // Keep bar pixel pitch stable on resize.
     if (this._analyser) {
@@ -760,12 +777,12 @@ export default class FrequencyVisualization extends THREE.Object3D {
     }
   }
 
-  // Called by App when renderer pixelRatio changes (dynamic quality).
-  // Keep this minimal to avoid visual hiccups.
   onPixelRatioChange() {
-    if (!this._mat) return
-    const pr = App.renderer?.getPixelRatio?.() || 1
-    if (this._mat.uniforms.uPixelRatio) this._mat.uniforms.uPixelRatio.value = pr
+    this._syncResolution()
+  }
+
+  onRendererRecreated() {
+    this._syncResolution()
   }
 
   destroy() {

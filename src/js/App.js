@@ -573,17 +573,26 @@ export default class App {
       String(urlParams.get('defaults') || '').trim() === '0'
 
     if (!noDefaults) {
+      const injected = new Set()
       const defaults = {
         perf: '1',
         gpuInfo: '1',
         dpr: '0.75',
-        aa: '0',
+        // Start with antialias enabled; auto-quality may disable it if needed.
+        aa: '1',
         aqDynamic: '1',
       }
 
       for (const [key, value] of Object.entries(defaults)) {
-        if (!urlParams.has(key)) urlParams.set(key, value)
+        if (!urlParams.has(key)) {
+          urlParams.set(key, value)
+          injected.add(key)
+        }
       }
+
+      // Track which params came from our debug-profile defaults so we don't
+      // treat them as hard user overrides later.
+      this._injectedDefaultParams = injected
 
       // Only choose a default visualizer on first-run. If the user has a stored
       // last-visualizer choice, keep it unless they explicitly override via URL.
@@ -620,6 +629,10 @@ export default class App {
     const dprOverride = dprOverrideRaw != null && dprOverrideRaw !== '' ? Number.parseFloat(dprOverrideRaw) : NaN
     this.debugPixelRatio = Number.isFinite(dprOverride) ? dprOverride : null
 
+    const dprKey = urlParams.has('dpr')
+      ? 'dpr'
+      : (urlParams.has('pixelRatio') ? 'pixelRatio' : (urlParams.has('pixelratio') ? 'pixelratio' : (urlParams.has('pr') ? 'pr' : null)))
+
     // autoQuality (default on) selects performance-friendly defaults unless
     // explicitly overridden via query params.
     const autoQualityOverride = getOptionalBool(urlParams, 'autoQuality', 'autoquality', 'aq')
@@ -640,11 +653,13 @@ export default class App {
     this.autoQualityDynamicRequested = autoQualityDynamicOverride
 
     // `&aa=0` disables antialias/MSAA (useful for isolating MSAA cost regressions).
-    const aaOverride = getOptionalBool(urlParams, 'aa', 'antialias', 'msaa')
-    const hasAaOverride = aaOverride != null
+    const aaKey = urlParams.has('aa') ? 'aa' : (urlParams.has('antialias') ? 'antialias' : (urlParams.has('msaa') ? 'msaa' : null))
+    const aaOverride = aaKey ? isTruthyParam(urlParams, aaKey) : null
+    const injectedDefaults = this._injectedDefaultParams
+    const hasAaOverride = aaOverride != null && !(aaKey === 'aa' && injectedDefaults?.has?.('aa'))
     this.debugAntialias = hasAaOverride ? !!aaOverride : true
 
-    const hasPixelRatioOverride = this.debugPixelRatio != null
+    const hasPixelRatioOverride = this.debugPixelRatio != null && !(dprKey === 'dpr' && injectedDefaults?.has?.('dpr'))
 
     this.pixelRatioOverridden = !!hasPixelRatioOverride
     this.antialiasOverridden = !!hasAaOverride
@@ -658,9 +673,8 @@ export default class App {
     // (This is intentionally conservative and can be overridden with `dpr=` / `aa=`)
     let qualityReason = 'manual'
     if (this.autoQualityEnabled) {
-      if (!hasAaOverride) {
-        this.debugAntialias = false
-      }
+      // Leave antialias enabled by default; the dynamic controller will disable
+      // it first if the frame-rate target isn't being met.
 
       if (!hasPixelRatioOverride) {
         const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
@@ -776,6 +790,9 @@ export default class App {
         dynamic: this.autoQualityDynamic,
         dynamicRequested: this.autoQualityDynamicRequested,
         reason: qualityReason,
+        defaultsInjected: Array.isArray(this._injectedDefaultParams ? Array.from(this._injectedDefaultParams) : null)
+          ? Array.from(this._injectedDefaultParams)
+          : null,
         deviceDpr,
         pixelRatio: this.debugPixelRatio,
         antialias: this.debugAntialias,
@@ -960,9 +977,14 @@ export default class App {
     }
 
     this.renderer.setClearColor(0x000000, 0)
-    this.renderer.setSize(window.innerWidth, window.innerHeight)
+    // Use updateStyle=false; CSS sizing is handled explicitly.
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false)
     this.renderer.autoClear = false
-    document.querySelector('.content').appendChild(this.renderer.domElement)
+    const content = document.querySelector('.content')
+    if (content) {
+      this._applyMainCanvasStyle(this.renderer.domElement)
+      content.appendChild(this.renderer.domElement)
+    }
 
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 10000)
     this.camera.position.z = 12
@@ -1006,6 +1028,131 @@ export default class App {
 
     this.resize()
     window.addEventListener('resize', () => this.resize())
+  }
+
+  _getContextAntialias() {
+    try {
+      const gl = this.renderer?.getContext?.()
+      const attrs = gl?.getContextAttributes?.()
+      return typeof attrs?.antialias === 'boolean' ? attrs.antialias : null
+    } catch (e) {
+      return null
+    }
+  }
+
+  _applyMainCanvasStyle(canvas) {
+    try {
+      if (!canvas || !canvas.style) return
+      // Ensure the canvas fills the app container even when we call
+      // `renderer.setSize(..., false)` (which intentionally does not touch CSS).
+      canvas.style.position = 'absolute'
+      canvas.style.top = '0'
+      canvas.style.left = '0'
+      canvas.style.width = '100%'
+      canvas.style.height = '100%'
+      canvas.style.display = 'block'
+      canvas.style.zIndex = '0'
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _recreateRendererWithAntialias(antialias) {
+    try {
+      if (!this.renderer) return false
+
+      const old = this.renderer
+      const oldCanvas = old.domElement
+      const parent = oldCanvas?.parentElement || null
+
+      // Preserve CSS sizing/positioning so the replacement canvas doesn't
+      // fall back to the default 300x150 size (which looks like a shrink to
+      // the top-left).
+      const oldCanvasStyleText = oldCanvas?.style?.cssText || ''
+      const oldCanvasClassName = oldCanvas?.className || ''
+
+      const oldPixelRatio = old.getPixelRatio?.() || 1
+
+      let size = { x: window.innerWidth, y: window.innerHeight }
+      try {
+        const v = new THREE.Vector2()
+        old.getSize(v)
+        if (Number.isFinite(v.x) && Number.isFinite(v.y) && v.x > 0 && v.y > 0) size = { x: v.x, y: v.y }
+      } catch (e) {
+        // ignore
+      }
+
+      let clearColor = new THREE.Color(0x000000)
+      let clearAlpha = 0
+      try {
+        old.getClearColor(clearColor)
+        clearAlpha = typeof old.getClearAlpha === 'function' ? old.getClearAlpha() : 0
+      } catch (e) {
+        // ignore
+      }
+
+      try {
+        old.dispose()
+      } catch (e) {
+        // ignore
+      }
+
+      const next = new THREE.WebGLRenderer({
+        antialias: !!antialias,
+        alpha: true,
+        powerPreference: 'high-performance',
+      })
+
+      next.setPixelRatio(oldPixelRatio)
+      next.setClearColor(clearColor, clearAlpha)
+      next.autoClear = false
+      next.setSize(size.x, size.y, false)
+
+      try {
+        if (oldCanvasClassName) next.domElement.className = oldCanvasClassName
+        if (oldCanvasStyleText) next.domElement.style.cssText = oldCanvasStyleText
+      } catch (e) {
+        // ignore
+      }
+      this._applyMainCanvasStyle(next.domElement)
+
+      if (parent && oldCanvas) {
+        parent.replaceChild(next.domElement, oldCanvas)
+      }
+
+      this.renderer = next
+      App.renderer = next
+
+      if (this.perfEnabled) {
+        try {
+          const gl = next.getContext()
+          this.gpuTimer = new WebGLGpuTimer(gl)
+        } catch (e) {
+          this.gpuTimer = null
+        }
+      }
+
+      // Keep viewport/camera and cached dims consistent.
+      try {
+        this.resize()
+      } catch (e) {
+        // ignore
+      }
+
+      // Visualizers that cache renderer-dependent resources may want to resync.
+      try {
+        const v = App.currentVisualizer
+        if (v && typeof v.onRendererRecreated === 'function') {
+          v.onRendererRecreated(next, old)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      return true
+    } catch (e) {
+      return false
+    }
   }
 
   logWebGLInfo(gl, label = 'WebGL') {
@@ -1316,24 +1463,48 @@ export default class App {
       const targetFps = Math.max(10, Math.min(240, this.quality.targetFps || 60))
       const targetFrameMs = 1000 / targetFps
 
-      const currentRatio = this.renderer.getPixelRatio?.() || 1
-      const minRatio = this.quality.minPixelRatio
-      const maxRatio = this.quality.maxPixelRatio
-
-      // Prefer rAF cadence for *downscaling* decisions (represents frame pacing).
-      // Use GPU timer (smoothed) only for cautious *upscaling*.
-      const gpuMs = Number.isFinite(this.perfState?.gpuRenderMs) ? this.perfState.gpuRenderMs : null
+      // Compute a fresh rAF cadence sample *before* any gating.
+      // Note: if we gate using a stale EMA and also reset the window, we can
+      // get stuck never adapting even when FPS is low.
       const avgDt = (this.qualityWindow?.frames > 0)
         ? (this.qualityWindow.sumDt / this.qualityWindow.frames)
         : null
 
-      // Update EMA metrics (guard against outliers).
-      if (avgDt != null && Number.isFinite(avgDt) && avgDt > 0 && avgDt < 1000) {
+      // Prefer a small window average when available; otherwise fall back to
+      // the last observed frame dt.
+      const dtSample = (avgDt != null && Number.isFinite(avgDt) && avgDt > 0)
+        ? avgDt
+        : (Number.isFinite(this.lastFrameDtMs) ? this.lastFrameDtMs : null)
+
+      // Update EMA continuously so it reflects drops quickly.
+      if (dtSample != null && Number.isFinite(dtSample) && dtSample > 0 && dtSample < 1000) {
         const a = 0.25
         this.quality.rafEmaDtMs = (this.quality.rafEmaDtMs == null)
-          ? avgDt
-          : (this.quality.rafEmaDtMs * (1 - a) + avgDt * a)
+          ? dtSample
+          : (this.quality.rafEmaDtMs * (1 - a) + dtSample * a)
       }
+
+      // Do not adjust quality if we are achieving at least 80% of the target.
+      // This avoids constant churn and prevents breaking shaders that rely on
+      // stable pixel-space behavior.
+      const rafMetricForFps = Number.isFinite(this.quality.rafEmaDtMs)
+        ? this.quality.rafEmaDtMs
+        : dtSample
+      const achievedFps = (rafMetricForFps && rafMetricForFps > 0) ? (1000 / rafMetricForFps) : null
+      if (achievedFps != null && achievedFps >= targetFps * 0.8) {
+        // Do not touch `lastAdjustAt` here; only update it when we *change*
+        // quality. This allows immediate response if FPS later drops.
+        return
+      }
+
+      const currentRatio = this.renderer.getPixelRatio?.() || 1
+      const minRatio = this.quality.minPixelRatio
+      const maxRatio = this.quality.maxPixelRatio
+
+      // Use rAF cadence (frame pacing) to decide when to degrade.
+      // GPU timer queries can be noisy and are not required for the 80% policy.
+      const gpuMs = Number.isFinite(this.perfState?.gpuRenderMs) ? this.perfState.gpuRenderMs : null
+      // `avgDt` and `rafEmaDtMs` were already updated above.
 
       if (gpuMs != null && Number.isFinite(gpuMs) && gpuMs > 0 && gpuMs < 1000) {
         const a = 0.18
@@ -1354,70 +1525,47 @@ export default class App {
       let metric = null
 
       const rafMetric = Number.isFinite(this.quality.rafEmaDtMs) ? this.quality.rafEmaDtMs : avgDt
-      const gpuMetric = Number.isFinite(this.quality.gpuEmaMs) ? this.quality.gpuEmaMs : null
+      if (rafMetric == null || !Number.isFinite(rafMetric) || rafMetric <= 0) return
 
-      // (1) Downscale quickly when we're missing the target.
-      if (rafMetric != null && rafMetric > 0) {
-        basis = 'rafEmaDtMs'
-        metric = rafMetric
+      basis = 'rafEmaDtMs'
+      metric = rafMetric
 
-        if (rafMetric > targetFrameMs * 1.06) {
-          // Pixel cost is ~ratio^2, so scale ratio by sqrt(time ratio).
-          const desired = Math.sqrt((targetFrameMs * 0.93) / rafMetric)
-          factor = Math.max(0.60, Math.min(0.97, desired))
-          this.quality.settled = false
-          this.quality.stableWindows = 0
+      // If we're under 80% of target FPS, degrade quality.
+      const thresholdFrameMs = targetFrameMs / 0.8
+      if (rafMetric <= thresholdFrameMs) {
+        // (We should have returned earlier, but keep safe.)
+        this.quality.lastAdjustAt = nowMs
+        return
+      }
+
+      // Step 1: disable antialias (MSAA) before touching pixelRatio.
+      const currentAa = this._getContextAntialias()
+      const canChangeAa = !this.antialiasOverridden
+      if (currentAa === true && canChangeAa) {
+        const ok = this._recreateRendererWithAntialias(false)
+        if (ok) {
+          this.debugAntialias = false
+          this.quality.lastAdjustAt = nowMs
+          if (this.qualityWindow) {
+            this.qualityWindow.frames = 0
+            this.qualityWindow.sumDt = 0
+            this.qualityWindow.maxDt = 0
+          }
+          console.log('[Quality] adjust', {
+            targetFps,
+            targetFrameMs: Number(targetFrameMs.toFixed(2)),
+            action: 'disableAA',
+            basis,
+            metric: Number(rafMetric.toFixed(2)),
+          })
+          return
         }
       }
 
-      // (2) Upscale very cautiously only when we have sustained headroom.
-      if (factor === 1 && gpuMetric != null) {
-        const withinVsyncBand = (rafMetric != null)
-          ? (Math.abs(rafMetric - targetFrameMs) <= Math.max(0.9, targetFrameMs * 0.06))
-          : true
-
-        if (withinVsyncBand) {
-          // Require sustained, meaningful headroom before increasing.
-          const headroom = gpuMetric < targetFrameMs * 0.86
-          this.quality.goodGpuWindows = headroom ? (this.quality.goodGpuWindows + 1) : 0
-        } else {
-          this.quality.goodGpuWindows = 0
-        }
-
-        // Consider ourselves settled once we sit near target for a while.
-        const inFrameBand = (rafMetric != null)
-          ? (rafMetric <= targetFrameMs * 1.03)
-          : true
-        // Consider settled when we're close to target but with some safety margin.
-        const inGpuBand = gpuMetric >= targetFrameMs * 0.84 && gpuMetric <= targetFrameMs * 0.93
-
-        if (inFrameBand && inGpuBand) {
-          this.quality.stableWindows = (this.quality.stableWindows || 0) + 1
-          if (!this.quality.settled && this.quality.stableWindows >= 4) {
-            this.quality.settled = true
-            this.quality.settledAt = nowMs
-          }
-        } else {
-          this.quality.stableWindows = 0
-          if (rafMetric != null && rafMetric > targetFrameMs * 1.06) {
-            this.quality.settled = false
-          }
-        }
-
-        const canIncrease = !this.quality.settled
-          && (nowMs - (this.quality.lastIncreaseAt || 0)) >= this.quality.increaseCooldownMs
-          && this.quality.goodGpuWindows >= 3
-
-        if (canIncrease) {
-          basis = 'gpuEmaMs'
-          metric = gpuMetric
-          // Small step to avoid oscillation (GPU timer is noisy).
-          const desired = Math.sqrt((targetFrameMs * 0.90) / Math.max(0.001, gpuMetric))
-          factor = Math.max(1.01, Math.min(1.03, desired))
-        }
-      }
-
-      if (factor === 1 && (rafMetric == null && gpuMetric == null)) return
+      // Step 2: reduce pixelRatio (only after AA is already off or locked by override).
+      // Pixel cost is ~ratio^2, so scale ratio by sqrt(time ratio).
+      const desired = Math.sqrt((thresholdFrameMs * 0.95) / rafMetric)
+      factor = Math.max(0.60, Math.min(0.97, desired))
 
       this.quality.lastMetric = {
         basis,
@@ -1445,10 +1593,6 @@ export default class App {
       // Keep CSS size and camera projection stable; just refresh drawing buffer.
       if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
         this.renderer.setSize(this.width, this.height, false)
-      }
-
-      if (nextRatio > currentRatio) {
-        this.quality.lastIncreaseAt = nowMs
       }
 
       // Notify active visualizer about pixelRatio change without doing a full
@@ -1532,10 +1676,6 @@ export default class App {
   }
   
   switchVisualizer(type, { notify = true } = {}) {
-    // Normalize legacy/slugs to display names.
-    if (type === 'sparkling-boxes') type = 'Sparkling Boxes'
-    if (type === 'tubes-cursor') type = 'Tubes Cursor'
-
     // Destroy current visualizer if exists
     if (App.currentVisualizer) {
       if (typeof App.currentVisualizer.destroy === 'function') {
@@ -1599,6 +1739,18 @@ export default class App {
         this.visualizerController.updateDisplay()
       } else if (typeof this.visualizerController.setValue === 'function' && this.visualizerController.getValue?.() !== type) {
         this.visualizerController.setValue(type)
+      }
+
+      // dat.GUI uses a native <select>. Some browsers won't visually update an open/focused
+      // select's displayed value reliably from programmatic updates, so also force the
+      // underlying element's value to match.
+      const selectEl = this._getVisualizerSelectElement()
+      if (selectEl && selectEl.value !== type) {
+        try {
+          selectEl.value = type
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -1786,11 +1938,122 @@ export default class App {
     const currentIndex = Math.max(0, list.indexOf(App.visualizerType))
     const nextIndex = (currentIndex + step + list.length) % list.length
     const next = list[nextIndex]
-    // Prefer updating the GUI controller so UI stays in sync and uses onChange
-    if (this.visualizerController) {
-      this.visualizerController.setValue(next)
-    } else {
-      this.switchVisualizer(next)
+
+    // If the dropdown's <select> currently has focus, blur it first so the UI updates
+    // immediately and we don't leave the user with a focused control showing stale value.
+    const selectEl = this._getVisualizerSelectElement()
+    if (selectEl && document.activeElement === selectEl) {
+      try {
+        selectEl.blur()
+      } catch {
+        // ignore
+      }
+    }
+
+    // Switch via the main codepath; it also keeps the GUI dropdown in sync.
+    this.switchVisualizer(next)
+  }
+
+  _getVisualizerSelectElement() {
+    try {
+      const root = this.visualizerController?.domElement
+      if (!root) return null
+      const el = root.querySelector('select')
+      return el instanceof HTMLSelectElement ? el : null
+    } catch {
+      return null
+    }
+  }
+
+  _updateGuiWidthToFitVisualizerSelect() {
+    try {
+      const gui = App.gui
+      const guiRoot = gui?.domElement
+      if (!gui || !guiRoot) return
+
+      const selectEl = this._getVisualizerSelectElement()
+      if (!selectEl) return
+
+      const options = Array.from(selectEl.options || [])
+        .map((o) => (o?.textContent || o?.label || o?.value || '').trim())
+        .filter(Boolean)
+
+      if (options.length === 0) return
+
+      const canvas = this._guiMeasureCanvas || (this._guiMeasureCanvas = document.createElement('canvas'))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      const selectStyle = window.getComputedStyle(selectEl)
+      const selectFont = selectStyle.font || `${selectStyle.fontWeight} ${selectStyle.fontSize} ${selectStyle.fontFamily}`
+      ctx.font = selectFont
+
+      let maxOptionWidth = 0
+      for (const label of options) {
+        const w = ctx.measureText(label).width
+        if (w > maxOptionWidth) maxOptionWidth = w
+      }
+
+      const selectPaddingLeft = parseFloat(selectStyle.paddingLeft) || 0
+      const selectPaddingRight = parseFloat(selectStyle.paddingRight) || 0
+      const selectHorizontalPadding = Math.max(0, selectPaddingLeft + selectPaddingRight)
+
+      // Allowance for native select arrow + internal padding differences across browsers.
+      const selectChromeAllowance = 56
+      const desiredControlWidth = Math.ceil(maxOptionWidth + selectHorizontalPadding + selectChromeAllowance)
+
+      const rowEl = selectEl.closest('li')
+      const labelEl = rowEl?.querySelector?.('.property-name')
+      const labelText = (labelEl?.textContent || '').trim()
+
+      let desiredLabelWidth = 0
+      if (labelText) {
+        const labelStyle = window.getComputedStyle(labelEl)
+        const labelFont = labelStyle.font || selectFont
+        ctx.font = labelFont
+        desiredLabelWidth = Math.ceil(ctx.measureText(labelText).width + 16)
+      }
+
+      const controlEl = rowEl?.querySelector?.('.c') || selectEl.parentElement
+
+      let controlFrac = 0.6
+      let labelFrac = 0.4
+      const rowRect = rowEl?.getBoundingClientRect?.()
+      const controlRect = controlEl?.getBoundingClientRect?.()
+      const labelRect = labelEl?.getBoundingClientRect?.()
+
+      if (rowRect?.width > 0 && controlRect?.width > 0) {
+        controlFrac = Math.min(0.9, Math.max(0.1, controlRect.width / rowRect.width))
+      }
+
+      if (rowRect?.width > 0 && labelRect?.width > 0) {
+        labelFrac = Math.min(0.9, Math.max(0.1, labelRect.width / rowRect.width))
+      }
+
+      const neededRowWidth = Math.ceil(
+        Math.max(
+          desiredControlWidth / (controlFrac || 0.6),
+          desiredLabelWidth > 0 ? desiredLabelWidth / (labelFrac || 0.4) : 0
+        )
+      )
+
+      const guiRect = guiRoot.getBoundingClientRect?.()
+      const overhead = guiRect?.width > 0 && rowRect?.width > 0 ? Math.max(0, guiRect.width - rowRect.width) : 0
+      let desiredGuiWidth = Math.ceil(neededRowWidth + overhead)
+
+      // Clamp to viewport; our container is positioned with 12px gutters.
+      const maxGuiWidth = Math.max(220, window.innerWidth - 24)
+      desiredGuiWidth = Math.max(220, Math.min(desiredGuiWidth, maxGuiWidth))
+
+      gui.width = desiredGuiWidth
+      guiRoot.style.width = `${desiredGuiWidth}px`
+
+      const guiContainer = guiRoot.parentElement || guiRoot
+      guiContainer.style.width = `${desiredGuiWidth}px`
+      guiContainer.style.maxWidth = 'calc(100vw - 24px)'
+      guiContainer.style.boxSizing = 'border-box'
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -3078,5 +3341,8 @@ export default class App {
       .onChange((value) => {
         this.switchVisualizer(value)
       })
+
+    // Size the GUI to fit the longest option label (no truncation).
+    requestAnimationFrame(() => this._updateGuiWidthToFitVisualizerSelect())
   }
 }
