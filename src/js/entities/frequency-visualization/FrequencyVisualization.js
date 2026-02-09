@@ -301,8 +301,8 @@ vec3 renderAt(vec2 fragCoord) {
       else if (binIdx < 1.5) s *= 0.66;
 
       float heightPx = floor((maxH * heightScale) * s);
-      // Silence baseline thickness: keep it ~2px.
-      float minHPx = 2.0;
+      // Silence baseline thickness.
+      float minHPx = 1.0;
       heightPx = max(heightPx, minHPx);
 
       float yLocalUp = fc.y - baseY;
