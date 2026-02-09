@@ -96,7 +96,8 @@ void mainImage( out vec4 O, vec2 I )
     mat2 R = mat2(cos(sin(t/2.)*.785 +vec4(0,33,11,0)));
 
     // Raymarch loop. Clear fragColor and raymarch 100 steps
-    for(O*=i; i++<1e2;){
+    O = vec4(0.0);
+    for(; i++<1e2;){
 
         //Raymarch sample point --> scaled uvs + camera depth
         p = vec3((I+I-r.xy)/r.y, d-10.0);    
@@ -154,7 +155,8 @@ void mainImage( out vec4 O, vec2 I )
         //O += max(mix(ir,mix(c, ir, smoothstep(7.5, 8.5, p.y)),smoothstep(5.2, 6.5, p.y)), -length(k*k));
         
         //Color accumulation, using i iterator for iridescence. Attenuating with distance s and shading.
-        O += max(sin(vec4(1,2,3,1)+i*.5)*1.5/s+vec4(1,2,3,1)*(.04+flash*0.55)/l,-length(k*k));
+        //Fix: Clamp l to avoid singularity and reduce glare (make reflection more transparent)
+        O += max(sin(vec4(1,2,3,1)+i*.5)*1.5/s+vec4(1,2,3,1)*(.04+flash*0.55)/max(l, 0.4),-length(k*k));
 
     }
     //Tanh tonemap and brightness multiplier
