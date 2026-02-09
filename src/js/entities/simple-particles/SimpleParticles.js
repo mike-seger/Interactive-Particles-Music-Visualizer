@@ -30,22 +30,22 @@ export default class SimpleParticles extends THREE.Object3D {
     const { particleCount, cloudRadius, size } = this.params
     const positions = new Float32Array(particleCount * 3)
     const colors = new Float32Array(particleCount * 3)
-    const orbits = new Float32Array(particleCount * 4)
+    const orbits = new Float32Array(particleCount * 5)
 
     for (let i = 0; i < particleCount; i++) {
       const radius = Math.pow(Math.random(), 0.4) * cloudRadius
       const theta = Math.random() * Math.PI * 2
       const phi = Math.acos(2 * Math.random() - 1)
-      const baseY = Math.cos(phi) * radius * 0.6
       const speedMul = 0.5 + Math.random() * 1.0
 
-      orbits[i * 4] = radius
-      orbits[i * 4 + 1] = theta
-      orbits[i * 4 + 2] = baseY
-      orbits[i * 4 + 3] = speedMul
+      orbits[i * 5] = radius
+      orbits[i * 5 + 1] = theta
+      orbits[i * 5 + 2] = phi
+      orbits[i * 5 + 3] = speedMul
+      orbits[i * 5 + 4] = Math.cos(phi) * radius  // baseY
 
       positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
-      positions[i * 3 + 1] = baseY
+      positions[i * 3 + 1] = Math.cos(phi) * radius
       positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
 
       colors[i * 3] = 0.3
@@ -112,15 +112,18 @@ export default class SimpleParticles extends THREE.Object3D {
     const audioLift = (bass * 2.0 + mid * 1.0 + treble * 0.5) * 4.0
 
     for (let i = 0; i < particleCount; i++) {
-      const radius = orbits[i * 4]
-      const baseAngle = orbits[i * 4 + 1]
-      const baseY = orbits[i * 4 + 2]
-      const speedMul = orbits[i * 4 + 3]
+      const radius = orbits[i * 5]
+      const baseAngle = orbits[i * 5 + 1]
+      const phi = orbits[i * 5 + 2]
+      const speedMul = orbits[i * 5 + 3]
+      const baseY = orbits[i * 5 + 4]
 
       const angle = baseAngle + t * orbitSpeed * speedMul
 
-      positions[i * 3] = Math.cos(angle) * radius
-      positions[i * 3 + 2] = Math.sin(angle) * radius
+      // Orbit on a tilted plane based on phi — preserves spherical shape
+      const sinPhi = Math.sin(phi)
+      positions[i * 3] = Math.cos(angle) * sinPhi * radius
+      positions[i * 3 + 2] = Math.sin(angle) * sinPhi * radius
 
       const radiusFraction = radius / cloudRadius
       positions[i * 3 + 1] = baseY + audioLift * radiusFraction * Math.sin(angle * 2.0)
