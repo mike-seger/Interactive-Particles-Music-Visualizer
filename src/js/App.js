@@ -206,7 +206,9 @@ export default class App {
     this.pixelRatioLocked = false
     this.antialiasOverridden = false
     this.quality = null
-    this.qualityWindow = { frames: 0, sumDt: 0, maxDt: 0 }
+    // Short sliding window for auto-quality sampling.
+    // Important: a lifetime average reacts far too slowly after a sudden perf drop.
+    this.qualityWindow = { frames: 0, sumDt: 0, maxDt: 0, startAt: 0 }
   }
 
   _snapPixelRatio(value, { min = 0.25, max = 2 } = {}) {
@@ -261,6 +263,137 @@ export default class App {
       window.localStorage.setItem(this.storageKeys.visualizerType, type)
     } catch (error) {
       // ignore storage errors
+    }
+  }
+
+  _getGlobalQualityDefaultKeys() {
+    return {
+      antiAlias: 'visualizer.defaults.quality.antiAlias',
+      pixelRatio: 'visualizer.defaults.quality.pixelRatio',
+    }
+  }
+
+  getStoredGlobalQualityDefaults() {
+    try {
+      const keys = this._getGlobalQualityDefaultKeys()
+      const aaRaw = window.localStorage.getItem(keys.antiAlias)
+      const prRaw = window.localStorage.getItem(keys.pixelRatio)
+
+      let aa = null
+      if (aaRaw != null) {
+        const v = String(aaRaw).trim().toLowerCase()
+        aa = (v === '' || v === '1' || v === 'true' || v === 'yes' || v === 'on')
+      }
+
+      let pr = null
+      if (prRaw != null && prRaw !== '') {
+        const parsed = Number.parseFloat(prRaw)
+        const allowed = [0.25, 0.5, 1, 2]
+        pr = Number.isFinite(parsed) && allowed.includes(parsed) ? parsed : null
+      }
+
+      return { antialias: aa, pixelRatio: pr }
+    } catch (e) {
+      return { antialias: null, pixelRatio: null }
+    }
+  }
+
+  saveGlobalQualityDefaults({ antialias, pixelRatio } = {}) {
+    try {
+      const keys = this._getGlobalQualityDefaultKeys()
+      if (antialias == null) window.localStorage.removeItem(keys.antiAlias)
+      else window.localStorage.setItem(keys.antiAlias, antialias ? '1' : '0')
+
+      if (pixelRatio == null) {
+        window.localStorage.removeItem(keys.pixelRatio)
+      } else {
+        const allowed = [0.25, 0.5, 1, 2]
+        const pr = Number.isFinite(pixelRatio) && allowed.includes(pixelRatio) ? pixelRatio : null
+        if (pr == null) window.localStorage.removeItem(keys.pixelRatio)
+        else window.localStorage.setItem(keys.pixelRatio, String(pr))
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _getPerVisualizerAutoQualityKeys(type) {
+    const t = String(type || '').trim()
+    return {
+      antiAlias: `visualizer[${t}].quality.auto.antiAlias`,
+      pixelRatio: `visualizer[${t}].quality.auto.pixelRatio`,
+    }
+  }
+
+  _readPerVisualizerAutoQuality(type) {
+    try {
+      const { antiAlias, pixelRatio } = this._getPerVisualizerAutoQualityKeys(type)
+      const aaRaw = window.localStorage.getItem(antiAlias)
+      const prRaw = window.localStorage.getItem(pixelRatio)
+
+      let aa = null
+      if (aaRaw != null) {
+        const v = String(aaRaw).trim().toLowerCase()
+        aa = (v === '' || v === '1' || v === 'true' || v === 'yes' || v === 'on')
+      }
+
+      let pr = null
+      if (prRaw != null && prRaw !== '') {
+        const parsed = Number.parseFloat(prRaw)
+        const allowed = [0.25, 0.5, 1, 2]
+        pr = Number.isFinite(parsed) && allowed.includes(parsed) ? parsed : null
+      }
+
+      return { antialias: aa, pixelRatio: pr }
+    } catch (e) {
+      return { antialias: null, pixelRatio: null }
+    }
+  }
+
+  _writePerVisualizerAutoQuality(type, { antialias, pixelRatio } = {}) {
+    try {
+      const keys = this._getPerVisualizerAutoQualityKeys(type)
+      if (antialias == null) window.localStorage.removeItem(keys.antiAlias)
+      else window.localStorage.setItem(keys.antiAlias, antialias ? '1' : '0')
+
+      if (pixelRatio == null) {
+        window.localStorage.removeItem(keys.pixelRatio)
+      } else {
+        const allowed = [0.25, 0.5, 1, 2]
+        const pr = Number.isFinite(pixelRatio) && allowed.includes(pixelRatio) ? pixelRatio : null
+        if (pr == null) window.localStorage.removeItem(keys.pixelRatio)
+        else window.localStorage.setItem(keys.pixelRatio, String(pr))
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _persistAutoQualityForCurrentVisualizer() {
+    try {
+      if (!this.renderer) return
+      const type = App.visualizerType
+      if (!type) return
+
+      const base = this._baseQualityState
+      const user = this._readPerVisualizerQualityOverrides(type)
+      const urlLocksAa = !!base?.antialiasOverridden
+      const urlLocksPr = !!base?.pixelRatioOverridden
+
+      const canPersistAa = !urlLocksAa && user.antialias == null
+      const canPersistPr = !urlLocksPr && user.pixelRatio == null
+
+      if (!canPersistAa && !canPersistPr) return
+
+      const aa = this._getContextAntialias()
+      const pr = this.renderer.getPixelRatio?.() || 1
+      const next = {
+        antialias: canPersistAa ? !!aa : null,
+        pixelRatio: canPersistPr ? this._snapPixelRatio(pr, { min: 0.25, max: 2 }) : null,
+      }
+      this._writePerVisualizerAutoQuality(type, next)
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -330,20 +463,36 @@ export default class App {
     }
   }
 
-  _applyPerVisualizerQualityOverrides(type, { applyBaseIfNoOverride = false } = {}) {
+  _applyPerVisualizerQualityOverrides(type, { applyBaseIfNoOverride = true } = {}) {
     const base = this._baseQualityState
     const overrides = this._readPerVisualizerQualityOverrides(type)
     const hasAaOverride = overrides.antialias != null
     const hasPrOverride = overrides.pixelRatio != null
 
+    const auto = this._readPerVisualizerAutoQuality(type)
+    const hasAutoAa = auto.antialias != null
+    const hasAutoPr = auto.pixelRatio != null
+
+    const urlLocksAa = !!base?.antialiasOverridden
+    const urlLocksPr = !!base?.pixelRatioOverridden
+
     // Update effective flags (dynamic loop reads these).
     if (base) {
-      this.antialiasOverridden = hasAaOverride ? true : !!base.antialiasOverridden
-      this.pixelRatioOverridden = hasPrOverride ? true : !!base.pixelRatioOverridden
-      this.pixelRatioLocked = hasPrOverride ? true : !!base.pixelRatioLocked
+      // URL overrides always win. User overrides win next. Auto values are not overrides.
+      this.antialiasOverridden = urlLocksAa ? true : !!hasAaOverride
+      this.pixelRatioOverridden = urlLocksPr ? true : !!hasPrOverride
+      this.pixelRatioLocked = urlLocksPr ? !!base.pixelRatioLocked : !!hasPrOverride
 
-      this.debugAntialias = hasAaOverride ? !!overrides.antialias : base.debugAntialias
-      this.debugPixelRatio = hasPrOverride ? overrides.pixelRatio : base.debugPixelRatio
+      const desiredAa = urlLocksAa
+        ? base.debugAntialias
+        : (hasAaOverride ? !!overrides.antialias : (hasAutoAa ? !!auto.antialias : base.debugAntialias))
+
+      const desiredPr = urlLocksPr
+        ? base.debugPixelRatio
+        : (hasPrOverride ? overrides.pixelRatio : (hasAutoPr ? auto.pixelRatio : base.debugPixelRatio))
+
+      this.debugAntialias = !!desiredAa
+      this.debugPixelRatio = desiredPr
 
       // Keep dynamic quality disabled whenever pixelRatio is locked.
       this.autoQualityDynamic = !!base.autoQualityDynamic && !this.pixelRatioLocked
@@ -351,24 +500,32 @@ export default class App {
 
     if (!this.renderer) return
 
-    // Apply AA override by recreating renderer if needed.
-    if (hasAaOverride) {
+    // Apply desired AA by recreating renderer if needed.
+    {
       const curAa = this._getContextAntialias()
-      const desiredAa = !!overrides.antialias
-      if (curAa !== desiredAa) {
+      const desiredAa = urlLocksAa
+        ? !!base?.debugAntialias
+        : (hasAaOverride
+          ? !!overrides.antialias
+          : (hasAutoAa
+            ? !!auto.antialias
+            : (applyBaseIfNoOverride
+              ? !!base?.debugAntialias
+              : (curAa ?? !!this.debugAntialias))))
+
+      if (typeof desiredAa === 'boolean' && curAa !== desiredAa) {
         this._recreateRendererWithAntialias(desiredAa)
-      }
-    } else if (applyBaseIfNoOverride && base && typeof base.debugAntialias === 'boolean') {
-      const curAa = this._getContextAntialias()
-      if (curAa !== base.debugAntialias) {
-        this._recreateRendererWithAntialias(!!base.debugAntialias)
       }
     }
 
-    // Apply pixelRatio override.
-    const targetPr = hasPrOverride
-      ? overrides.pixelRatio
-      : (applyBaseIfNoOverride && base && Number.isFinite(base.debugPixelRatio) ? base.debugPixelRatio : null)
+    // Apply desired pixelRatio.
+    const targetPr = urlLocksPr
+      ? base?.debugPixelRatio
+      : (hasPrOverride
+        ? overrides.pixelRatio
+        : (hasAutoPr
+          ? auto.pixelRatio
+          : (applyBaseIfNoOverride && base && Number.isFinite(base.debugPixelRatio) ? base.debugPixelRatio : null)))
 
     if (targetPr != null && Number.isFinite(targetPr)) {
       const oldPr = this.renderer.getPixelRatio?.() || 1
@@ -743,6 +900,8 @@ export default class App {
 
     const urlParams = getMergedUrlParams()
 
+    const globalDefaults = this.getStoredGlobalQualityDefaults()
+
     // Default debug profile: if a setting isn't explicitly provided via URL,
     // apply a sensible default for performance diagnostics.
     // Disable with `&noDefaults=1` (or `&defaults=0`).
@@ -758,8 +917,8 @@ export default class App {
         gpuInfo: '1',
         // Baseline defaults (can be overridden by URL params or per-visualizer overrides).
         // Note: we still treat injected defaults as "soft" (not hard user overrides).
-        dpr: '2',
-        aa: '0',
+        dpr: String(globalDefaults.pixelRatio ?? 2),
+        aa: String((globalDefaults.antialias ?? false) ? '1' : '0'),
         aqDynamic: '1',
       }
 
@@ -837,8 +996,8 @@ export default class App {
     const aaOverride = aaKey ? isTruthyParam(urlParams, aaKey) : null
     const injectedDefaults = this._injectedDefaultParams
     const hasAaOverride = aaOverride != null && !(aaKey === 'aa' && injectedDefaults?.has?.('aa'))
-    // Baseline default: antialias off unless explicitly overridden.
-    this.debugAntialias = hasAaOverride ? !!aaOverride : false
+    // Baseline default: from stored global defaults (fallback: off) unless explicitly overridden.
+    this.debugAntialias = hasAaOverride ? !!aaOverride : !!(globalDefaults.antialias ?? false)
 
     const hasPixelRatioOverride = this.debugPixelRatio != null && !(dprKey === 'dpr' && injectedDefaults?.has?.('dpr'))
 
@@ -859,12 +1018,10 @@ export default class App {
 
       if (!hasPixelRatioOverride) {
         const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
-        // Baseline default: render at up to 2x device pixel ratio.
-        // On most Retina Macs, deviceDpr is 2 so this effectively means pixelRatio=2.
-        // On non-Retina displays (deviceDpr=1), this yields pixelRatio=1.
-        const cap = 2
-        const seeded = Math.min(deviceDpr, cap)
-        this.debugPixelRatio = this._snapPixelRatio(seeded, { min: 0.25, max: deviceDpr })
+        const seeded = Number.isFinite(globalDefaults.pixelRatio)
+          ? globalDefaults.pixelRatio
+          : 2
+        this.debugPixelRatio = this._snapPixelRatio(seeded, { min: 0.25, max: 2 })
         qualityReason = `auto(dpr=${deviceDpr} seed=${seeded} snap=${this.debugPixelRatio})`
       } else {
         qualityReason = autoQualityDynamicOverride === true ? 'auto(with pixelRatio seed)' : 'auto(with pixelRatio override)'
@@ -890,7 +1047,7 @@ export default class App {
       targetFps: 60,
       refreshHz: null,
       minPixelRatio: 0.25,
-      maxPixelRatio: Math.max(0.25, Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1),
+      maxPixelRatio: Math.max(2, Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1),
       // Slower cadence reduces flicker/thrashing, especially for multipass shaders
       // that resize render targets on pixelRatio changes.
       adjustEveryMs: 2000,
@@ -1556,10 +1713,20 @@ export default class App {
       this.rafStats.lastAt = frameNow
     }
 
-    // Track a window for auto-quality adjustments.
+    // Track a *short* window for auto-quality adjustments.
     if (this.qualityWindow && Number.isFinite(this.lastFrameDtMs)) {
       const dt = this.lastFrameDtMs
       if (dt >= 0 && dt < 1000) {
+        if (!this.qualityWindow.startAt) this.qualityWindow.startAt = frameNow
+        const ageMs = frameNow - this.qualityWindow.startAt
+        // Keep it responsive: ~1s window (or ~90 frames max).
+        if (ageMs > 1000 || this.qualityWindow.frames > 90) {
+          this.qualityWindow.startAt = frameNow
+          this.qualityWindow.frames = 0
+          this.qualityWindow.sumDt = 0
+          this.qualityWindow.maxDt = 0
+        }
+
         this.qualityWindow.frames += 1
         this.qualityWindow.sumDt += dt
         if (dt > this.qualityWindow.maxDt) this.qualityWindow.maxDt = dt
@@ -1672,8 +1839,6 @@ export default class App {
         })
       }
 
-      if (this.quality.lastAdjustAt && (nowMs - this.quality.lastAdjustAt) < this.quality.adjustEveryMs) return
-
       const targetFps = Math.max(10, Math.min(240, this.quality.targetFps || 60))
       const targetFrameMs = 1000 / targetFps
 
@@ -1684,11 +1849,10 @@ export default class App {
         ? (this.qualityWindow.sumDt / this.qualityWindow.frames)
         : null
 
-      // Prefer a small window average when available; otherwise fall back to
-      // the last observed frame dt.
-      const dtSample = (avgDt != null && Number.isFinite(avgDt) && avgDt > 0)
-        ? avgDt
-        : (Number.isFinite(this.lastFrameDtMs) ? this.lastFrameDtMs : null)
+      // Prefer instantaneous cadence for responsiveness; fall back to short-window avg.
+      const dtSample = Number.isFinite(this.lastFrameDtMs)
+        ? this.lastFrameDtMs
+        : ((avgDt != null && Number.isFinite(avgDt) && avgDt > 0) ? avgDt : null)
 
       // Update EMA continuously so it reflects drops quickly.
       if (dtSample != null && Number.isFinite(dtSample) && dtSample > 0 && dtSample < 1000) {
@@ -1710,6 +1874,12 @@ export default class App {
         // quality. This allows immediate response if FPS later drops.
         return
       }
+
+      // Gate adjustments *after* updating metrics so we can react faster when FPS is very low.
+      const baseAdjustEveryMs = Number.isFinite(this.quality.adjustEveryMs) ? this.quality.adjustEveryMs : 2000
+      const severeLowFps = achievedFps != null && achievedFps < targetFps * 0.5
+      const effectiveAdjustEveryMs = severeLowFps ? Math.min(baseAdjustEveryMs, 800) : baseAdjustEveryMs
+      if (this.quality.lastAdjustAt && (nowMs - this.quality.lastAdjustAt) < effectiveAdjustEveryMs) return
 
       const currentRatio = this.renderer.getPixelRatio?.() || 1
       const constraints = getVisualizerQualityConstraints()
@@ -1762,8 +1932,11 @@ export default class App {
         const ok = this._recreateRendererWithAntialias(false)
         if (ok) {
           this.debugAntialias = false
+          this._persistAutoQualityForCurrentVisualizer()
+          this._syncPerformanceQualityControls(App.visualizerType)
           this.quality.lastAdjustAt = nowMs
           if (this.qualityWindow) {
+            this.qualityWindow.startAt = nowMs
             this.qualityWindow.frames = 0
             this.qualityWindow.sumDt = 0
             this.qualityWindow.maxDt = 0
@@ -1799,6 +1972,7 @@ export default class App {
       if (delta < minDelta) {
         // Still reset the window so the next decision uses fresh data.
         if (this.qualityWindow) {
+          this.qualityWindow.startAt = nowMs
           this.qualityWindow.frames = 0
           this.qualityWindow.sumDt = 0
           this.qualityWindow.maxDt = 0
@@ -1844,12 +2018,16 @@ export default class App {
 
       // Reset window after applying a change.
       if (this.qualityWindow) {
+        this.qualityWindow.startAt = nowMs
         this.qualityWindow.frames = 0
         this.qualityWindow.sumDt = 0
         this.qualityWindow.maxDt = 0
       }
 
       this.quality.lastAdjustAt = nowMs
+
+      this._persistAutoQualityForCurrentVisualizer()
+      this._syncPerformanceQualityControls(App.visualizerType)
 
       console.log('[Quality] adjust', {
         targetFps,
@@ -3603,16 +3781,37 @@ export default class App {
     this.performanceQualityConfig = {
       antialias: typeof initialAa === 'boolean' ? initialAa : !!this.debugAntialias,
       pixelRatio: this._snapPixelRatio(initialPr, { min: 0.25, max: 2 }),
-      Defaults: () => {
+      saveAsDefaults: () => {
+        const aa = this._getContextAntialias()
+        const pr = this.renderer?.getPixelRatio?.() || 1
+        const saved = {
+          antialias: !!aa,
+          pixelRatio: this._snapPixelRatio(pr, { min: 0.25, max: 2 }),
+        }
+        this.saveGlobalQualityDefaults(saved)
+
+        // Update the baseline state in-session (only when not locked by URL overrides).
+        if (this._baseQualityState) {
+          if (!this._baseQualityState.antialiasOverridden) this._baseQualityState.debugAntialias = saved.antialias
+          if (!this._baseQualityState.pixelRatioOverridden) this._baseQualityState.debugPixelRatio = saved.pixelRatio
+        }
+      },
+      clearUserValues: () => {
         const type = App.visualizerType
         this._clearPerVisualizerQualityOverrides(type)
-        // Revert to baseline settings immediately (and unlock dynamic quality as appropriate).
-        this._applyPerVisualizerQualityOverrides(type, { applyBaseIfNoOverride: true })
+        // Re-apply effective quality (URL > user overrides > per-visualizer auto > global defaults).
+        this._applyPerVisualizerQualityOverrides(type)
         this._syncPerformanceQualityControls(type)
       }
     }
 
-    this.performanceQualityControllers.defaults = folder.add(this.performanceQualityConfig, 'Defaults')
+    this.performanceQualityControllers.defaults = folder
+      .add(this.performanceQualityConfig, 'saveAsDefaults')
+      .name('Save As Defaults')
+
+    folder
+      .add(this.performanceQualityConfig, 'clearUserValues')
+      .name('Clear User Values')
 
     this.performanceQualityControllers.antialias = folder
       .add(this.performanceQualityConfig, 'antialias')

@@ -1515,6 +1515,17 @@ function compileAndLinkProgram(gl, { vertexSource, fragmentSource }) {
     programLog: null,
   }
 
+  const isProgram = (p) => {
+    try {
+      if (!p) return false
+      if (typeof gl?.isProgram === 'function') return !!gl.isProgram(p)
+      // If isProgram is unavailable, assume the caller passed a program.
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const compile = (type, source) => {
     const shader = gl.createShader(type)
     gl.shaderSource(shader, source)
@@ -1540,8 +1551,8 @@ function compileAndLinkProgram(gl, { vertexSource, fragmentSource }) {
   gl.attachShader(program, vs.shader)
   gl.attachShader(program, fs.shader)
   gl.linkProgram(program)
-  const linkOk = !!gl.getProgramParameter(program, gl.LINK_STATUS)
-  result.programLog = formatGlslLog(gl.getProgramInfoLog(program))
+  const linkOk = isProgram(program) ? !!gl.getProgramParameter(program, gl.LINK_STATUS) : false
+  result.programLog = isProgram(program) ? formatGlslLog(gl.getProgramInfoLog(program)) : null
   result.ok = linkOk
 
   gl.deleteProgram(program)
