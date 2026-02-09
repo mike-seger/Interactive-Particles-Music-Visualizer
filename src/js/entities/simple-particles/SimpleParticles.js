@@ -10,7 +10,7 @@ export default class SimpleParticles extends THREE.Object3D {
       particleCount: 3000,
       cloudRadius: 31,
       size: 0.5,
-      orbitSpeed: 0.15,
+      orbitSpeed: 0.045,
     }
 
     this._orbits = null
@@ -125,7 +125,7 @@ export default class SimpleParticles extends THREE.Object3D {
       const angle = baseAngle + t * orbitSpeed * speedMul
 
       // Radial oscillation: +/-20% of base radius, each particle has its own phase
-      const radius = baseRadius * (1.0 + 0.5 * Math.sin(t * 0.5 + radialPhase))
+      const radius = baseRadius * (1.0 + 0.5 * Math.sin(t * 0.15 + radialPhase))
 
       // Orbit on a tilted plane based on phi — preserves spherical shape
       const sinPhi = Math.sin(phi)
