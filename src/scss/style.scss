@@ -262,4 +262,31 @@ html:not(.icons-ready) #player-controls button {
     box-sizing: border-box;
     max-width: 100%;
   }
+
+  /* Host row for the injected close X inside the VISUALIZER TYPE title */
+  li.title.gui-close-host {
+    position: relative;
+    padding-right: 34px; /* reserve space so the label doesn't overlap the X */
+  }
+
+  li.title.gui-close-host .gui-close-x {
+    position: absolute;
+    right: 10px;
+    top: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  li.title.gui-close-host .gui-close-x:hover {
+    color: #fff;
+  }
 }

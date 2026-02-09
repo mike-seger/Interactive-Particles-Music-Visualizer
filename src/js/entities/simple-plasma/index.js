@@ -1,5 +1,5 @@
 import SimplePlasma from './SimplePlasma'
 
-export const meta = { name: 'Simple Plasma', order: 32 }
+export const meta = { name: 'Simple Plasma' }
 
 export default SimplePlasma

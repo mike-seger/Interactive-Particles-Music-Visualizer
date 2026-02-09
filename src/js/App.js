@@ -1360,7 +1360,7 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new dat.GUI()
+    App.gui = new dat.GUI({ closeOnTop: true })
 
     // Keep the controls visible above any full-screen overlay canvases.
     // (Some visualizers render into their own 2D canvas and may clear to black.)
@@ -2482,12 +2482,15 @@ export default class App {
         const syncCloseBtnSizing = () => {
           try {
             const label = (closeBtn.textContent || '').trim()
-            const isOpenControls = label.toLowerCase() === 'open controls'
+            const guiIsClosed = !!gui.closed
+            const isOpenControls = guiIsClosed || label.toLowerCase() === 'open controls'
 
             closeBtn.style.maxWidth = '100%'
             closeBtn.style.boxSizing = 'border-box'
 
             if (isOpenControls) {
+              // Collapsed state: show "Open Controls" as a small right-aligned pill.
+              closeBtn.style.display = 'block'
               closeBtn.style.width = 'fit-content'
               // Right-align to the panel border.
               // (margin-left:auto won't work if dat.GUI toggles absolute positioning.)
@@ -2501,10 +2504,18 @@ export default class App {
               // Only add horizontal padding for the small "Open Controls" pill.
               closeBtn.style.paddingLeft = '12px'
               closeBtn.style.paddingRight = '12px'
+
+              try {
+                closeBtn.removeAttribute('aria-label')
+                closeBtn.removeAttribute('title')
+              } catch {
+                // ignore
+              }
             } else {
+              // Expanded state: hide dat.GUI's close-button row and instead
+              // render a right-aligned X inside the "VISUALIZER TYPE" title row.
+              closeBtn.style.display = 'none'
               closeBtn.style.width = '100%'
-              closeBtn.style.display = 'block'
-              // Restore any overrides so the default dat.GUI spacing applies.
               closeBtn.style.paddingLeft = ''
               closeBtn.style.paddingRight = ''
               closeBtn.style.position = ''
@@ -2513,6 +2524,50 @@ export default class App {
               closeBtn.style.right = ''
               closeBtn.style.marginLeft = ''
               closeBtn.style.marginRight = ''
+              closeBtn.style.textAlign = ''
+
+              try {
+                const titleRows = Array.from(guiRoot.querySelectorAll('li.title') || [])
+                const vizTitle = titleRows.find((li) => {
+                  const t = (li?.textContent || '').trim().toLowerCase()
+                  return t === 'visualizer type'
+                })
+
+                if (vizTitle) {
+                  vizTitle.classList.add('gui-close-host')
+                  let xBtn = vizTitle.querySelector('.gui-close-x')
+                  if (!xBtn) {
+                    xBtn = document.createElement('button')
+                    xBtn.type = 'button'
+                    xBtn.className = 'gui-close-x'
+                    xBtn.textContent = '×'
+                    xBtn.setAttribute('aria-label', 'Close Controls')
+                    xBtn.setAttribute('title', 'Close Controls')
+
+                    xBtn.addEventListener('click', (e) => {
+                      try {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      } catch {
+                        // ignore
+                      }
+                      try {
+                        gui.closed = true
+                      } catch {
+                        // ignore
+                      }
+                      window.setTimeout(syncCloseBtnSizing, 0)
+                    })
+
+                    vizTitle.appendChild(xBtn)
+                  }
+
+                  // Only show the X when the GUI is actually expanded.
+                  xBtn.style.display = guiIsClosed ? 'none' : ''
+                }
+              } catch {
+                // ignore
+              }
             }
           } catch (e) {
             // ignore
