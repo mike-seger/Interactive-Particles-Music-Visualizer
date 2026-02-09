@@ -29,7 +29,8 @@ float getwaves(vec2 position, int iterations) {
   float weight = 1.0;// weight in final sum for the wave, this will change every iteration
   float sumOfValues = 0.0; // will store final sum of values
   float sumOfWeights = 0.0; // will store final sum of weights
-  for(int i=0; i < iterations; i++) {
+  for(int i=0; i < 64; i++) {
+    if(i >= iterations) break;
     // generate some wave direction that looks kind of random
     vec2 p = vec2(sin(iter), cos(iter));
     
