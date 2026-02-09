@@ -1255,7 +1255,10 @@ function ensureMainWrapper(source, opts = {}) {
   // makes the result fully transparent (appearing black) on our canvas.
   const alphaFixLine = forceOpaqueOutput ? '  fragColor.a = 1.0;\n' : ''
 
-  return `${source}\n\nvoid main() {\n  vec4 fragColor = vec4(0.0);\n  mainImage(fragColor, gl_FragCoord.xy);\n${alphaFixLine}  gl_FragColor = fragColor;\n}\n`
+  // Shadertoy semantics: fragCoord is in pixels of the *current render target*.
+  // Keeping this accurate avoids breaking shaders that do pixel addressing and
+  // feedback (e.g., writing state into specific pixel locations).
+  return `${source}\n\nvoid main() {\n  vec4 fragColor = vec4(0.0);\n  vec2 fragCoord = gl_FragCoord.xy;\n  mainImage(fragColor, fragCoord);\n${alphaFixLine}  gl_FragColor = fragColor;\n}\n`
 }
 
 function buildFragmentSource(common, passCode, opts = {}) {
@@ -1322,6 +1325,7 @@ function buildFragmentSource(common, passCode, opts = {}) {
 
   // Shadertoy uniforms (only if not already declared)
   if (!/\buniform\s+vec3\s+iResolution\b/.test(body)) prelude.push('uniform vec3 iResolution;')
+  if (!/\buniform\s+float\s+uPixelRatio\b/.test(body)) prelude.push('uniform float uPixelRatio;')
   if (!/\buniform\s+float\s+iTime\b/.test(body)) prelude.push('uniform float iTime;')
   if (!/\buniform\s+float\s+iTimeDelta\b/.test(body)) prelude.push('uniform float iTimeDelta;')
   if (!/\buniform\s+float\s+iFrameRate\b/.test(body)) prelude.push('uniform float iFrameRate;')
@@ -1964,7 +1968,8 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
 
   _makeUniforms() {
     const now = performance.now()
-    const res = this._getResolutionVec3()
+    const res = this._getRenderResolutionVec3()
+    const pr = App.renderer?.getPixelRatio?.() || 1
 
     // iChannelResolution[4]
     const chRes = [
@@ -1976,6 +1981,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
 
     return {
       iResolution: { value: res },
+      uPixelRatio: { value: pr },
       iTime: { value: 0 },
       iTimeDelta: { value: 0 },
       iFrameRate: { value: 0 },
@@ -1994,30 +2000,46 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     }
   }
 
+  _getLogicalResolutionVec3() {
+    return new THREE.Vector3(Math.max(1, window.innerWidth || 1), Math.max(1, window.innerHeight || 1), 1)
+  }
+
+  _getRenderResolutionVec3() {
+    const pr = App.renderer?.getPixelRatio?.() || 1
+    const w = Math.max(1, window.innerWidth || 1)
+    const h = Math.max(1, window.innerHeight || 1)
+    // Match renderer's internal rounding (drawingBuffer sizes are integers).
+    return new THREE.Vector3(Math.max(1, Math.floor(w * pr)), Math.max(1, Math.floor(h * pr)), 1)
+  }
+
+  // Backwards-compat: older code paths expect this name.
+  // Represents the actual render-target resolution (CSS px * pixelRatio).
   _getResolutionVec3() {
-    const dpr = App.renderer?.getPixelRatio?.() || Math.max(1, window.devicePixelRatio || 1)
-    return new THREE.Vector3(window.innerWidth * dpr, window.innerHeight * dpr, 1)
+    return this._getRenderResolutionVec3()
   }
 
   _resizeTargets() {
-    const res = this._getResolutionVec3()
+    const renderRes = this._getRenderResolutionVec3()
+    const pr = App.renderer?.getPixelRatio?.() || 1
 
     // Update all uniforms iResolution + iChannelResolution
     for (const p of this._passes) {
-      p.mat.uniforms.iResolution.value.copy(res)
+      if (p.mat.uniforms.iResolution) p.mat.uniforms.iResolution.value.copy(renderRes)
+      if (p.mat.uniforms.uPixelRatio) p.mat.uniforms.uPixelRatio.value = pr
       p.mat.uniforms.iChannelResolution.value[0].set(512, 2, 1)
-      p.mat.uniforms.iChannelResolution.value[1].set(res.x, res.y, 1)
-      p.mat.uniforms.iChannelResolution.value[2].set(res.x, res.y, 1)
-      p.mat.uniforms.iChannelResolution.value[3].set(res.x, res.y, 1)
+      p.mat.uniforms.iChannelResolution.value[1].set(renderRes.x, renderRes.y, 1)
+      p.mat.uniforms.iChannelResolution.value[2].set(renderRes.x, renderRes.y, 1)
+      p.mat.uniforms.iChannelResolution.value[3].set(renderRes.x, renderRes.y, 1)
 
       if (p.rts) {
-        p.rts[0].setSize(res.x, res.y)
-        p.rts[1].setSize(res.x, res.y)
+        p.rts[0].setSize(renderRes.x, renderRes.y)
+        p.rts[1].setSize(renderRes.x, renderRes.y)
       }
     }
 
     if (this._imageMat) {
-      this._imageMat.uniforms.iResolution.value.copy(res)
+      if (this._imageMat.uniforms.iResolution) this._imageMat.uniforms.iResolution.value.copy(renderRes)
+      if (this._imageMat.uniforms.uPixelRatio) this._imageMat.uniforms.uPixelRatio.value = pr
       // Channel 0 resolution depends on what we bind (audio/noise/cube)
       if (this._imageChannelTypes?.[0] === 'samplerCube') {
         const w = this._cubeTex?.image?.[0]?.width || 1
@@ -2028,10 +2050,16 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       } else {
         this._imageMat.uniforms.iChannelResolution.value[0].set(512, 2, 1)
       }
-      this._imageMat.uniforms.iChannelResolution.value[1].set(res.x, res.y, 1)
-      this._imageMat.uniforms.iChannelResolution.value[2].set(res.x, res.y, 1)
-      this._imageMat.uniforms.iChannelResolution.value[3].set(res.x, res.y, 1)
+      this._imageMat.uniforms.iChannelResolution.value[1].set(renderRes.x, renderRes.y, 1)
+      this._imageMat.uniforms.iChannelResolution.value[2].set(renderRes.x, renderRes.y, 1)
+      this._imageMat.uniforms.iChannelResolution.value[3].set(renderRes.x, renderRes.y, 1)
     }
+  }
+
+  onPixelRatioChange() {
+    // Pixel ratio changes affect internal render target resolution.
+    // Keep this lightweight and avoid resetting animation state.
+    this._resizeTargets()
   }
 
   _updateAudioTexture() {

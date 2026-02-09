@@ -73,7 +73,8 @@ export default class Fluid extends THREE.Object3D {
             depth: false, 
             stencil: false, 
             antialias: false, 
-            preserveDrawingBuffer: false 
+            preserveDrawingBuffer: false,
+            powerPreference: 'high-performance'
         };
         
         this.gl = this.canvas.getContext('webgl2', params);
@@ -83,7 +84,131 @@ export default class Fluid extends THREE.Object3D {
         }
         
         // Get extensions
-        const isWebGL2 = !!(this.canvas.getContext('webgl2', params));
+        const isWebGL2 =
+            typeof WebGL2RenderingContext !== 'undefined' &&
+            this.gl instanceof WebGL2RenderingContext;
+
+        try {
+            const getMergedUrlParams = () => {
+                const merged = new URLSearchParams();
+
+                const addFromQueryString = (queryString) => {
+                    if (!queryString) return;
+
+                    let qs = String(queryString);
+                    if (qs.startsWith('#')) {
+                        const idx = qs.indexOf('?');
+                        if (idx === -1) return;
+                        qs = qs.slice(idx);
+                    }
+
+                    const params = new URLSearchParams(qs);
+                    for (const [key, value] of params.entries()) {
+                        if (!merged.has(key)) merged.set(key, value);
+                    }
+
+                    for (const key of params.keys()) {
+                        if (!merged.has(key)) merged.set(key, '');
+                    }
+                };
+
+                try {
+                    addFromQueryString(window.top?.location?.search);
+                    addFromQueryString(window.top?.location?.hash);
+                } catch (e) {
+                    // ignore cross-origin
+                }
+
+                // Cross-origin embeds often block `window.top`, but `document.referrer`
+                // can still carry the host URL (and its query params).
+                try {
+                    if (document.referrer) {
+                        const refUrl = new URL(document.referrer, window.location.href);
+                        addFromQueryString(refUrl.search);
+                        addFromQueryString(refUrl.hash);
+                    }
+                } catch (e) {
+                    // ignore invalid referrer
+                }
+
+                addFromQueryString(window.location.search);
+                addFromQueryString(window.location.hash);
+
+                return merged;
+            };
+
+            const isTruthyParam = (params, name) => {
+                if (!params || !name) return false;
+                if (!params.has(name)) return false;
+                const raw = params.get(name);
+                if (raw === null) return true;
+                const value = String(raw).trim().toLowerCase();
+                if (value === '' || value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
+                if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
+                return true;
+            };
+
+            const urlParams = getMergedUrlParams();
+            const wantsGpuInfo =
+                isTruthyParam(urlParams, 'gpuInfo') ||
+                isTruthyParam(urlParams, 'gpuinfo') ||
+                isTruthyParam(urlParams, 'debugGpu') ||
+                isTruthyParam(urlParams, 'debuggpu');
+
+            if (wantsGpuInfo && this.gl) {
+                console.log('[GPU] gpuInfo enabled (Fluid)');
+                try {
+                    console.log('[GPU] href (Fluid)', window.location.href);
+                    if (document.referrer) console.log('[GPU] referrer (Fluid)', document.referrer);
+                    console.log('[GPU] param keys (Fluid)', [...urlParams.keys()]);
+                } catch (e) {
+                    // ignore
+                }
+                const dbg = this.gl.getExtension('WEBGL_debug_renderer_info');
+                const info = {
+                    unmaskedVendor: dbg
+                        ? this.gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL)
+                        : null,
+                    unmaskedRenderer: dbg
+                        ? this.gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+                        : null,
+                    vendor: this.gl.getParameter(this.gl.VENDOR),
+                    renderer: this.gl.getParameter(this.gl.RENDERER),
+                    version: this.gl.getParameter(this.gl.VERSION),
+                    shadingLanguageVersion: this.gl.getParameter(
+                        this.gl.SHADING_LANGUAGE_VERSION
+                    )
+                };
+                console.log('[Fluid WebGL]', info);
+
+                if (!this.gpuInfoIntervalId) {
+                    this.gpuInfoIntervalId = window.setInterval(() => {
+                        try {
+                            const dbg2 = this.gl.getExtension('WEBGL_debug_renderer_info');
+                            const info2 = {
+                                unmaskedVendor: dbg2
+                                    ? this.gl.getParameter(dbg2.UNMASKED_VENDOR_WEBGL)
+                                    : null,
+                                unmaskedRenderer: dbg2
+                                    ? this.gl.getParameter(dbg2.UNMASKED_RENDERER_WEBGL)
+                                    : null,
+                                vendor: this.gl.getParameter(this.gl.VENDOR),
+                                renderer: this.gl.getParameter(this.gl.RENDERER),
+                                version: this.gl.getParameter(this.gl.VERSION),
+                                shadingLanguageVersion: this.gl.getParameter(
+                                    this.gl.SHADING_LANGUAGE_VERSION
+                                )
+                            };
+                            console.log('[Fluid WebGL]', info2);
+                        } catch (e) {
+                            // ignore
+                        }
+                    }, 5000);
+                }
+            }
+        } catch (e) {
+            // Ignore URLSearchParams/WebGL debug info failures
+        }
         
         if (isWebGL2) {
             this.gl.getExtension('EXT_color_buffer_float');

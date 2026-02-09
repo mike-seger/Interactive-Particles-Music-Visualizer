@@ -7,6 +7,121 @@ import BPMManager from './managers/BPMManager'
 import { VideoSyncClient } from './sync-client/SyncClient.mjs'
 import AudioManager from './managers/AudioManager'
 
+class WebGLGpuTimer {
+  constructor(gl) {
+    this.gl = gl || null
+    this.isWebGL2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext
+    this.ext = null
+    this.supported = false
+
+    this.currentQuery = null
+    this.pendingQueries = []
+    this.lastGpuMs = null
+
+    if (!this.gl) return
+
+    try {
+      if (this.isWebGL2) {
+        this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2')
+      } else {
+        this.ext = this.gl.getExtension('EXT_disjoint_timer_query')
+      }
+      this.supported = !!this.ext
+    } catch (e) {
+      this.ext = null
+      this.supported = false
+    }
+  }
+
+  begin() {
+    if (!this.supported || !this.gl) return
+    if (this.currentQuery) return
+
+    try {
+      if (this.isWebGL2) {
+        const q = this.gl.createQuery()
+        if (!q) return
+        this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, q)
+        this.currentQuery = q
+      } else {
+        const q = this.ext.createQueryEXT()
+        if (!q) return
+        this.ext.beginQueryEXT(this.ext.TIME_ELAPSED_EXT, q)
+        this.currentQuery = q
+      }
+    } catch (e) {
+      this.currentQuery = null
+    }
+  }
+
+  end() {
+    if (!this.supported || !this.gl) return
+    if (!this.currentQuery) return
+
+    try {
+      if (this.isWebGL2) {
+        this.gl.endQuery(this.ext.TIME_ELAPSED_EXT)
+      } else {
+        this.ext.endQueryEXT(this.ext.TIME_ELAPSED_EXT)
+      }
+
+      this.pendingQueries.push(this.currentQuery)
+      this.currentQuery = null
+
+      // Avoid unbounded growth if polling falls behind.
+      while (this.pendingQueries.length > 4) {
+        const old = this.pendingQueries.shift()
+        this._deleteQuery(old)
+      }
+    } catch (e) {
+      this._deleteQuery(this.currentQuery)
+      this.currentQuery = null
+    }
+  }
+
+  poll() {
+    if (!this.supported || !this.gl) return this.lastGpuMs
+    if (this.pendingQueries.length === 0) return this.lastGpuMs
+
+    const q = this.pendingQueries[0]
+    try {
+      const available = this.isWebGL2
+        ? this.gl.getQueryParameter(q, this.gl.QUERY_RESULT_AVAILABLE)
+        : this.ext.getQueryObjectEXT(q, this.ext.QUERY_RESULT_AVAILABLE_EXT)
+
+      if (!available) return this.lastGpuMs
+
+      const disjoint = !!this.gl.getParameter(this.ext.GPU_DISJOINT_EXT)
+
+      const ns = this.isWebGL2
+        ? this.gl.getQueryParameter(q, this.gl.QUERY_RESULT)
+        : this.ext.getQueryObjectEXT(q, this.ext.QUERY_RESULT_EXT)
+
+      this.pendingQueries.shift()
+      this._deleteQuery(q)
+
+      if (!disjoint && Number.isFinite(ns)) {
+        this.lastGpuMs = ns / 1e6
+      }
+    } catch (e) {
+      this.pendingQueries.shift()
+      this._deleteQuery(q)
+    }
+
+    return this.lastGpuMs
+  }
+
+  _deleteQuery(q) {
+    if (!q || !this.gl || !this.supported) return
+    try {
+      if (this.isWebGL2) this.gl.deleteQuery(q)
+      else this.ext.deleteQueryEXT(q)
+    } catch (e) {
+      // ignore
+    }
+  }
+}
+
 export default class App {
   //THREE objects
   static holder = null
@@ -64,6 +179,20 @@ export default class App {
       fv3Presets: 'visualizer.fv3.presets',
       fv3SelectedPreset: 'visualizer.fv3.selectedPreset'
     }
+
+    // Lightweight rAF cadence stats for perf debugging.
+    this.rafStats = { lastAt: 0, frames: 0, sumDt: 0, maxDt: 0 }
+    this.lastFrameDtMs = null
+
+    // Auto-quality runtime state (initialized in init()).
+    this.autoQualityEnabled = true
+    this.autoQualityDynamic = false
+    this.autoQualityDynamicRequested = null
+    this.pixelRatioOverridden = false
+    this.pixelRatioLocked = false
+    this.antialiasOverridden = false
+    this.quality = null
+    this.qualityWindow = { frames: 0, sumDt: 0, maxDt: 0 }
   }
 
   getStoredPlaybackPosition() {
@@ -364,16 +493,471 @@ export default class App {
   init() {
     document.removeEventListener('click', this.onClickBinder)
 
+    const getMergedUrlParams = () => {
+      const merged = new URLSearchParams()
+
+      const addFromQueryString = (queryString) => {
+        if (!queryString) return
+
+        let qs = String(queryString)
+        if (qs.startsWith('#')) {
+          const idx = qs.indexOf('?')
+          if (idx === -1) return
+          qs = qs.slice(idx)
+        }
+
+        const params = new URLSearchParams(qs)
+        for (const [key, value] of params.entries()) {
+          if (!merged.has(key)) merged.set(key, value)
+        }
+
+        // Preserve valueless params like `?gpuInfo`.
+        for (const key of params.keys()) {
+          if (!merged.has(key)) merged.set(key, '')
+        }
+      }
+
+      // Prefer top-level URL params if same-origin.
+      try {
+        addFromQueryString(window.top?.location?.search)
+        addFromQueryString(window.top?.location?.hash)
+      } catch (e) {
+        // ignore cross-origin
+      }
+
+      // When embedded cross-origin, `window.top` may be inaccessible, but
+      // `document.referrer` often contains the host URL (and its query params).
+      try {
+        if (document.referrer) {
+          const refUrl = new URL(document.referrer, window.location.href)
+          addFromQueryString(refUrl.search)
+          addFromQueryString(refUrl.hash)
+        }
+      } catch (e) {
+        // ignore invalid referrer
+      }
+
+      addFromQueryString(window.location.search)
+      addFromQueryString(window.location.hash)
+
+      return merged
+    }
+
+    const isTruthyParam = (params, name) => {
+      if (!params || !name) return false
+      if (!params.has(name)) return false
+      const raw = params.get(name)
+      if (raw === null) return true
+      const value = String(raw).trim().toLowerCase()
+      if (value === '' || value === '1' || value === 'true' || value === 'yes' || value === 'on') return true
+      if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false
+      return true
+    }
+
+    const getOptionalBool = (params, ...names) => {
+      if (!params) return null
+      for (const name of names) {
+        if (params.has(name)) return isTruthyParam(params, name)
+      }
+      return null
+    }
+
+    const urlParams = getMergedUrlParams()
+
+    // Default debug profile: if a setting isn't explicitly provided via URL,
+    // apply a sensible default for performance diagnostics.
+    // Disable with `&noDefaults=1` (or `&defaults=0`).
+    const noDefaults =
+      isTruthyParam(urlParams, 'noDefaults') ||
+      isTruthyParam(urlParams, 'nodefaults') ||
+      String(urlParams.get('defaults') || '').trim() === '0'
+
+    if (!noDefaults) {
+      const defaults = {
+        perf: '1',
+        gpuInfo: '1',
+        dpr: '0.75',
+        aa: '0',
+        aqDynamic: '1',
+      }
+
+      for (const [key, value] of Object.entries(defaults)) {
+        if (!urlParams.has(key)) urlParams.set(key, value)
+      }
+
+      // Only choose a default visualizer on first-run. If the user has a stored
+      // last-visualizer choice, keep it unless they explicitly override via URL.
+      const hasVisualizerOverride = urlParams.has('visualizer') || urlParams.has('viz') || urlParams.has('v')
+      if (!hasVisualizerOverride) {
+        const stored = this.getStoredVisualizerType()
+        if (!stored) {
+          urlParams.set('visualizer', 'Shader: Skinpeeler')
+        }
+      }
+    }
+    const wantsGpuInfo =
+      isTruthyParam(urlParams, 'gpuInfo') ||
+      isTruthyParam(urlParams, 'gpuinfo') ||
+      isTruthyParam(urlParams, 'debugGpu') ||
+      isTruthyParam(urlParams, 'debuggpu')
+
+    const wantsPerf =
+      isTruthyParam(urlParams, 'perf') ||
+      isTruthyParam(urlParams, 'debugPerf') ||
+      isTruthyParam(urlParams, 'debugperf')
+
+    // Extra debug toggles useful for isolating rAF pacing vs GPU-bound rendering.
+    // - `&skipRender=1` (or `&render=0`) bypasses `renderer.render`.
+    // - `&dpr=1` (or `&pixelRatio=1`) forces renderer pixel ratio.
+    this.debugSkipRender =
+      isTruthyParam(urlParams, 'skipRender') ||
+      isTruthyParam(urlParams, 'skiprender') ||
+      isTruthyParam(urlParams, 'noRender') ||
+      isTruthyParam(urlParams, 'norender') ||
+      urlParams.get('render') === '0'
+
+    const dprOverrideRaw = urlParams.get('dpr') || urlParams.get('pixelRatio') || urlParams.get('pixelratio') || urlParams.get('pr')
+    const dprOverride = dprOverrideRaw != null && dprOverrideRaw !== '' ? Number.parseFloat(dprOverrideRaw) : NaN
+    this.debugPixelRatio = Number.isFinite(dprOverride) ? dprOverride : null
+
+    // autoQuality (default on) selects performance-friendly defaults unless
+    // explicitly overridden via query params.
+    const autoQualityOverride = getOptionalBool(urlParams, 'autoQuality', 'autoquality', 'aq')
+    this.autoQualityEnabled = autoQualityOverride == null ? true : !!autoQualityOverride
+
+    // Dynamic autoQuality can be explicitly controlled:
+    // - `&autoQualityDynamic=1` (or `&aqDynamic=1`) forces the dynamic loop on.
+    // - `&autoQualityDynamic=0` forces it off.
+    // Default (param absent): dynamic is enabled only when pixel ratio isn't explicitly overridden.
+    const autoQualityDynamicOverride = getOptionalBool(
+      urlParams,
+      'autoQualityDynamic',
+      'autoqualitydynamic',
+      'aqDynamic',
+      'aqdynamic',
+      'aqdyn'
+    )
+    this.autoQualityDynamicRequested = autoQualityDynamicOverride
+
+    // `&aa=0` disables antialias/MSAA (useful for isolating MSAA cost regressions).
+    const aaOverride = getOptionalBool(urlParams, 'aa', 'antialias', 'msaa')
+    const hasAaOverride = aaOverride != null
+    this.debugAntialias = hasAaOverride ? !!aaOverride : true
+
+    const hasPixelRatioOverride = this.debugPixelRatio != null
+
+    this.pixelRatioOverridden = !!hasPixelRatioOverride
+    this.antialiasOverridden = !!hasAaOverride
+
+    // If the user explicitly requests dynamic autoQuality, treat `dpr=` as a seed value
+    // rather than a hard lock.
+    this.pixelRatioLocked = !!hasPixelRatioOverride && autoQualityDynamicOverride !== true
+
+    // Apply autoQuality defaults only when user didn't explicitly set them.
+    // Heuristic: on high-DPR displays, cap render resolution to reduce fragment cost.
+    // (This is intentionally conservative and can be overridden with `dpr=` / `aa=`)
+    let qualityReason = 'manual'
+    if (this.autoQualityEnabled) {
+      if (!hasAaOverride) {
+        this.debugAntialias = false
+      }
+
+      if (!hasPixelRatioOverride) {
+        const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
+        const cap = deviceDpr >= 2 ? 0.75 : 1
+        this.debugPixelRatio = Math.min(deviceDpr, cap)
+        qualityReason = `auto(dpr=${deviceDpr} cap=${cap})`
+      } else {
+        qualityReason = autoQualityDynamicOverride === true ? 'auto(with pixelRatio seed)' : 'auto(with pixelRatio override)'
+      }
+    }
+
+    // Dynamic auto-quality: adjust pixelRatio over time to track display refresh.
+    // Default: disabled when user explicitly sets pixel ratio.
+    // If `autoQualityDynamic=1`, dynamic is enabled even with a pixelRatio override.
+    // If `autoQualityDynamic=0`, dynamic is disabled regardless.
+    if (autoQualityDynamicOverride === false) {
+      this.autoQualityDynamic = false
+    } else if (autoQualityDynamicOverride === true) {
+      this.autoQualityDynamic = !!this.autoQualityEnabled
+    } else {
+      this.autoQualityDynamic = this.autoQualityEnabled && !this.pixelRatioLocked
+    }
+
+    // Best-effort refresh-rate probe (Chrome doesn't expose refresh Hz directly).
+    // Runs a short rAF loop before heavy rendering starts and sets targetFps.
+    this.quality = {
+      // Start conservative; will be refined by the probe.
+      targetFps: 60,
+      refreshHz: null,
+      minPixelRatio: 0.25,
+      maxPixelRatio: Math.max(0.25, Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1),
+      // Slower cadence reduces flicker/thrashing, especially for multipass shaders
+      // that resize render targets on pixelRatio changes.
+      adjustEveryMs: 2000,
+      lastAdjustAt: 0,
+      lastStatusAt: 0,
+      lastMetric: null,
+
+      // Smoothed metrics to avoid reacting to noisy single-sample GPU queries.
+      gpuEmaMs: null,
+      rafEmaDtMs: null,
+
+      // Upscale gating: only increase quality slowly when there's sustained headroom.
+      goodGpuWindows: 0,
+      stableWindows: 0,
+      lastIncreaseAt: 0,
+      increaseCooldownMs: 12000,
+      settled: false,
+      settledAt: 0,
+    }
+
+    const probeRefreshRate = () => {
+      try {
+        const samples = []
+        let last = 0
+        const startAt = performance.now()
+        const maxMs = 700
+        const maxSamples = 90
+
+        const step = (t) => {
+          const now = Number.isFinite(t) ? t : performance.now()
+          if (last) {
+            const dt = now - last
+            if (Number.isFinite(dt) && dt > 0 && dt < 100) samples.push(dt)
+          }
+          last = now
+
+          const elapsed = now - startAt
+          if (elapsed < maxMs && samples.length < maxSamples) {
+            requestAnimationFrame(step)
+            return
+          }
+
+          if (samples.length < 10) return
+          const sorted = samples.slice().sort((a, b) => a - b)
+          const mid = sorted[Math.floor(sorted.length / 2)]
+          if (!Number.isFinite(mid) || mid <= 0) return
+          const hz = 1000 / mid
+
+          // Snap to common refresh rates.
+          const candidates = [240, 165, 144, 120, 90, 75, 60]
+          let snapped = 60
+          let bestErr = Infinity
+          for (const c of candidates) {
+            const err = Math.abs(hz - c)
+            if (err < bestErr) {
+              bestErr = err
+              snapped = c
+            }
+          }
+
+          this.quality.refreshHz = snapped
+          this.quality.targetFps = snapped
+          console.log('[Quality] refresh probe', {
+            medianDtMs: Number(mid.toFixed(2)),
+            measuredHz: Number(hz.toFixed(1)),
+            snappedHz: snapped,
+          })
+        }
+
+        requestAnimationFrame(step)
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (this.autoQualityDynamic) probeRefreshRate()
+
+    try {
+      const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : null
+      console.log('[Quality]', {
+        autoQuality: this.autoQualityEnabled,
+        dynamic: this.autoQualityDynamic,
+        dynamicRequested: this.autoQualityDynamicRequested,
+        reason: qualityReason,
+        deviceDpr,
+        pixelRatio: this.debugPixelRatio,
+        antialias: this.debugAntialias,
+        pixelRatioOverridden: hasPixelRatioOverride,
+        pixelRatioLocked: this.pixelRatioLocked,
+        antialiasOverridden: hasAaOverride,
+      })
+    } catch (e) {
+      // ignore
+    }
+
+    // Persist debug flags/merged params for later (createManagers, per-frame timing).
+    this.urlParams = urlParams
+    this.perfEnabled = wantsPerf
+    if (this.perfEnabled) {
+      this.perfState = {
+        visualizerUpdateMs: 0,
+        audioUpdateMs: 0,
+        renderMs: 0,
+        totalMs: 0,
+        gpuRenderMs: null,
+      }
+      console.log('[Perf] perf enabled (add `?perf=1` to the URL)')
+
+      if (!this.perfIntervalId) {
+        this.perfIntervalId = window.setInterval(() => {
+          try {
+            const snapshotNow = performance.now()
+            const sampleMs = Number.isFinite(this.perfSnapshotLastAt) ? (snapshotNow - this.perfSnapshotLastAt) : null
+            this.perfSnapshotLastAt = snapshotNow
+
+            const lastFrameDtMs = Number.isFinite(this.lastFrameDtMs) ? this.lastFrameDtMs : null
+
+            let rafFrames = null
+            let avgRafDtMs = null
+            let maxRafDtMs = null
+            let rafFps = null
+            if (this.rafStats && Number.isFinite(this.rafStats.frames) && this.rafStats.frames > 0) {
+              rafFrames = this.rafStats.frames
+              avgRafDtMs = this.rafStats.sumDt / this.rafStats.frames
+              maxRafDtMs = this.rafStats.maxDt
+              rafFps = avgRafDtMs > 0 ? (1000 / avgRafDtMs) : null
+
+              // Reset sample window while keeping `lastAt` intact.
+              this.rafStats.frames = 0
+              this.rafStats.sumDt = 0
+              this.rafStats.maxDt = 0
+            }
+
+            const fps = this.fpsState?.fpsEma
+            const gl = this.renderer?.getContext?.()
+            const ctxAttrs = gl?.getContextAttributes?.() || null
+            const canvas = this.renderer?.domElement || null
+            const snapshot = {
+              t: Number((snapshotNow / 1000).toFixed(3)),
+              sampleMs: Number.isFinite(sampleMs) ? Number(sampleMs.toFixed(0)) : null,
+              fps: Number.isFinite(fps) ? Number(fps.toFixed(2)) : null,
+              dpr: Number.isFinite(window.devicePixelRatio) ? Number(window.devicePixelRatio.toFixed(3)) : null,
+              pixelRatio: Number.isFinite(this.renderer?.getPixelRatio?.()) ? Number(this.renderer.getPixelRatio().toFixed(3)) : null,
+              autoQuality: typeof this.autoQualityEnabled === 'boolean' ? this.autoQualityEnabled : null,
+              aaReq: typeof this.debugAntialias === 'boolean' ? this.debugAntialias : null,
+              aa: typeof ctxAttrs?.antialias === 'boolean' ? ctxAttrs.antialias : null,
+              skipRender: !!this.debugSkipRender,
+              dbw: Number.isFinite(gl?.drawingBufferWidth) ? gl.drawingBufferWidth : null,
+              dbh: Number.isFinite(gl?.drawingBufferHeight) ? gl.drawingBufferHeight : null,
+              canvasW: Number.isFinite(canvas?.width) ? canvas.width : null,
+              canvasH: Number.isFinite(canvas?.height) ? canvas.height : null,
+              clientW: Number.isFinite(canvas?.clientWidth) ? canvas.clientWidth : null,
+              clientH: Number.isFinite(canvas?.clientHeight) ? canvas.clientHeight : null,
+              lastFrameDtMs: Number.isFinite(lastFrameDtMs) ? Number(lastFrameDtMs.toFixed(2)) : null,
+              rafFrames,
+              avgRafDtMs: Number.isFinite(avgRafDtMs) ? Number(avgRafDtMs.toFixed(2)) : null,
+              maxRafDtMs: Number.isFinite(maxRafDtMs) ? Number(maxRafDtMs.toFixed(2)) : null,
+              rafFps: Number.isFinite(rafFps) ? Number(rafFps.toFixed(2)) : null,
+              updMs: Number.isFinite(this.perfState?.visualizerUpdateMs) ? Number(this.perfState.visualizerUpdateMs.toFixed(2)) : null,
+              audMs: Number.isFinite(this.perfState?.audioUpdateMs) ? Number(this.perfState.audioUpdateMs.toFixed(2)) : null,
+              rndMs: Number.isFinite(this.perfState?.renderMs) ? Number(this.perfState.renderMs.toFixed(2)) : null,
+              gpuMs: Number.isFinite(this.perfState?.gpuRenderMs) ? Number(this.perfState.gpuRenderMs.toFixed(2)) : null,
+              totMs: Number.isFinite(this.perfState?.totalMs) ? Number(this.perfState.totalMs.toFixed(2)) : null,
+              visualizer: App.visualizerType || null,
+              visibility: document.visibilityState || null,
+            }
+
+            console.log('[Perf]', snapshot)
+            console.log('[PerfJSON]', JSON.stringify(snapshot))
+          } catch (e) {
+            // ignore
+          }
+        }, 5000)
+
+        window.addEventListener('beforeunload', () => {
+          try {
+            if (this.perfIntervalId) {
+              clearInterval(this.perfIntervalId)
+              this.perfIntervalId = null
+            }
+          } catch (e) {
+            // ignore
+          }
+        })
+      }
+    }
+
     // Hotkeys: numpad + / - to cycle visualizers
     window.addEventListener('keydown', this.onKeyDown)
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: this.debugAntialias,
       alpha: true,
+      powerPreference: 'high-performance',
     })
+
+    if (this.perfEnabled) {
+      try {
+        console.log('[Perf] antialias requested:', this.debugAntialias)
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (this.debugPixelRatio != null) {
+      try {
+        const clamped = Math.max(0.25, Math.min(4, this.debugPixelRatio))
+        this.renderer.setPixelRatio(clamped)
+        console.log('[Perf] pixelRatio override:', clamped)
+
+        // Keep quality bounds in sync with an explicitly set starting ratio.
+        if (this.quality) {
+          this.quality.maxPixelRatio = Math.max(this.quality.maxPixelRatio, clamped)
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (wantsGpuInfo) {
+      console.log('[GPU] gpuInfo enabled (add `?gpuInfo=1` to the URL)')
+      try {
+        console.log('[GPU] href', window.location.href)
+        if (document.referrer) console.log('[GPU] referrer', document.referrer)
+        console.log('[GPU] param keys', [...urlParams.keys()])
+      } catch (e) {
+        // ignore
+      }
+      this.logWebGLInfo(this.renderer.getContext(), 'THREE.WebGLRenderer')
+
+      // Periodic logging helps compare Stable vs Canary over time.
+      // Keep it low-frequency to avoid console overhead.
+      if (!this.gpuInfoIntervalId) {
+        this.gpuInfoIntervalId = window.setInterval(() => {
+          try {
+            this.logWebGLInfo(this.renderer?.getContext?.(), 'THREE.WebGLRenderer')
+          } catch (e) {
+            // ignore
+          }
+        }, 5000)
+
+        window.addEventListener('beforeunload', () => {
+          try {
+            if (this.gpuInfoIntervalId) {
+              clearInterval(this.gpuInfoIntervalId)
+              this.gpuInfoIntervalId = null
+            }
+          } catch (e) {
+            // ignore
+          }
+        })
+      }
+    }
 
     // Expose renderer for visualizers needing post-processing
     App.renderer = this.renderer
+
+    if (this.perfEnabled) {
+      try {
+        const gl = this.renderer.getContext()
+        this.gpuTimer = new WebGLGpuTimer(gl)
+        console.log('[Perf] GPU timer query support:', !!this.gpuTimer?.supported)
+      } catch (e) {
+        this.gpuTimer = null
+      }
+    }
 
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.setSize(window.innerWidth, window.innerHeight)
@@ -424,6 +1008,33 @@ export default class App {
     window.addEventListener('resize', () => this.resize())
   }
 
+  logWebGLInfo(gl, label = 'WebGL') {
+    try {
+      if (!gl) return
+
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info')
+      const unmaskedVendor = debugInfo
+        ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL)
+        : null
+      const unmaskedRenderer = debugInfo
+        ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+        : null
+
+      const info = {
+        unmaskedVendor,
+        unmaskedRenderer,
+        vendor: gl.getParameter(gl.VENDOR),
+        renderer: gl.getParameter(gl.RENDERER),
+        version: gl.getParameter(gl.VERSION),
+        shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+      }
+
+      console.log(`[${label}]`, info)
+    } catch (e) {
+      console.warn(`[${label}] Failed to query WebGL info:`, e)
+    }
+  }
+
   async createManagers() {
     App.audioManager = new AudioManager()
     
@@ -452,7 +1063,47 @@ export default class App {
 
     // Initialize last-used visualizer (fallback to default)
     const storedVisualizer = this.getStoredVisualizerType()
-    this.switchVisualizer(storedVisualizer || 'Reactive Particles', { notify: false })
+    const urlParams = this.urlParams || new URLSearchParams(window.location.search || '')
+    const urlVisualizerRaw = urlParams.get('visualizer') || urlParams.get('viz') || urlParams.get('v')
+
+    const getAllVisualizerNames = () => {
+      if (Array.isArray(App.visualizerList) && App.visualizerList.length > 0) return App.visualizerList
+      return [...ENTITY_VISUALIZER_NAMES, ...SHADER_VISUALIZER_NAMES]
+    }
+
+    const resolveVisualizerName = (name) => {
+      if (!name) return null
+      const trimmed = String(name).trim()
+      if (!trimmed) return null
+
+      const all = getAllVisualizerNames()
+      const exact = all.find((n) => n === trimmed)
+      if (exact) return exact
+
+      const lower = trimmed.toLowerCase()
+      const ci = all.find((n) => String(n).toLowerCase() === lower)
+      if (ci) return ci
+
+      // Convenience: allow `Starbattle` instead of `Shader: Starbattle`.
+      const shaderPrefixed = `Shader: ${trimmed}`
+      const shaderExact = all.find((n) => n === shaderPrefixed)
+      if (shaderExact) return shaderExact
+
+      const shaderCi = all.find((n) => String(n).toLowerCase() === shaderPrefixed.toLowerCase())
+      if (shaderCi) return shaderCi
+
+      return null
+    }
+
+    const urlVisualizer = resolveVisualizerName(urlVisualizerRaw)
+    if (urlVisualizerRaw && !urlVisualizer) {
+      console.warn('[Visualizer] Unknown `visualizer` param:', urlVisualizerRaw)
+    }
+    if (urlVisualizer) {
+      console.log('[Visualizer] URL override visualizer:', urlVisualizer)
+    }
+
+    this.switchVisualizer(urlVisualizer || storedVisualizer || 'Reactive Particles', { notify: false })
     
     // Add visualizer switcher to GUI
     this.addVisualizerSwitcher()
@@ -522,13 +1173,49 @@ export default class App {
 
     this.camera.aspect = this.width / this.height
     this.camera.updateProjectionMatrix()
-    this.renderer.setSize(this.width, this.height)
+    // Avoid touching canvas CSS size; only update drawing buffer.
+    this.renderer.setSize(this.width, this.height, false)
+
+    // Some visualizers use raw WebGL calls; keep viewport/scissor sane.
+    try {
+      this.renderer.setScissorTest(false)
+      this.renderer.setViewport(0, 0, this.width, this.height)
+    } catch (e) {
+      // ignore
+    }
   }
 
   update(now) {
     requestAnimationFrame((t) => this.update(t))
 
-    this.tickFpsCounter(Number.isFinite(now) ? now : performance.now())
+    const frameNow = Number.isFinite(now) ? now : performance.now()
+    const perfStart = this.perfEnabled ? performance.now() : 0
+
+    // Track rAF cadence independent of FPS EMA.
+    if (this.rafStats) {
+      if (this.rafStats.lastAt) {
+        const dt = frameNow - this.rafStats.lastAt
+        if (Number.isFinite(dt) && dt >= 0) {
+          this.rafStats.frames += 1
+          this.rafStats.sumDt += dt
+          if (dt > this.rafStats.maxDt) this.rafStats.maxDt = dt
+          this.lastFrameDtMs = dt
+        }
+      }
+      this.rafStats.lastAt = frameNow
+    }
+
+    // Track a window for auto-quality adjustments.
+    if (this.qualityWindow && Number.isFinite(this.lastFrameDtMs)) {
+      const dt = this.lastFrameDtMs
+      if (dt >= 0 && dt < 1000) {
+        this.qualityWindow.frames += 1
+        this.qualityWindow.sumDt += dt
+        if (dt > this.qualityWindow.maxDt) this.qualityWindow.maxDt = dt
+      }
+    }
+
+    this.tickFpsCounter(frameNow)
 
     // Update visualizer with audio data
     const audioData = App.audioManager ? {
@@ -541,12 +1228,277 @@ export default class App {
     } : null
     
     const activeVisualizer = App.currentVisualizer
+    const t0 = this.perfEnabled ? performance.now() : 0
     activeVisualizer?.update(audioData)
+    const t1 = this.perfEnabled ? performance.now() : 0
+
     App.audioManager.update()
+    const t2 = this.perfEnabled ? performance.now() : 0
 
     // Some visualizers render into their own canvas/renderer.
     if (!activeVisualizer?.rendersSelf) {
-      this.renderer.render(this.scene, this.camera)
+      const r0 = this.perfEnabled ? performance.now() : 0
+
+      if (!this.debugSkipRender) {
+        if (this.perfEnabled && this.gpuTimer?.supported) {
+          this.gpuTimer.begin()
+        }
+
+        // Defensive: ensure viewport wasn't modified by raw GL code.
+        if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+          try {
+            this.renderer.setScissorTest(false)
+            this.renderer.setViewport(0, 0, this.width, this.height)
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        this.renderer.render(this.scene, this.camera)
+
+        if (this.perfEnabled && this.gpuTimer?.supported) {
+          this.gpuTimer.end()
+        }
+      }
+
+      const r1 = this.perfEnabled ? performance.now() : 0
+      if (this.perfEnabled && this.perfState) this.perfState.renderMs = r1 - r0
+    } else if (this.perfEnabled && this.perfState) {
+      this.perfState.renderMs = 0
+    }
+
+    if (this.perfEnabled && this.perfState) {
+      this.perfState.visualizerUpdateMs = t1 - t0
+      this.perfState.audioUpdateMs = t2 - t1
+      this.perfState.totalMs = performance.now() - perfStart
+
+      if (this.gpuTimer?.supported) {
+        this.perfState.gpuRenderMs = this.gpuTimer.poll()
+      } else {
+        this.perfState.gpuRenderMs = null
+      }
+    }
+
+    // Dynamic auto-quality adjustment (pixelRatio) to track target refresh.
+    this.maybeAdjustQuality(frameNow)
+  }
+
+  maybeAdjustQuality(frameNow) {
+    try {
+      if (!this.autoQualityDynamic || !this.quality || !this.renderer) return
+      if (this.pixelRatioLocked) return
+      if (this.debugSkipRender) return
+
+      const v = App.currentVisualizer
+      if (v?.rendersSelf) return
+
+      const nowMs = Number.isFinite(frameNow) ? frameNow : performance.now()
+
+      // Periodic status log (helps confirm the loop is running).
+      if (!this.quality.lastStatusAt || (nowMs - this.quality.lastStatusAt) >= 5000) {
+        this.quality.lastStatusAt = nowMs
+        const cur = this.renderer.getPixelRatio?.() || 1
+        console.log('[Quality] status', {
+          targetFps: this.quality.targetFps,
+          refreshHz: this.quality.refreshHz,
+          pixelRatio: Number(cur.toFixed(3)),
+          minPixelRatio: this.quality.minPixelRatio,
+          maxPixelRatio: this.quality.maxPixelRatio,
+          settled: !!this.quality.settled,
+          rafEmaDtMs: Number.isFinite(this.quality.rafEmaDtMs) ? Number(this.quality.rafEmaDtMs.toFixed(2)) : null,
+          gpuEmaMs: Number.isFinite(this.quality.gpuEmaMs) ? Number(this.quality.gpuEmaMs.toFixed(2)) : null,
+          metric: this.quality.lastMetric,
+        })
+      }
+
+      if (this.quality.lastAdjustAt && (nowMs - this.quality.lastAdjustAt) < this.quality.adjustEveryMs) return
+
+      const targetFps = Math.max(10, Math.min(240, this.quality.targetFps || 60))
+      const targetFrameMs = 1000 / targetFps
+
+      const currentRatio = this.renderer.getPixelRatio?.() || 1
+      const minRatio = this.quality.minPixelRatio
+      const maxRatio = this.quality.maxPixelRatio
+
+      // Prefer rAF cadence for *downscaling* decisions (represents frame pacing).
+      // Use GPU timer (smoothed) only for cautious *upscaling*.
+      const gpuMs = Number.isFinite(this.perfState?.gpuRenderMs) ? this.perfState.gpuRenderMs : null
+      const avgDt = (this.qualityWindow?.frames > 0)
+        ? (this.qualityWindow.sumDt / this.qualityWindow.frames)
+        : null
+
+      // Update EMA metrics (guard against outliers).
+      if (avgDt != null && Number.isFinite(avgDt) && avgDt > 0 && avgDt < 1000) {
+        const a = 0.25
+        this.quality.rafEmaDtMs = (this.quality.rafEmaDtMs == null)
+          ? avgDt
+          : (this.quality.rafEmaDtMs * (1 - a) + avgDt * a)
+      }
+
+      if (gpuMs != null && Number.isFinite(gpuMs) && gpuMs > 0 && gpuMs < 1000) {
+        const a = 0.18
+        // If a sample jumps wildly, treat it as noise unless rAF cadence also indicates trouble.
+        const prev = this.quality.gpuEmaMs
+        const rafSuggestsSlow = Number.isFinite(this.quality.rafEmaDtMs)
+          ? (this.quality.rafEmaDtMs > (1000 / targetFps) * 1.08)
+          : false
+
+        const isWildJump = (prev != null) ? (gpuMs > prev * 2.2 || gpuMs < prev * 0.45) : false
+        if (!isWildJump || rafSuggestsSlow) {
+          this.quality.gpuEmaMs = (prev == null) ? gpuMs : (prev * (1 - a) + gpuMs * a)
+        }
+      }
+
+      let factor = 1
+      let basis = 'none'
+      let metric = null
+
+      const rafMetric = Number.isFinite(this.quality.rafEmaDtMs) ? this.quality.rafEmaDtMs : avgDt
+      const gpuMetric = Number.isFinite(this.quality.gpuEmaMs) ? this.quality.gpuEmaMs : null
+
+      // (1) Downscale quickly when we're missing the target.
+      if (rafMetric != null && rafMetric > 0) {
+        basis = 'rafEmaDtMs'
+        metric = rafMetric
+
+        if (rafMetric > targetFrameMs * 1.06) {
+          // Pixel cost is ~ratio^2, so scale ratio by sqrt(time ratio).
+          const desired = Math.sqrt((targetFrameMs * 0.93) / rafMetric)
+          factor = Math.max(0.60, Math.min(0.97, desired))
+          this.quality.settled = false
+          this.quality.stableWindows = 0
+        }
+      }
+
+      // (2) Upscale very cautiously only when we have sustained headroom.
+      if (factor === 1 && gpuMetric != null) {
+        const withinVsyncBand = (rafMetric != null)
+          ? (Math.abs(rafMetric - targetFrameMs) <= Math.max(0.9, targetFrameMs * 0.06))
+          : true
+
+        if (withinVsyncBand) {
+          // Require sustained, meaningful headroom before increasing.
+          const headroom = gpuMetric < targetFrameMs * 0.86
+          this.quality.goodGpuWindows = headroom ? (this.quality.goodGpuWindows + 1) : 0
+        } else {
+          this.quality.goodGpuWindows = 0
+        }
+
+        // Consider ourselves settled once we sit near target for a while.
+        const inFrameBand = (rafMetric != null)
+          ? (rafMetric <= targetFrameMs * 1.03)
+          : true
+        // Consider settled when we're close to target but with some safety margin.
+        const inGpuBand = gpuMetric >= targetFrameMs * 0.84 && gpuMetric <= targetFrameMs * 0.93
+
+        if (inFrameBand && inGpuBand) {
+          this.quality.stableWindows = (this.quality.stableWindows || 0) + 1
+          if (!this.quality.settled && this.quality.stableWindows >= 4) {
+            this.quality.settled = true
+            this.quality.settledAt = nowMs
+          }
+        } else {
+          this.quality.stableWindows = 0
+          if (rafMetric != null && rafMetric > targetFrameMs * 1.06) {
+            this.quality.settled = false
+          }
+        }
+
+        const canIncrease = !this.quality.settled
+          && (nowMs - (this.quality.lastIncreaseAt || 0)) >= this.quality.increaseCooldownMs
+          && this.quality.goodGpuWindows >= 3
+
+        if (canIncrease) {
+          basis = 'gpuEmaMs'
+          metric = gpuMetric
+          // Small step to avoid oscillation (GPU timer is noisy).
+          const desired = Math.sqrt((targetFrameMs * 0.90) / Math.max(0.001, gpuMetric))
+          factor = Math.max(1.01, Math.min(1.03, desired))
+        }
+      }
+
+      if (factor === 1 && (rafMetric == null && gpuMetric == null)) return
+
+      this.quality.lastMetric = {
+        basis,
+        value: metric != null ? Number(metric.toFixed(2)) : null,
+        targetFrameMs: Number(targetFrameMs.toFixed(2)),
+      }
+
+      const nextRatioRaw = currentRatio * factor
+      const nextRatio = Math.max(minRatio, Math.min(maxRatio, nextRatioRaw))
+      const delta = Math.abs(nextRatio - currentRatio)
+
+      const minDelta = Math.max(0.005, currentRatio * 0.02)
+      if (delta < minDelta) {
+        // Still reset the window so the next decision uses fresh data.
+        if (this.qualityWindow) {
+          this.qualityWindow.frames = 0
+          this.qualityWindow.sumDt = 0
+          this.qualityWindow.maxDt = 0
+        }
+        this.quality.lastAdjustAt = nowMs
+        return
+      }
+
+      this.renderer.setPixelRatio(nextRatio)
+      // Keep CSS size and camera projection stable; just refresh drawing buffer.
+      if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+        this.renderer.setSize(this.width, this.height, false)
+      }
+
+      if (nextRatio > currentRatio) {
+        this.quality.lastIncreaseAt = nowMs
+      }
+
+      // Notify active visualizer about pixelRatio change without doing a full
+      // window-resize path (which can reset animation state or cause flicker).
+      try {
+        const v = App.currentVisualizer
+        if (v && typeof v.onPixelRatioChange === 'function') {
+          v.onPixelRatioChange(nextRatio, currentRatio)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Resync renderer WebGL state after a drawing-buffer resize.
+      // (Needed when other code uses raw `gl.viewport` / scissor and desyncs Three's state cache.)
+      try {
+        if (typeof this.renderer.resetState === 'function') {
+          this.renderer.resetState()
+        }
+        if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+          this.renderer.setScissorTest(false)
+          this.renderer.setViewport(0, 0, this.width, this.height)
+        }
+        const gl = this.renderer.getContext?.()
+        if (gl?.drawingBufferWidth && gl?.drawingBufferHeight) {
+          gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Reset window after applying a change.
+      if (this.qualityWindow) {
+        this.qualityWindow.frames = 0
+        this.qualityWindow.sumDt = 0
+        this.qualityWindow.maxDt = 0
+      }
+
+      this.quality.lastAdjustAt = nowMs
+
+      console.log('[Quality] adjust', {
+        targetFps,
+        targetFrameMs: Number(targetFrameMs.toFixed(2)),
+        from: Number(currentRatio.toFixed(3)),
+        to: Number(nextRatio.toFixed(3)),
+        basis,
+        metric: metric != null ? Number(metric.toFixed(2)) : null,
+      })
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -575,6 +1527,7 @@ export default class App {
 
     const fpsText = Number.isFinite(state.fpsEma) ? state.fpsEma.toFixed(1) : '--'
     const dtText = Number.isFinite(dtMs) ? dtMs.toFixed(1) : '--'
+
     this.fpsDisplay.textContent = `FPS: ${fpsText} (${dtText}ms)`
   }
   

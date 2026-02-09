@@ -26,6 +26,7 @@ precision highp float;
 varying vec2 vUv;
 
 uniform vec3 iResolution;
+uniform float uPixelRatio;
 uniform float iTime;
 uniform sampler2D iChannel0;
 
@@ -160,8 +161,9 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 }
 
 vec3 renderAt(vec2 fragCoord) {
-  // Use pixel coordinates for perfectly regular tiles.
-  vec2 fc = floor(fragCoord);
+  // Use continuous coordinates so changing internal render resolution (pixelRatio)
+  // doesn't create uneven stepping artifacts.
+  vec2 fc = fragCoord;
   vec2 uv = fc.xy / iResolution.xy;
   vec3 col = vec3(0.0);
   
@@ -402,7 +404,8 @@ vec3 renderAt(vec2 fragCoord) {
 }
 
 void main() {
-  gl_FragColor = vec4(renderAt(gl_FragCoord.xy), 1.0);
+  vec2 fragCoord = gl_FragCoord.xy / max(0.001, uPixelRatio);
+  gl_FragColor = vec4(renderAt(fragCoord), 1.0);
 }
 `
 
@@ -484,6 +487,7 @@ export default class FrequencyVisualization extends THREE.Object3D {
       fragmentShader: FRAG,
       uniforms: {
         iResolution: { value: new THREE.Vector3(1, 1, 1) },
+        uPixelRatio: { value: 1 },
         iTime: { value: 0 },
         iChannel0: { value: this._audioTex },
         uVBars: { value: this._vBars },
@@ -744,12 +748,24 @@ export default class FrequencyVisualization extends THREE.Object3D {
 
   _syncResolution() {
     if (!this._mat) return
-    this._mat.uniforms.iResolution.value.set(window.innerWidth, window.innerHeight, 1)
+    const pr = App.renderer?.getPixelRatio?.() || 1
+    const w = Math.max(1, window.innerWidth || 1)
+    const h = Math.max(1, window.innerHeight || 1)
+    this._mat.uniforms.iResolution.value.set(w, h, 1)
+    if (this._mat.uniforms.uPixelRatio) this._mat.uniforms.uPixelRatio.value = pr
 
     // Keep bar pixel pitch stable on resize.
     if (this._analyser) {
       this._bindAnalyser()
     }
+  }
+
+  // Called by App when renderer pixelRatio changes (dynamic quality).
+  // Keep this minimal to avoid visual hiccups.
+  onPixelRatioChange() {
+    if (!this._mat) return
+    const pr = App.renderer?.getPixelRatio?.() || 1
+    if (this._mat.uniforms.uPixelRatio) this._mat.uniforms.uPixelRatio.value = pr
   }
 
   destroy() {
