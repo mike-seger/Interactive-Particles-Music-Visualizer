@@ -180,6 +180,20 @@ export default class App {
       fv3SelectedPreset: 'visualizer.fv3.selectedPreset'
     }
 
+    // Per-visualizer quality overrides (localStorage keys are derived from visualizer type).
+    this.performanceQualityFolder = null
+    this.performanceQualityConfig = null
+    this.performanceQualityControllers = {
+      antialias: null,
+      pixelRatio: null,
+      defaults: null,
+    }
+    this._syncingPerformanceQualityGui = false
+
+    // Snapshot of the initial (URL/defaults-derived) quality state so we can
+    // revert when per-visualizer overrides are cleared.
+    this._baseQualityState = null
+
     // Lightweight rAF cadence stats for perf debugging.
     this.rafStats = { lastAt: 0, frames: 0, sumDt: 0, maxDt: 0 }
     this.lastFrameDtMs = null
@@ -248,6 +262,153 @@ export default class App {
     } catch (error) {
       // ignore storage errors
     }
+  }
+
+  _getPerVisualizerQualityKeys(type) {
+    const t = String(type || '').trim()
+    return {
+      antiAlias: `visualizer[${t}].quality.antiAlias`,
+      pixelRatio: `visualizer[${t}].quality.pixelRatio`,
+    }
+  }
+
+  _readPerVisualizerQualityOverrides(type) {
+    try {
+      const { antiAlias, pixelRatio } = this._getPerVisualizerQualityKeys(type)
+      const aaRaw = window.localStorage.getItem(antiAlias)
+      const prRaw = window.localStorage.getItem(pixelRatio)
+
+      let aa = null
+      if (aaRaw != null) {
+        const v = String(aaRaw).trim().toLowerCase()
+        aa = (v === '' || v === '1' || v === 'true' || v === 'yes' || v === 'on')
+      }
+
+      let pr = null
+      if (prRaw != null && prRaw !== '') {
+        const parsed = Number.parseFloat(prRaw)
+        const allowed = [0.25, 0.5, 1, 2]
+        pr = Number.isFinite(parsed) && allowed.includes(parsed) ? parsed : null
+      }
+
+      return { antialias: aa, pixelRatio: pr }
+    } catch (e) {
+      return { antialias: null, pixelRatio: null }
+    }
+  }
+
+  _writePerVisualizerQualityOverride(type, { antialias, pixelRatio } = {}) {
+    try {
+      const keys = this._getPerVisualizerQualityKeys(type)
+
+      if (antialias == null) {
+        window.localStorage.removeItem(keys.antiAlias)
+      } else {
+        window.localStorage.setItem(keys.antiAlias, antialias ? '1' : '0')
+      }
+
+      if (pixelRatio == null) {
+        window.localStorage.removeItem(keys.pixelRatio)
+      } else {
+        const allowed = [0.25, 0.5, 1, 2]
+        const pr = Number.isFinite(pixelRatio) && allowed.includes(pixelRatio) ? pixelRatio : null
+        if (pr == null) window.localStorage.removeItem(keys.pixelRatio)
+        else window.localStorage.setItem(keys.pixelRatio, String(pr))
+      }
+    } catch (e) {
+      // ignore storage errors
+    }
+  }
+
+  _clearPerVisualizerQualityOverrides(type) {
+    try {
+      const keys = this._getPerVisualizerQualityKeys(type)
+      window.localStorage.removeItem(keys.antiAlias)
+      window.localStorage.removeItem(keys.pixelRatio)
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _applyPerVisualizerQualityOverrides(type, { applyBaseIfNoOverride = false } = {}) {
+    const base = this._baseQualityState
+    const overrides = this._readPerVisualizerQualityOverrides(type)
+    const hasAaOverride = overrides.antialias != null
+    const hasPrOverride = overrides.pixelRatio != null
+
+    // Update effective flags (dynamic loop reads these).
+    if (base) {
+      this.antialiasOverridden = hasAaOverride ? true : !!base.antialiasOverridden
+      this.pixelRatioOverridden = hasPrOverride ? true : !!base.pixelRatioOverridden
+      this.pixelRatioLocked = hasPrOverride ? true : !!base.pixelRatioLocked
+
+      this.debugAntialias = hasAaOverride ? !!overrides.antialias : base.debugAntialias
+      this.debugPixelRatio = hasPrOverride ? overrides.pixelRatio : base.debugPixelRatio
+
+      // Keep dynamic quality disabled whenever pixelRatio is locked.
+      this.autoQualityDynamic = !!base.autoQualityDynamic && !this.pixelRatioLocked
+    }
+
+    if (!this.renderer) return
+
+    // Apply AA override by recreating renderer if needed.
+    if (hasAaOverride) {
+      const curAa = this._getContextAntialias()
+      const desiredAa = !!overrides.antialias
+      if (curAa !== desiredAa) {
+        this._recreateRendererWithAntialias(desiredAa)
+      }
+    } else if (applyBaseIfNoOverride && base && typeof base.debugAntialias === 'boolean') {
+      const curAa = this._getContextAntialias()
+      if (curAa !== base.debugAntialias) {
+        this._recreateRendererWithAntialias(!!base.debugAntialias)
+      }
+    }
+
+    // Apply pixelRatio override.
+    const targetPr = hasPrOverride
+      ? overrides.pixelRatio
+      : (applyBaseIfNoOverride && base && Number.isFinite(base.debugPixelRatio) ? base.debugPixelRatio : null)
+
+    if (targetPr != null && Number.isFinite(targetPr)) {
+      const oldPr = this.renderer.getPixelRatio?.() || 1
+      if (Math.abs(oldPr - targetPr) > 1e-6) {
+        this.renderer.setPixelRatio(targetPr)
+        if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+          this.renderer.setSize(this.width, this.height, false)
+        }
+        try {
+          const v = App.currentVisualizer
+          if (v && typeof v.onPixelRatioChange === 'function') {
+            v.onPixelRatioChange(targetPr, oldPr)
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+  }
+
+  _syncPerformanceQualityControls(type) {
+    if (!this.performanceQualityConfig || !this.renderer) return
+    const overrides = this._readPerVisualizerQualityOverrides(type)
+
+    const effectiveAa = (overrides.antialias != null)
+      ? !!overrides.antialias
+      : (this._getContextAntialias() ?? !!this.debugAntialias)
+
+    const effectivePr = (overrides.pixelRatio != null)
+      ? overrides.pixelRatio
+      : (this.renderer.getPixelRatio?.() || 1)
+
+    this._syncingPerformanceQualityGui = true
+    this.performanceQualityConfig.antialias = !!effectiveAa
+    this.performanceQualityConfig.pixelRatio = this._snapPixelRatio(effectivePr, { min: 0.25, max: 2 })
+    this._syncingPerformanceQualityGui = false
+
+    const ctrls = this.performanceQualityControllers
+    if (ctrls?.antialias?.updateDisplay) ctrls.antialias.updateDisplay()
+    if (ctrls?.pixelRatio?.updateDisplay) ctrls.pixelRatio.updateDisplay()
   }
 
   restoreSessionOnPlay() {
@@ -595,9 +756,10 @@ export default class App {
       const defaults = {
         perf: '1',
         gpuInfo: '1',
-        dpr: '0.75',
-        // Start with antialias enabled; auto-quality may disable it if needed.
-        aa: '1',
+        // Baseline defaults (can be overridden by URL params or per-visualizer overrides).
+        // Note: we still treat injected defaults as "soft" (not hard user overrides).
+        dpr: '2',
+        aa: '0',
         aqDynamic: '1',
       }
 
@@ -675,7 +837,8 @@ export default class App {
     const aaOverride = aaKey ? isTruthyParam(urlParams, aaKey) : null
     const injectedDefaults = this._injectedDefaultParams
     const hasAaOverride = aaOverride != null && !(aaKey === 'aa' && injectedDefaults?.has?.('aa'))
-    this.debugAntialias = hasAaOverride ? !!aaOverride : true
+    // Baseline default: antialias off unless explicitly overridden.
+    this.debugAntialias = hasAaOverride ? !!aaOverride : false
 
     const hasPixelRatioOverride = this.debugPixelRatio != null && !(dprKey === 'dpr' && injectedDefaults?.has?.('dpr'))
 
@@ -696,7 +859,10 @@ export default class App {
 
       if (!hasPixelRatioOverride) {
         const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
-        const cap = deviceDpr >= 2 ? 1 : 1
+        // Baseline default: render at up to 2x device pixel ratio.
+        // On most Retina Macs, deviceDpr is 2 so this effectively means pixelRatio=2.
+        // On non-Retina displays (deviceDpr=1), this yields pixelRatio=1.
+        const cap = 2
         const seeded = Math.min(deviceDpr, cap)
         this.debugPixelRatio = this._snapPixelRatio(seeded, { min: 0.25, max: deviceDpr })
         qualityReason = `auto(dpr=${deviceDpr} seed=${seeded} snap=${this.debugPixelRatio})`
@@ -825,6 +991,19 @@ export default class App {
 
     // Persist debug flags/merged params for later (createManagers, per-frame timing).
     this.urlParams = urlParams
+
+    // Capture baseline quality state (URL/debug-profile defaults) so per-visualizer
+    // overrides can be reverted cleanly.
+    if (!this._baseQualityState) {
+      this._baseQualityState = {
+        debugAntialias: this.debugAntialias,
+        debugPixelRatio: this.debugPixelRatio,
+        pixelRatioOverridden: this.pixelRatioOverridden,
+        pixelRatioLocked: this.pixelRatioLocked,
+        antialiasOverridden: this.antialiasOverridden,
+        autoQualityDynamic: this.autoQualityDynamic,
+      }
+    }
     this.perfEnabled = wantsPerf
     if (this.perfEnabled) {
       this.perfState = {
@@ -1269,10 +1448,16 @@ export default class App {
       console.log('[Visualizer] URL override visualizer:', urlVisualizer)
     }
 
-    this.switchVisualizer(urlVisualizer || storedVisualizer || 'Reactive Particles', { notify: false })
-    
-    // Add visualizer switcher to GUI
+    const initialVisualizer = urlVisualizer || storedVisualizer || 'Reactive Particles'
+    // Ensure the top selector reflects what we'll load.
+    App.visualizerType = initialVisualizer
+
+    // Build common controls first so they appear above visualizer-specific folders.
     this.addVisualizerSwitcher()
+    this.addPerformanceQualityControls()
+
+    // Now create the actual visualizer.
+    this.switchVisualizer(initialVisualizer, { notify: false })
 
     // Restore last playback position before starting audio so reload resumes.
     this.restoreSessionOnPlay()
@@ -1726,6 +1911,8 @@ export default class App {
     }
 
     // Clear renderer
+    // Apply any per-visualizer quality overrides before creating the new visualizer.
+    this._applyPerVisualizerQualityOverrides(type)
     this.renderer.clear()
 
     // Create new visualizer
@@ -1788,6 +1975,9 @@ export default class App {
     }
 
     console.log('Switched to visualizer:', type)
+
+    // Keep the Performance + Quality controls in sync.
+    this._syncPerformanceQualityControls(type)
 
     // Notify parent bridge about module change (only when embedded)
     if (notify && this.bridgeTarget) {
@@ -2085,6 +2275,17 @@ export default class App {
       guiContainer.style.width = `${desiredGuiWidth}px`
       guiContainer.style.maxWidth = 'calc(100vw - 24px)'
       guiContainer.style.boxSizing = 'border-box'
+
+      // dat.GUI renders the toggle button (`Close Controls`) as a sibling of
+      // the root panel element. Ensure it matches the panel width.
+      const closeBtn = guiContainer.querySelector?.('.close-button')
+      if (closeBtn && closeBtn.style) {
+        closeBtn.style.width = `${desiredGuiWidth}px`
+        closeBtn.style.maxWidth = '100%'
+        closeBtn.style.boxSizing = 'border-box'
+        closeBtn.style.margin = '0'
+        closeBtn.style.display = 'block'
+      }
     } catch (e) {
       // ignore
     }
@@ -3377,5 +3578,64 @@ export default class App {
 
     // Size the GUI to fit the longest option label (no truncation).
     requestAnimationFrame(() => this._updateGuiWidthToFitVisualizerSelect())
+  }
+
+  addPerformanceQualityControls() {
+    if (!App.gui) return
+    if (this.performanceQualityFolder) return
+
+    const folder = App.gui.addFolder('PERFORMANCE + QUALITY')
+    folder.open()
+    this.performanceQualityFolder = folder
+
+    // dat.GUI builds a dropdown from an object map. Integer-like keys ("1", "2")
+    // are enumerated first by JS engines, which breaks ordering. Use labels that
+    // render identically but are not integer-like keys.
+    const prOptions = {
+      '0.25': 0.25,
+      '0.5': 0.5,
+      '1 ': 1,
+      '2 ': 2,
+    }
+    const initialPr = this.renderer?.getPixelRatio?.() || 1
+    const initialAa = this._getContextAntialias()
+
+    this.performanceQualityConfig = {
+      antialias: typeof initialAa === 'boolean' ? initialAa : !!this.debugAntialias,
+      pixelRatio: this._snapPixelRatio(initialPr, { min: 0.25, max: 2 }),
+      Defaults: () => {
+        const type = App.visualizerType
+        this._clearPerVisualizerQualityOverrides(type)
+        // Revert to baseline settings immediately (and unlock dynamic quality as appropriate).
+        this._applyPerVisualizerQualityOverrides(type, { applyBaseIfNoOverride: true })
+        this._syncPerformanceQualityControls(type)
+      }
+    }
+
+    this.performanceQualityControllers.defaults = folder.add(this.performanceQualityConfig, 'Defaults')
+
+    this.performanceQualityControllers.antialias = folder
+      .add(this.performanceQualityConfig, 'antialias')
+      .name('Antialiasing')
+      .onChange((value) => {
+        if (this._syncingPerformanceQualityGui) return
+        const type = App.visualizerType
+        this._writePerVisualizerQualityOverride(type, { antialias: !!value })
+        this._applyPerVisualizerQualityOverrides(type)
+      })
+
+    this.performanceQualityControllers.pixelRatio = folder
+      .add(this.performanceQualityConfig, 'pixelRatio', prOptions)
+      .name('PixelRatio')
+      .onChange((value) => {
+        if (this._syncingPerformanceQualityGui) return
+        const type = App.visualizerType
+        const pr = typeof value === 'string' ? Number.parseFloat(value) : value
+        this._writePerVisualizerQualityOverride(type, { pixelRatio: pr })
+        this._applyPerVisualizerQualityOverrides(type)
+      })
+
+    // Initialize displayed values from storage/effective state.
+    this._syncPerformanceQualityControls(App.visualizerType)
   }
 }
