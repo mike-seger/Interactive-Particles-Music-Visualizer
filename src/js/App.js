@@ -1417,7 +1417,10 @@ export default class App {
     App.holder.sortObjects = false
 
     App.gui = new GUI({ title: 'Visualizer Controls' })
-
+    
+    // Disable collapse functionality on root GUI
+    App.gui.open()
+    
     // Apply root GUI styles (border, shadow, padding)
     this.setupGuiCloseButton()
 
@@ -2648,6 +2651,23 @@ export default class App {
     if (!App.gui?.domElement) return
     
     const guiRoot = App.gui.domElement
+    const titleButton = guiRoot.querySelector('.lil-title')
+    if (!titleButton) return
+    
+    // Disable the button to prevent collapsing
+    titleButton.disabled = true
+    titleButton.style.cursor = 'default'
+    titleButton.style.pointerEvents = 'none'
+    
+    // Prevent any click events from reaching the button
+    titleButton.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+      return false
+    }, true)
+    
+    // Get the title container
     const titleElement = guiRoot.querySelector('.title')
     if (!titleElement) return
     
@@ -2656,6 +2676,7 @@ export default class App {
     closeBtn.className = 'gui-close-btn'
     closeBtn.innerHTML = '×'
     closeBtn.title = 'Hide controls'
+    closeBtn.style.pointerEvents = 'auto'
     titleElement.appendChild(closeBtn)
     
     // Create show button (80x80px hot zone at top right)

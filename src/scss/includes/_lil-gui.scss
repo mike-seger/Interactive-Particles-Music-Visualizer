@@ -24,16 +24,39 @@
   box-sizing: border-box !important;
 }
 
-/* Hide the collapse arrow on the root title */
-.lil-gui.lil-root > .title::before {
+/* Hide the collapse arrow on the root title button ONLY */
+.lil-gui.lil-root > .title .lil-title::before {
   display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  content: '' !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
 }
 
-/* Make root title non-collapsible */
-.lil-gui.lil-root > .title {
+/* Make root title button non-collapsible and adjust position ONLY */
+.lil-gui.lil-root > .title .lil-title {
   cursor: default !important;
+  pointer-events: none !important;
+  padding-left: 0 !important;
+  margin-left: -10px !important;
+}
+
+/* Make root title container relative for close button positioning */
+.lil-gui.lil-root > .title {
   position: relative;
   padding-right: 30px !important;
+}
+
+/* Re-enable pointer events for the close button inside the title */
+.lil-gui.lil-root > .title .gui-close-btn {
+  pointer-events: auto !important;
 }
 
 /* Close button styling */
