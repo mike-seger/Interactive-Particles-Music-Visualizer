@@ -2624,8 +2624,6 @@ export default class App {
         max-height: calc(60vh - 310px);
         overflow-y: auto;
         overflow-x: hidden;
-        margin: 0;
-        padding: 0;
         scrollbar-color: #2f3545 #0f1219;
       }
 
@@ -3255,9 +3253,9 @@ export default class App {
         // Use lil-gui's .options() API so internal _values stays in sync
         ctrl.options(optionsMap)
 
-        // Set the current value
+        // Set the current value - use preferred if current isn't available yet
         if (!names.includes(this.variant3PresetState?.loadPreset)) {
-          this.variant3PresetState.loadPreset = names[0] || ''
+          this.variant3PresetState.loadPreset = names.includes(preferred) ? preferred : (names[0] || '')
         }
         ctrl.updateDisplay()
 
@@ -3297,6 +3295,8 @@ export default class App {
       this.fv3FilePresetsLoaded = true
       loadSpectrumFilters().then((loaded) => {
         this.fv3FilePresets = loaded || {}
+        // Reset flag so stored preset can be applied after file presets load
+        this.variant3PresetApplied = false
         refreshLoadOptions()
       }).catch((err) => {
         console.warn('Failed to load spectrum filters', err)
