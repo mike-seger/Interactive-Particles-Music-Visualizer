@@ -1,6 +1,6 @@
 /**
  * Generic shader customization system
- * Loads optional config files for shaders and creates dat.GUI controls
+ * Loads optional config files for shaders and creates lil-gui controls
  */
 
 /**
@@ -85,11 +85,11 @@ export function injectUniforms(source, config) {
 }
 
 /**
- * Create dat.GUI controls for a shader based on its config
- * @param {dat.GUI} gui - The dat.GUI instance
+ * Create lil-gui controls for a shader based on its config
+ * @param {GUI} gui - The lil-gui instance
  * @param {Object} visualizer - The shader visualizer instance
  * @param {Object} config - The shader config
- * @returns {dat.GUI|null} The created folder or null
+ * @returns {GUI|null} The created folder or null
  */
 export function createShaderControls(gui, visualizer, config) {
   if (!config || !config.controls || config.controls.length === 0) {
@@ -102,7 +102,7 @@ export function createShaderControls(gui, visualizer, config) {
 
   for (const control of config.controls) {
     if (control.type === 'select') {
-      // Create dropdown options object for dat.GUI
+      // Create dropdown options object for lil-gui
       const options = {}
       control.options.forEach(opt => {
         options[opt.label] = opt.value

@@ -1,6 +1,6 @@
 # Shader Customization System
 
-This directory contains optional configuration files for shaders that enable runtime customization via dat.GUI controls.
+This directory contains optional configuration files for shaders that enable runtime customization via lil-gui controls.
 
 ## How It Works
 

@@ -236,26 +236,25 @@ html:not(.icons-ready) #player-controls button {
   text-align: center;
 }
 
-/* dat.GUI (visualizer dropdown) layout fixes */
-.dg {
-  /* Remove the small left indent so the rows are flush */
-  ul,
-  li,
-  .cr,
-  .cr .c,
-  .cr .property-name {
-    margin-left: 0;
-    padding-left: 0;
-    box-sizing: border-box;
+/* lil-gui (visualizer dropdown) layout fixes */
+.lil-gui {
+  /* Ensure widgets fill available horizontal space */
+  .lil-controller .lil-widget {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
-  /* Dark mode for select elements - target the .c container */
-  .c select {
+  /* Ensure select display fills widget space */
+  .lil-controller.lil-option .lil-display {
+    width: 100%;
+  }
+
+  /* Dark mode for select elements */
+  select {
     box-sizing: border-box;
     display: block;
     width: 100%;
     margin: 0;
-    margin-top: 5px;
     background-color: #363232 !important;
     color: white !important;
     border: 1px solid #3a3a3a !important;
@@ -268,17 +267,9 @@ html:not(.icons-ready) #player-controls button {
     }
   }
 
-  /* Keep selects aligned and let the panel width be controlled by JS measurement */
-  select {
-    box-sizing: border-box;
-    display: block;
-    width: 100%;
-    margin: 0;
-  }
-
   /* Dark mode styling for input fields */
-  .c input[type="text"],
-  .c input[type="number"] {
+  input[type="text"],
+  input[type="number"] {
     background-color: #363232 !important;
     color: white !important;
     border: 1px solid #3a3a3a !important;
@@ -308,19 +299,13 @@ html:not(.icons-ready) #player-controls button {
     }
   }
 
-  /* Base styling; sizing is handled in JS based on label */
-  .close-button {
-    box-sizing: border-box;
-    max-width: 100%;
-  }
-
   /* Host row for the injected close X inside the VISUALIZER TYPE title */
-  li.title.gui-close-host {
+  .title.gui-close-host {
     position: relative;
     padding-right: 34px; /* reserve space so the label doesn't overlap the X */
   }
 
-  li.title.gui-close-host .gui-close-x {
+  .title.gui-close-host .gui-close-x {
     position: absolute;
     right: 10px;
     top: 0;
@@ -337,7 +322,7 @@ html:not(.icons-ready) #player-controls button {
     padding: 0;
   }
 
-  li.title.gui-close-host .gui-close-x:hover {
+  .title.gui-close-host .gui-close-x:hover {
     color: #fff;
   }
 }

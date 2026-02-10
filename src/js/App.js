@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { ENTITY_VISUALIZER_NAMES, createEntityVisualizerByName } from './visualizers/entityRegistry'
 import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
 import { loadSpectrumFilters } from './spectrumFilters'
-import * as dat from 'dat.gui'
+import GUI from 'lil-gui'
 import BPMManager from './managers/BPMManager'
 import { VideoSyncClient } from './sync-client/SyncClient.mjs'
 import AudioManager from './managers/AudioManager'
@@ -569,7 +569,7 @@ export default class App {
     const ctrls = this.performanceQualityControllers
     if (ctrls?.antialias?.updateDisplay) ctrls.antialias.updateDisplay()
     if (ctrls?.pixelRatio?.updateDisplay) {
-      // Force dat.GUI to sync by temporarily setting to undefined then back
+      // Force lil-gui to sync by temporarily setting to undefined then back
       const temp = this.performanceQualityConfig.pixelRatio
       this.performanceQualityConfig.pixelRatio = undefined
       ctrls.pixelRatio.updateDisplay()
@@ -1370,37 +1370,22 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new dat.GUI({ closeOnTop: true })
+    App.gui = new GUI({ title: 'Controls' })
 
     // Keep the controls visible above any full-screen overlay canvases.
     // (Some visualizers render into their own 2D canvas and may clear to black.)
     if (App.gui?.domElement) {
       const guiRoot = App.gui.domElement
-      // dat.GUI autoPlace uses a wrapper (usually `.dg.ac`) for positioning.
-      const guiContainer = guiRoot.parentElement || guiRoot
-
-      guiContainer.style.position = 'fixed'
-      guiContainer.style.zIndex = '2500'
-      guiContainer.style.pointerEvents = 'auto'
-      guiContainer.style.display = 'block'
-      guiContainer.style.right = '12px'
-      guiContainer.style.left = 'auto'
-      guiContainer.style.top = '12px'
-      guiContainer.style.maxWidth = 'calc(100vw - 24px)'
-      guiContainer.style.boxSizing = 'border-box'
-
-      // Also set on the root (more robust than relying on the wrapper).
-      // This ensures the GUI (including the collapsed "Open Controls" button)
-      // remains pinned to the top-right gutter.
+      // lil-gui autoPlace appends directly to document.body (no wrapper).
+      // Only style the guiRoot element — never its parent (which is body).
       guiRoot.style.position = 'fixed'
       guiRoot.style.right = '12px'
       guiRoot.style.left = 'auto'
       guiRoot.style.top = '12px'
       guiRoot.style.zIndex = '2500'
       guiRoot.style.pointerEvents = 'auto'
-      // Neutralize dat.GUI's auto-place float/margin so right alignment is exact.
-      guiRoot.style.float = 'none'
-      guiRoot.style.marginRight = '0'
+      guiRoot.style.maxWidth = 'calc(100vw - 24px)'
+      guiRoot.style.boxSizing = 'border-box'
     }
 
     this.createManagers()
@@ -1673,7 +1658,7 @@ export default class App {
     const isEmbedded = window.parent && window.parent !== window
     const params = new URLSearchParams(window.location.search || '')
     const wantsHide = params.get('hideui') === '1' || params.get('autostart') === '1'
-    const guiContainer = document.querySelector('.dg.ac')
+    const guiContainer = document.querySelector('.lil-gui.autoPlace') || App.gui?.domElement
     if (!guiContainer) return
     const guiHidden = getComputedStyle(guiContainer).display === 'none'
     if (!(isEmbedded && (wantsHide || guiHidden))) return
@@ -2176,7 +2161,7 @@ export default class App {
         this.visualizerController.setValue(type)
       }
 
-      // dat.GUI uses a native <select>. Some browsers won't visually update an open/focused
+      // lil-gui uses a native <select>. Some browsers won't visually update an open/focused
       // select's displayed value reliably from programmatic updates, so also force the
       // underlying element's value to match.
       const selectEl = this._getVisualizerSelectElement()
@@ -2440,8 +2425,8 @@ export default class App {
       const selectChromeAllowance = 56
       const desiredControlWidth = Math.ceil(maxOptionWidth + selectHorizontalPadding + selectChromeAllowance)
 
-      const rowEl = selectEl.closest('li')
-      const labelEl = rowEl?.querySelector?.('.property-name')
+      const rowEl = selectEl.closest('.lil-controller')
+      const labelEl = rowEl?.querySelector?.('.lil-name')
       const labelText = (labelEl?.textContent || '').trim()
 
       let desiredLabelWidth = 0
@@ -2452,7 +2437,7 @@ export default class App {
         desiredLabelWidth = Math.ceil(ctx.measureText(labelText).width + 16)
       }
 
-      const controlEl = rowEl?.querySelector?.('.c') || selectEl.parentElement
+      const controlEl = rowEl?.querySelector?.('.lil-widget') || selectEl.parentElement
 
       let controlFrac = 0.6
       let labelFrac = 0.4
@@ -2483,122 +2468,68 @@ export default class App {
       const maxGuiWidth = Math.max(220, window.innerWidth - 24)
       desiredGuiWidth = Math.max(220, Math.min(desiredGuiWidth, maxGuiWidth))
 
-      gui.width = desiredGuiWidth
-      guiRoot.style.width = `${desiredGuiWidth}px`
+      guiRoot.style.setProperty('--width', `${desiredGuiWidth}px`)
 
-      const guiContainer = guiRoot.parentElement || guiRoot
-      guiContainer.style.width = `${desiredGuiWidth}px`
-      guiContainer.style.maxWidth = 'calc(100vw - 24px)'
-      guiContainer.style.boxSizing = 'border-box'
-
-      // dat.GUI renders the toggle button (`Open/Close Controls`) as a sibling of
-      // the root panel element. When closed it shows `Open Controls` and should
-      // size-to-label; when open it shows `Close Controls` and should match panel width.
-      const closeBtn = guiContainer.querySelector?.('.close-button')
-      if (closeBtn && closeBtn.style) {
-        const syncCloseBtnSizing = () => {
+      // lil-gui uses $title as the toggle element (click title to open/close).
+      // We inject a close X button into the VISUALIZER TYPE folder title.
+      const titleEl = gui.$title
+      if (titleEl) {
+        const syncTitleClose = () => {
           try {
-            const label = (closeBtn.textContent || '').trim()
-            const guiIsClosed = !!gui.closed
-            const isOpenControls = guiIsClosed || label.toLowerCase() === 'open controls'
+            const guiIsClosed = !!gui._closed
 
-            closeBtn.style.maxWidth = '100%'
-            closeBtn.style.boxSizing = 'border-box'
+            // Find the VISUALIZER TYPE folder title for the X button.
+            const folderTitles = Array.from(guiRoot.querySelectorAll('.title') || [])
+            const vizTitle = folderTitles.find((el) => {
+              const t = (el?.textContent || '').trim().toLowerCase()
+              return t.startsWith('visualizer type')
+            })
 
-            if (isOpenControls) {
-              // Collapsed state: show "Open Controls" as a small right-aligned pill.
-              closeBtn.style.display = 'block'
-              closeBtn.style.width = 'fit-content'
-              // Right-align to the panel border.
-              // (margin-left:auto won't work if dat.GUI toggles absolute positioning.)
-              closeBtn.style.display = 'block'
-              closeBtn.style.position = 'relative'
-              closeBtn.style.float = 'right'
-              closeBtn.style.left = 'auto'
-              closeBtn.style.right = '0'
-              closeBtn.style.marginLeft = '0'
-              closeBtn.style.marginRight = '0'
-              // Only add horizontal padding for the small "Open Controls" pill.
-              closeBtn.style.paddingLeft = '12px'
-              closeBtn.style.paddingRight = '12px'
+            if (vizTitle) {
+              vizTitle.classList.add('gui-close-host')
+              let xBtn = vizTitle.querySelector('.gui-close-x')
+              if (!xBtn) {
+                xBtn = document.createElement('button')
+                xBtn.type = 'button'
+                xBtn.className = 'gui-close-x'
+                xBtn.textContent = '×'
+                xBtn.setAttribute('aria-label', 'Close Controls')
+                xBtn.setAttribute('title', 'Close Controls')
 
-              try {
-                closeBtn.removeAttribute('aria-label')
-                closeBtn.removeAttribute('title')
-              } catch {
-                // ignore
-              }
-            } else {
-              // Expanded state: hide dat.GUI's close-button row and instead
-              // render a right-aligned X inside the "VISUALIZER TYPE" title row.
-              closeBtn.style.display = 'none'
-              closeBtn.style.width = '100%'
-              closeBtn.style.paddingLeft = ''
-              closeBtn.style.paddingRight = ''
-              closeBtn.style.position = ''
-              closeBtn.style.float = ''
-              closeBtn.style.left = ''
-              closeBtn.style.right = ''
-              closeBtn.style.marginLeft = ''
-              closeBtn.style.marginRight = ''
-              closeBtn.style.textAlign = ''
-
-              try {
-                const titleRows = Array.from(guiRoot.querySelectorAll('li.title') || [])
-                const vizTitle = titleRows.find((li) => {
-                  const t = (li?.textContent || '').trim().toLowerCase()
-                  return t === 'visualizer type'
+                xBtn.addEventListener('click', (e) => {
+                  try {
+                    e.preventDefault()
+                    e.stopPropagation()
+                  } catch {
+                    // ignore
+                  }
+                  try {
+                    gui.close()
+                  } catch {
+                    // ignore
+                  }
+                  window.setTimeout(syncTitleClose, 0)
                 })
 
-                if (vizTitle) {
-                  vizTitle.classList.add('gui-close-host')
-                  let xBtn = vizTitle.querySelector('.gui-close-x')
-                  if (!xBtn) {
-                    xBtn = document.createElement('button')
-                    xBtn.type = 'button'
-                    xBtn.className = 'gui-close-x'
-                    xBtn.textContent = '×'
-                    xBtn.setAttribute('aria-label', 'Close Controls')
-                    xBtn.setAttribute('title', 'Close Controls')
-
-                    xBtn.addEventListener('click', (e) => {
-                      try {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      } catch {
-                        // ignore
-                      }
-                      try {
-                        gui.closed = true
-                      } catch {
-                        // ignore
-                      }
-                      window.setTimeout(syncCloseBtnSizing, 0)
-                    })
-
-                    vizTitle.appendChild(xBtn)
-                  }
-
-                  // Only show the X when the GUI is actually expanded.
-                  xBtn.style.display = guiIsClosed ? 'none' : ''
-                }
-              } catch {
-                // ignore
+                vizTitle.appendChild(xBtn)
               }
+
+              // Only show the X when the GUI is actually expanded.
+              xBtn.style.display = guiIsClosed ? 'none' : ''
             }
           } catch (e) {
             // ignore
           }
         }
 
-        // Update now (based on current label).
-        syncCloseBtnSizing()
+        // Update now.
+        syncTitleClose()
 
         // Update after toggles too.
-        if (!closeBtn.dataset?.closeSizingBound) {
-          closeBtn.dataset.closeSizingBound = '1'
-          closeBtn.addEventListener('click', () => {
-            window.setTimeout(syncCloseBtnSizing, 0)
+        if (!titleEl.dataset?.closeSizingBound) {
+          titleEl.dataset.closeSizingBound = '1'
+          gui.onOpenClose(() => {
+            window.setTimeout(syncTitleClose, 0)
           })
         }
       }
@@ -2665,137 +2596,103 @@ export default class App {
     style.textContent = `
       @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
 
-      .dg.main {
-        width: 445px !important;
+      /* Root panel: constrained to 60 vh, no outer scrollbar.
+         Only .fv3-scroll inside the FV3 folder scrolls. */
+      .lil-gui.lil-root {
+        --width: 445px;
         position: relative;
-        overflow: visible;
-        max-height: none !important;
+        max-height: 60vh;
+        overflow: hidden;
       }
-      .dg.main > ul {
+      .lil-gui.lil-root > .lil-children {
+        overflow: visible !important;
         max-height: none !important;
         height: auto !important;
-        overflow: visible !important;
       }
-      .dg .folder > ul {
-        max-height: none !important;
-        height: auto !important;
-        overflow: visible !important;
-      }
-      .dg .fv3-controls {
+      .lil-gui .fv3-controls {
         width: 100%;
         max-width: 100%;
         box-sizing: border-box;
-        max-height: 70vh;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: visible !important;
+        max-height: none !important;
       }
-      .dg .fv3-controls .fv3-scroll {
-        max-height: 45vh;
+      .lil-gui .fv3-controls > .lil-children {
+        overflow: visible !important;
+        max-height: none !important;
+      }
+      .lil-gui .fv3-controls .fv3-scroll {
+        max-height: calc(60vh - 310px);
         overflow-y: auto;
         overflow-x: hidden;
         margin: 0;
         padding: 0;
         scrollbar-color: #2f3545 #0f1219;
       }
-      .dg .fv3-controls ul {
-        max-height: none;
-        overflow: visible;
-      }
-      .dg .fv3-controls,
-      .dg .fv3-controls ul {
-        scrollbar-color: #2f3545 #0f1219;
-      }
 
       /* Global dark inputs (helps Firefox render select in dark mode) */
-      .dg select,
-      .dg input[type="text"],
-      .dg input[type="number"],
-      .dg input[type="checkbox"] {
+      .lil-gui select,
+      .lil-gui input[type="text"],
+      .lil-gui input[type="number"],
+      .lil-gui input[type="checkbox"] {
         background: #161921;
         color: #e6e9f0;
         border: 1px solid #3a3f4d;
         -moz-appearance: none;
       }
-      .dg select:focus,
-      .dg input[type="text"]:focus,
-      .dg input[type="number"]:focus,
-      .dg input[type="checkbox"]:focus {
+      .lil-gui select:focus,
+      .lil-gui input[type="text"]:focus,
+      .lil-gui input[type="number"]:focus,
+      .lil-gui input[type="checkbox"]:focus {
         outline: 1px solid #6ea8ff;
         border-color: #6ea8ff;
         box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
       }
-      .dg .fv3-controls::-webkit-scrollbar {
+      .lil-gui .fv3-controls .fv3-scroll::-webkit-scrollbar {
         width: 10px;
       }
-      .dg .fv3-controls::-webkit-scrollbar-track {
+      .lil-gui .fv3-controls .fv3-scroll::-webkit-scrollbar-track {
         background: #0f1219;
       }
-      .dg .fv3-controls::-webkit-scrollbar-thumb {
+      .lil-gui .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb {
         background: #2f3545;
         border-radius: 8px;
       }
-      .dg .fv3-controls::-webkit-scrollbar-thumb:hover {
-        background: #3c4458;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar {
-        width: 10px;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar-track {
-        background: #0f1219;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar-thumb {
-        background: #2f3545;
-        border-radius: 8px;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar-thumb:hover {
-        background: #3c4458;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar {
-        width: 10px;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-track {
-        background: #0f1219;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb {
-        background: #2f3545;
-        border-radius: 8px;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb:hover {
+      .lil-gui .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb:hover {
         background: #3c4458;
       }
 
       /* Dark mode form controls for the top rows */
-      .dg .fv3-controls select,
-      .dg .fv3-controls input[type="text"],
-      .dg .fv3-controls input[type="number"],
-      .dg .fv3-controls input[type="checkbox"] {
+      .lil-gui .fv3-controls select,
+      .lil-gui .fv3-controls input[type="text"],
+      .lil-gui .fv3-controls input[type="number"],
+      .lil-gui .fv3-controls input[type="checkbox"] {
         background: #161921;
         color: #e6e9f0;
         border: 1px solid #3a3f4d;
       }
-      .dg .fv3-controls select:focus,
-      .dg .fv3-controls input[type="text"]:focus,
-      .dg .fv3-controls input[type="number"]:focus,
-      .dg .fv3-controls input[type="checkbox"]:focus {
+      .lil-gui .fv3-controls select:focus,
+      .lil-gui .fv3-controls input[type="text"]:focus,
+      .lil-gui .fv3-controls input[type="number"]:focus,
+      .lil-gui .fv3-controls input[type="checkbox"]:focus {
         outline: 1px solid #6ea8ff;
         border-color: #6ea8ff;
         box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
       }
-      .dg .fv3-controls ul.closed li:not(.title) { display: none; }
-      .dg .fv3-controls .cr.number { padding: 4px 4px 6px; }
-      .dg .fv3-controls .cr.number .property-name { width: 40%; text-align: left; font-weight: 600; }
-      .dg .fv3-controls .cr.number .c {
+      .lil-gui .fv3-controls ul.closed li:not(.title) { display: none; }
+      .lil-gui .fv3-controls .cr.number { padding: 4px 4px 6px; }
+      .lil-gui .fv3-controls .cr.number .property-name { width: 40%; text-align: left; font-weight: 600; }
+      .lil-gui .fv3-controls .cr.number .c {
         width: 60%;
         display: flex;
         align-items: center;
         gap: 6px;
       }
-      .dg .fv3-controls .cr.number .c .slider,
-      .dg .fv3-controls .cr.number .c input[type="text"] {
+      .lil-gui .fv3-controls .cr.number .c .slider,
+      .lil-gui .fv3-controls .cr.number .c input[type="text"] {
         float: none !important;
         box-sizing: border-box;
       }
-      .dg .fv3-controls .cr.number .c .slider {
+      .lil-gui .fv3-controls .cr.number .c .slider {
         order: 1;
         flex: 1 1 auto;
         min-width: 140px;
@@ -2803,7 +2700,7 @@ export default class App {
         position: relative;
         overflow: hidden;
       }
-      .dg .fv3-controls .cr.number .c input[type="text"] {
+      .lil-gui .fv3-controls .cr.number .c input[type="text"] {
         order: 2;
         flex: 0 0 60px;
         min-width: 60px;
@@ -2814,9 +2711,9 @@ export default class App {
         opacity: 1;
         text-align: right;
       }
-      .dg .fv3-controls .slider-fg { position: relative; height: 100%; }
+      .lil-gui .fv3-controls .slider-fg { position: relative; height: 100%; }
 
-      .dg .fv3-controls .cr.fv3-preset-line {
+      .lil-gui .fv3-controls .cr.fv3-preset-line {
         display: flex;
         align-items: center;
         padding: 4px 4px 6px;
@@ -2824,70 +2721,59 @@ export default class App {
         border-bottom: 1px solid #2b2f3a;
         box-sizing: border-box;
       }
-      .dg .fv3-controls .cr.fv3-load-row {
-        display: flex;
-        align-items: center;
-        padding: 4px 4px 6px;
+      
+      /* Standard lil-gui controls with injected Edit button */
+      .lil-gui .fv3-controls .lil-controller.fv3-load-preset {
         border-top: 1px solid #2b2f3a;
         border-bottom: 1px solid #2b2f3a;
-        box-sizing: border-box;
+        padding-top: 6px;
+        padding-bottom: 6px;
       }
-      .dg .fv3-controls .cr.fv3-load-row .property-name {
-        width: 40%;
-        font-weight: 600;
-        text-transform: none;
-        padding-right: 6px;
-      }
-      .dg .fv3-controls .cr.fv3-load-row .c {
-        width: 60%;
+      /* Widget contains both dropdown and button */
+      .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget {
         display: flex;
+        gap: 8px;
         align-items: center;
-        gap: 6px;
       }
-      .dg .fv3-controls .cr.fv3-load-row select {
+      /* Dropdown takes available space */
+      .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget .lil-display {
         flex: 1 1 auto;
-        min-width: 140px;
-        background: #161921;
-        color: #e6e9f0;
-        border: 1px solid #444;
-        border-radius: 4px;
-        padding: 4px 6px;
-        height: 26px;
+      }
+      .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget select {
+        flex: 1 1 auto;
+      }
+      /* Edit button stays compact */
+      .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget button.fv3-edit-btn {
+        flex: 0 0 auto;
+        padding: 4px 12px;
         font-size: 12px;
-      }
-      .dg .fv3-controls .cr.fv3-load-row button {
-        height: 26px;
-        width: 36px;
-        min-width: 36px;
-        background: #1f2531;
-        color: #e6e9f0;
-        border: 1px solid #444;
-        border-radius: 4px;
+        min-width: auto;
+        width: auto;
+        height: var(--widget-height);
+        background: var(--widget-color);
+        color: var(--text-color);
+        border: 0;
+        border-radius: var(--widget-border-radius);
         cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+        transition: background 0.12s ease;
       }
-      .dg .fv3-controls .cr.fv3-load-row button:hover {
-        border-color: #6ea8ff;
-        color: #fff;
-        background: rgba(110, 168, 255, 0.08);
+      .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget button.fv3-edit-btn:hover {
+        background: var(--hover-color);
       }
-      .dg .fv3-controls .cr.fv3-preset-line .property-name {
+      
+      .lil-gui .fv3-controls .cr.fv3-preset-line .property-name {
         width: 40%;
         font-weight: 600;
         text-transform: none;
         padding-right: 6px;
       }
-      .dg .fv3-controls .cr.fv3-preset-line .c {
+      .lil-gui .fv3-controls .cr.fv3-preset-line .c {
         width: 60%;
         display: flex;
         align-items: center;
         gap: 6px;
       }
-      .dg .fv3-controls .cr.fv3-preset-line select {
+      .lil-gui .fv3-controls .cr.fv3-preset-line select {
         flex: 1 1 auto;
         min-width: 120px;
         background: #161921;
@@ -2897,7 +2783,7 @@ export default class App {
         height: 26px;
         font-size: 12px;
       }
-      .dg .fv3-controls .cr.fv3-preset-line button {
+      .lil-gui .fv3-controls .cr.fv3-preset-line button {
         height: 26px;
         width: 32px;
         min-width: 32px;
@@ -2912,12 +2798,12 @@ export default class App {
         padding: 0;
         transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
       }
-      .dg .fv3-controls .cr.fv3-preset-line button:hover {
+      .lil-gui .fv3-controls .cr.fv3-preset-line button:hover {
         border-color: #6ea8ff;
         color: #fff;
         background: rgba(110, 168, 255, 0.08);
       }
-      .dg .fv3-controls .cr.fv3-preset-line .fv3-icon {
+      .lil-gui .fv3-controls .cr.fv3-preset-line .fv3-icon {
         font-family: 'Material Symbols Rounded';
         font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         font-size: 18px;
@@ -2926,22 +2812,22 @@ export default class App {
       }
 
       /* Edit Presets row */
-      .dg .fv3-controls .cr.fv3-edit-row {
+      .lil-gui .fv3-controls .cr.fv3-edit-row {
         display: flex;
         align-items: center;
         padding: 6px 8px;
         box-sizing: border-box;
       }
-      .dg .fv3-controls .cr.fv3-edit-row .property-name {
+      .lil-gui .fv3-controls .cr.fv3-edit-row .property-name {
         width: 40%;
         font-weight: 600;
         text-transform: none;
         padding-right: 6px;
       }
-      .dg .fv3-controls .cr.fv3-edit-row .c {
+      .lil-gui .fv3-controls .cr.fv3-edit-row .c {
         width: 60%;
       }
-      .dg .fv3-controls .cr.fv3-edit-row button {
+      .lil-gui .fv3-controls .cr.fv3-edit-row button {
         width: 100%;
         height: 28px;
         border-radius: 4px;
@@ -2953,17 +2839,17 @@ export default class App {
         cursor: pointer;
         transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
       }
-      .dg .fv3-controls .cr.fv3-edit-row button:hover {
+      .lil-gui .fv3-controls .cr.fv3-edit-row button:hover {
         border-color: #6ea8ff;
         box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
         background: linear-gradient(90deg, #263043, #1e2535);
       }
       /* Edit Presets trigger row */
-      .dg .fv3-controls .cr.fv3-edit-row {
+      .lil-gui .fv3-controls .cr.fv3-edit-row {
         padding: 6px 8px;
         box-sizing: border-box;
       }
-      .dg .fv3-controls .cr.fv3-edit-row button {
+      .lil-gui .fv3-controls .cr.fv3-edit-row button {
         width: 100%;
         height: 28px;
         border-radius: 4px;
@@ -2975,7 +2861,7 @@ export default class App {
         cursor: pointer;
         transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
       }
-      .dg .fv3-controls .cr.fv3-edit-row button:hover {
+      .lil-gui .fv3-controls .cr.fv3-edit-row button:hover {
         border-color: #6ea8ff;
         box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
         background: linear-gradient(90deg, #263043, #1e2535);
@@ -3008,7 +2894,7 @@ export default class App {
         max-height: 86vh;
         position: relative;
       }
-      .dg .fv3-controls.blur-active > :not(.fv3-overlay) {
+      .lil-gui .fv3-controls.blur-active > :not(.fv3-overlay) {
         filter: blur(3px);
         pointer-events: none;
       }
@@ -3158,15 +3044,14 @@ export default class App {
   teardownFrequencyViz3Controls() {
     if (!this.variant3Folder) return
     const folder = this.variant3Folder
-    const parent = folder.domElement?.parentElement
-    if (parent && folder.domElement) {
-      parent.removeChild(folder.domElement)
-    }
-    if (App.gui?.__folders && folder.name && App.gui.__folders[folder.name]) {
-      delete App.gui.__folders[folder.name]
-    }
-    if (typeof App.gui?.onResize === 'function') {
-      App.gui.onResize()
+    try {
+      folder.destroy()
+    } catch {
+      // fallback: manual DOM removal
+      const parent = folder.domElement?.parentElement
+      if (parent && folder.domElement) {
+        parent.removeChild(folder.domElement)
+      }
     }
     this.variant3Folder = null
     this.variant3Controllers = {}
@@ -3199,15 +3084,14 @@ export default class App {
   teardownShaderControls() {
     if (!this.shaderControlsFolder) return
     const folder = this.shaderControlsFolder
-    const parent = folder.domElement?.parentElement
-    if (parent && folder.domElement) {
-      parent.removeChild(folder.domElement)
-    }
-    if (App.gui?.__folders && folder.name && App.gui.__folders[folder.name]) {
-      delete App.gui.__folders[folder.name]
-    }
-    if (typeof App.gui?.onResize === 'function') {
-      App.gui.onResize()
+    try {
+      folder.destroy()
+    } catch {
+      // fallback: manual DOM removal
+      const parent = folder.domElement?.parentElement
+      if (parent && folder.domElement) {
+        parent.removeChild(folder.domElement)
+      }
     }
     this.shaderControlsFolder = null
   }
@@ -3226,12 +3110,6 @@ export default class App {
 
     folder.domElement.classList.add('fv3-controls')
     folder.domElement.style.position = 'relative'
-    folder.domElement.style.overflowY = 'auto'
-    folder.domElement.style.overflowX = 'hidden'
-    folder.domElement.style.maxHeight = '70vh'
-    folder.domElement.style.height = 'auto'
-    const parent = folder.domElement?.parentElement
-    if (parent) parent.classList.add('fv3-controls')
 
     if (this.variant3FolderObserver) {
       this.variant3FolderObserver.disconnect()
@@ -3241,12 +3119,6 @@ export default class App {
       this.variant3FolderObserver = new MutationObserver(() => {
         if (folder.domElement.classList.contains('closed')) {
           if (this.variant3Overlay) this.variant3Overlay.style.display = 'none'
-          folder.domElement.style.overflow = 'hidden'
-        } else {
-          folder.domElement.style.overflowY = 'auto'
-          folder.domElement.style.overflowX = 'hidden'
-          folder.domElement.style.maxHeight = '70vh'
-          folder.domElement.style.height = 'auto'
         }
       })
       this.variant3FolderObserver.observe(folder.domElement, { attributes: true, attributeFilter: ['class'] })
@@ -3298,9 +3170,10 @@ export default class App {
     }
 
     const updateSliderValueLabel = (controller, value) => {
-      const slider = controller?.__slider
-      const input = controller?.__input
-      const display = formatValue(value, controller.__impliedStep || controller.__step || 0.01)
+      // lil-gui: access DOM elements via $widget queries instead of dat.GUI internals
+      const input = controller?.domElement?.querySelector('input')
+      const step = controller?._step || controller?._stepExplicit || 0.01
+      const display = formatValue(value, step)
       if (input) input.value = display
       if (controller?.updateDisplay) controller.updateDisplay()
     }
@@ -3323,28 +3196,23 @@ export default class App {
     const relaxGuiHeights = () => {
       const root = App.gui?.domElement
       if (!root) return
-      const elems = [root, root.querySelector('ul'), ...root.querySelectorAll('ul')]
-      elems.forEach((el) => {
-        if (!el) return
-        const isFv3 = el.classList?.contains('fv3-controls') || el.closest?.('.fv3-controls')
-        if (isFv3) {
-          el.style.maxHeight = '70vh'
-          el.style.height = 'auto'
-          el.style.overflowY = 'auto'
-          el.style.overflowX = 'hidden'
-        } else {
-          el.style.maxHeight = 'none'
-          el.style.height = 'auto'
-          el.style.overflow = 'visible'
-        }
-      })
+      // Ensure the root children container doesn't scroll
+      const rootChildren = root.querySelector(':scope > .lil-children')
+      if (rootChildren) {
+        rootChildren.style.overflow = 'visible'
+      }
+      // The FV3 folder itself should not scroll; only .fv3-scroll inside it does
+      const fv3El = root.querySelector('.fv3-controls')
+      if (fv3El) {
+        const fv3Children = fv3El.querySelector(':scope > .lil-children')
+        if (fv3Children) fv3Children.style.overflow = 'visible'
+      }
     }
 
     let isSyncingPreset = false
 
     const syncLoadDropdowns = (value) => {
-      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value || ''
-      const selectEl = this.variant3LoadController?.__select
+      const selectEl = this.variant3LoadController?.domElement?.querySelector('select')
       if (selectEl) selectEl.value = value || ''
       if (this.variant3LoadController?.updateDisplay) this.variant3LoadController.updateDisplay()
     }
@@ -3370,29 +3238,9 @@ export default class App {
       const currentPreset = this.variant3PresetState?.loadPreset || ''
       const preferred = currentPreset || this.getStoredFV3PresetName() || ''
 
-      const updateSelect = (select) => {
-        if (!select) return
-        select.innerHTML = ''
-        const placeholder = document.createElement('option')
-        placeholder.value = ''
-        placeholder.textContent = names.length ? 'Select…' : 'No presets'
-        select.appendChild(placeholder)
-        names.forEach((name) => {
-          const opt = document.createElement('option')
-          opt.value = name
-          opt.textContent = name
-          select.appendChild(opt)
-        })
-        if (names.includes(this.variant3PresetState?.loadPreset)) {
-          select.value = this.variant3PresetState.loadPreset
-        } else {
-          select.value = ''
-        }
-      }
-
       const updateLoadController = () => {
         const ctrl = this.variant3LoadController
-        const select = ctrl?.__select
+        const select = ctrl?.domElement?.querySelector('select')
         if (!ctrl || !select) return
         select.innerHTML = ''
         const placeholder = document.createElement('option')
@@ -3413,7 +3261,6 @@ export default class App {
         if (ctrl.updateDisplay) ctrl.updateDisplay()
       }
 
-      updateSelect(this.variant3LoadSelect)
       updateLoadController()
 
       if (!names.includes(this.variant3PresetState?.loadPreset)) {
@@ -3737,7 +3584,7 @@ export default class App {
       if (this.variant3ScrollContainer && this.variant3ScrollContainer.isConnected) {
         return this.variant3ScrollContainer
       }
-      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+      const listEl = folder.$children || folder.domElement?.querySelector('ul') || folder.domElement
       if (!listEl) return null
       const scroller = document.createElement('div')
       scroller.className = 'fv3-scroll'
@@ -3747,7 +3594,7 @@ export default class App {
     }
 
     const moveToScroller = (ctrl) => {
-      const li = ctrl?.__li
+      const li = ctrl?.domElement
       const scroller = ensureScrollContainer()
       if (li && scroller && li.parentElement !== scroller) {
         scroller.appendChild(li)
@@ -3788,46 +3635,33 @@ export default class App {
       return ctrl
     }
 
-    // Load preset dropdown (moved from overlay)
+    // Load preset dropdown using standard lil-gui controls
     const addLoadRow = () => {
-      const li = document.createElement('li')
-      li.className = 'cr fv3-load-row'
-      const label = document.createElement('span')
-      label.className = 'property-name'
-      label.textContent = 'Load preset'
-
-      const c = document.createElement('div')
-      c.className = 'c'
-
-      const select = document.createElement('select')
-      select.addEventListener('change', (e) => {
+      // Create dropdown controller for preset selection
+      const presetOptions = {}
+      const ctrl = folder.add(this.variant3PresetState, 'loadPreset', presetOptions).name('Load preset').listen()
+      ctrl.onChange((value) => {
         if (isSyncingPreset) return
-        onPresetSelect(e.target.value)
+        onPresetSelect(value)
       })
-      this.variant3LoadSelect = select
-
-      const editBtn = document.createElement('button')
-      editBtn.type = 'button'
-      editBtn.title = 'Edit presets'
-      editBtn.textContent = 'Edit'
-      editBtn.addEventListener('click', () => openOverlay())
-
-      c.appendChild(select)
-      c.appendChild(editBtn)
-
-      li.appendChild(label)
-      li.appendChild(c)
-
-      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
-      const titleLi = listEl?.querySelector('li.title')
-      if (titleLi?.parentElement === listEl) {
-        titleLi.insertAdjacentElement('afterend', li)
-      } else if (listEl) {
-        listEl.insertBefore(li, listEl.firstChild)
+      this.variant3LoadController = ctrl
+      
+      // Inject Edit button into the controller's widget area
+      const widget = ctrl.domElement.querySelector('.lil-widget')
+      if (widget) {
+        const editBtn = document.createElement('button')
+        editBtn.type = 'button'
+        editBtn.textContent = 'Edit'
+        editBtn.className = 'fv3-edit-btn'
+        editBtn.addEventListener('click', () => openOverlay())
+        widget.appendChild(editBtn)
       }
-
+      
+      // Mark the preset dropdown controller
+      ctrl.domElement.classList.add('fv3-load-preset')
+      
       refreshLoadOptions()
-      return li
+      return ctrl
     }
 
     addLoadRow()
@@ -3928,7 +3762,7 @@ export default class App {
     folder.open()
     this.performanceQualityFolder = folder
 
-    // dat.GUI builds a dropdown from an object map. Integer-like keys ("1", "2")
+    // lil-gui builds a dropdown from an object map. Integer-like keys ("1", "2")
     // are enumerated first by JS engines, which breaks ordering. Use labels that
     // render identically but are not integer-like keys.
     const prOptions = {

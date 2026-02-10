@@ -189,8 +189,10 @@ body #cdawrap {
   }
 }
 
-.dg.ac {
-  display: none;
+.lil-gui.autoPlace,
+.lil-gui.lil-auto-place {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 @media screen and (min-width: 53em) {
@@ -211,7 +213,9 @@ body #cdawrap {
     justify-self: end;
   }
 
-  .dg.ac {
-    display: block;
+  .lil-gui.autoPlace,
+  .lil-gui.lil-auto-place {
+    visibility: visible;
+    pointer-events: auto;
   }
 }

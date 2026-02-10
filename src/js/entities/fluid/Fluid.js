@@ -13,7 +13,7 @@ export default class Fluid extends THREE.Object3D {
 
         // Create canvas for fluid simulation.
         // IMPORTANT: mount inside `.content` so it stays behind UI overlays
-        // like dat.GUI and `#player-controls`.
+        // like lil-gui and `#player-controls`.
         this.canvas = document.createElement('canvas');
         this.canvas.style.position = 'fixed';
         this.canvas.style.inset = '0';
