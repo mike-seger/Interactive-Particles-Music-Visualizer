@@ -25,7 +25,8 @@
 }
 
 /* Hide the collapse arrow on the root title button ONLY */
-.lil-gui.lil-root > .title .lil-title::before {
+.lil-gui.lil-root > div.title .lil-title::before,
+.lil-root.lil-gui > .title button.lil-title::before {
   display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;
@@ -41,7 +42,8 @@
 }
 
 /* Make root title button non-collapsible and adjust position ONLY */
-.lil-gui.lil-root > .title .lil-title {
+.lil-gui.lil-root > div.title .lil-title,
+.lil-root.lil-gui > .title button.lil-title {
   cursor: default !important;
   pointer-events: none !important;
   padding-left: 0 !important;
