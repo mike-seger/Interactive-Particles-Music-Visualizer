@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
+
+/* Override lil-gui default colors globally */
+.lil-gui {
+  --widget-color: #2b2c2d !important;
+  --background-color: #0f1219 !important;
+}
+
+/* Root panel: constrained to 60 vh, no outer scrollbar.
+   Only .fv3-scroll inside the FV3 folder scrolls.
+   Styled to match the FV3 modal overlay. */
+.lil-gui.lil-root {
+  --width: 445px;
+  --widget-color: #2b2c2d !important;
+  --background-color: #0f1219 !important;
+  position: relative;
+  max-height: 60vh;
+  overflow: hidden;
+  background: #0f1219 !important;
+  border: 1px solid #2b2f3a !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+  padding: 10px !important;
+  box-sizing: border-box !important;
+}
+
+/* Hide the collapse arrow on the root title */
+.lil-gui.lil-root > .title::before {
+  display: none !important;
+}
+
+/* Make root title non-collapsible */
+.lil-gui.lil-root > .title {
+  cursor: default !important;
+  position: relative;
+  padding-right: 30px !important;
+}
+
+/* Close button styling */
+.gui-close-btn {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: #e6e9f0;
+  font-size: 28px;
+  line-height: 20px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.gui-close-btn:hover {
+  opacity: 1;
+}
+
+/* Show button (80x80px hot zone at top right) */
+.gui-show-btn {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 80px;
+  height: 80px;
+  border: none;
+  background: rgba(15, 18, 25, 0.8);
+  border: 1px solid #2b2f3a;
+  border-radius: 10px;
+  cursor: pointer;
+  z-index: 2500;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.gui-show-btn:hover {
+  opacity: 1;
+}
+
+.lil-gui.lil-root > .lil-children {
+  overflow: visible !important;
+  max-height: none !important;
+  height: auto !important;
+}
+
+/* Global dark inputs (helps Firefox render select in dark mode) */
+.lil-gui select,
+.lil-gui input[type="text"],
+.lil-gui input[type="number"],
+.lil-gui input[type="checkbox"] {
+  background: #1a1a1c !important;
+  color: #e6e9f0;
+  border: 1px solid #3a3f4d;
+  -moz-appearance: none;
+}
+
+/* Dropdown display divs */
+.lil-gui .lil-option .lil-display {
+  background: #1a1a1c !important;
+}
+
+/* Number slider backgrounds */
+.lil-gui .lil-number input {
+  background: #11141c !important;
+}
+
+.lil-gui .lil-slider {
+  background: #1a1a1c !important;
+}
+
+.lil-gui select:focus,
+.lil-gui input[type="text"]:focus,
+.lil-gui input[type="number"]:focus,
+.lil-gui input[type="checkbox"]:focus {
+  outline: 1px solid #6ea8ff;
+  border-color: #6ea8ff;
+  box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
+}

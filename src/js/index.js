@@ -1,3 +1,4 @@
+import '../scss/style.scss'
 import App from './App'
 ;(() => {
   // Ensure Material Symbols font loads reliably and avoid showing ligature names

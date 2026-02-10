@@ -1,5 +1,7 @@
 @use 'includes/reset';
 @use 'includes/base';
+@use 'includes/lil-gui';
+@use 'includes/fv3-controls';
 
 @font-face {
   font-family: 'Local Material Symbols Rounded';
@@ -255,14 +257,14 @@ html:not(.icons-ready) #player-controls button {
     display: block;
     width: 100%;
     margin: 0;
-    background-color: #363232 !important;
+    background-color: #2b2c2d !important;
     color: white !important;
     border: 1px solid #3a3a3a !important;
     padding: 4px 8px;
     border-radius: 3px;
     
     option {
-      background-color: #363232 !important;
+      background-color: #2b2c2d !important;
       color: white !important;
     }
   }
@@ -270,7 +272,7 @@ html:not(.icons-ready) #player-controls button {
   /* Dark mode styling for input fields */
   input[type="text"],
   input[type="number"] {
-    background-color: #363232 !important;
+    background-color: #2b2c2d !important;
     color: white !important;
     border: 1px solid #3a3a3a !important;
     padding: 4px 8px;
@@ -283,7 +285,7 @@ html:not(.icons-ready) #player-controls button {
     -webkit-appearance: none;
     width: 16px;
     height: 16px;
-    background-color: #363232 !important;
+    background-color: #2b2c2d !important;
     border: 1px solid #3a3a3a !important;
     border-radius: 3px;
     cursor: pointer;
