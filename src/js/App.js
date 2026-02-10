@@ -1268,6 +1268,20 @@ export default class App {
 
     // Hotkeys: numpad + / - to cycle visualizers
     window.addEventListener('keydown', this.onKeyDown)
+    
+    // Capture Num+/Num- before lil-gui can stop propagation
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'NumpadAdd' || e.code === 'NumpadSubtract' || 
+          ((e.key === '+' || e.key === '-') && e.location === 3)) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.code === 'NumpadAdd' || e.key === '+') {
+          this.cycleVisualizer(1)
+        } else {
+          this.cycleVisualizer(-1)
+        }
+      }
+    }, { capture: true })
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: this.debugAntialias,
@@ -3928,11 +3942,11 @@ export default class App {
 
     this.performanceQualityControllers.defaults = folder
       .add(this.performanceQualityConfig, 'saveAsDefaults')
-      .name('Save As Defaults')
+      .name('Save As PQ Defaults')
 
     folder
       .add(this.performanceQualityConfig, 'clearUserValues')
-      .name('Clear User Values')
+      .name('Clear Stored PQ Values')
 
     this.performanceQualityControllers.antialias = folder
       .add(this.performanceQualityConfig, 'antialias')
