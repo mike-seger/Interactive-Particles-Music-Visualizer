@@ -1370,7 +1370,11 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new GUI({ title: 'Controls' })
+    App.gui = new GUI({ title: 'Visualizer Controls' })
+
+    // Apply root GUI styles (border, shadow, padding)
+    this.ensureVariant3GuiStyles()
+    this.setupGuiCloseButton()
 
     // Keep the controls visible above any full-screen overlay canvases.
     // (Some visualizers render into their own 2D canvas and may clear to black.)
@@ -2302,9 +2306,15 @@ export default class App {
   }
 
   handleKeyDown(event) {
-    // Ignore if focused on form inputs
     const target = event.target
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+    const isFormElement = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
+    
+    // For NumpadAdd/NumpadSubtract, always allow them to work (even in GUI)
+    const isNumpadPlusMinus = event.code === 'NumpadAdd' || event.code === 'NumpadSubtract' || 
+                               (event.key === '+' || event.key === '-')
+    
+    // Ignore form inputs, except for numpad +/- which should always work
+    if (isFormElement && !isNumpadPlusMinus) return
 
     // Spacebar: toggle play/pause
     if (event.code === 'Space' || event.key === ' ') {
@@ -2589,6 +2599,41 @@ export default class App {
     return input
   }
 
+  setupGuiCloseButton() {
+    if (!App.gui?.domElement) return
+    
+    const guiRoot = App.gui.domElement
+    const titleElement = guiRoot.querySelector('.title')
+    if (!titleElement) return
+    
+    // Create close button
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'gui-close-btn'
+    closeBtn.innerHTML = '×'
+    closeBtn.title = 'Hide controls'
+    titleElement.appendChild(closeBtn)
+    
+    // Create show button (80x80px hot zone at top right)
+    const showBtn = document.createElement('button')
+    showBtn.className = 'gui-show-btn'
+    showBtn.title = 'Show controls'
+    showBtn.style.display = 'none'
+    document.body.appendChild(showBtn)
+    
+    // Close button handler
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      guiRoot.style.display = 'none'
+      showBtn.style.display = 'block'
+    })
+    
+    // Show button handler
+    showBtn.addEventListener('click', () => {
+      guiRoot.style.display = 'block'
+      showBtn.style.display = 'none'
+    })
+  }
+
   ensureVariant3GuiStyles() {
     if (document.getElementById('fv3-gui-style')) return
     const style = document.createElement('style')
@@ -2597,12 +2642,72 @@ export default class App {
       @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
 
       /* Root panel: constrained to 60 vh, no outer scrollbar.
-         Only .fv3-scroll inside the FV3 folder scrolls. */
+         Only .fv3-scroll inside the FV3 folder scrolls.
+         Styled to match the FV3 modal overlay. */
       .lil-gui.lil-root {
         --width: 445px;
         position: relative;
         max-height: 60vh;
         overflow: hidden;
+        background: #0f1219 !important;
+        border: 1px solid #2b2f3a !important;
+        border-radius: 10px !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+        padding: 10px !important;
+        box-sizing: border-box !important;
+      }
+      /* Hide the collapse arrow on the root title */
+      .lil-gui.lil-root > .title::before {
+        display: none !important;
+      }
+      /* Make root title non-collapsible */
+      .lil-gui.lil-root > .title {
+        cursor: default !important;
+        position: relative;
+        padding-right: 30px !important;
+      }
+      /* Close button styling */
+      .gui-close-btn {
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 24px;
+        height: 24px;
+        border: none;
+        background: transparent;
+        color: #e6e9f0;
+        font-size: 28px;
+        line-height: 20px;
+        cursor: pointer;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.7;
+        transition: opacity 0.2s;
+      }
+      .gui-close-btn:hover {
+        opacity: 1;
+      }
+      /* Show button (80x80px hot zone at top right) */
+      .gui-show-btn {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        width: 80px;
+        height: 80px;
+        border: none;
+        background: rgba(15, 18, 25, 0.8);
+        border: 1px solid #2b2f3a;
+        border-radius: 10px;
+        cursor: pointer;
+        z-index: 2500;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+      }
+      .gui-show-btn:hover {
+        opacity: 1;
       }
       .lil-gui.lil-root > .lil-children {
         overflow: visible !important;
@@ -3755,7 +3860,7 @@ export default class App {
   }
   
   addVisualizerSwitcher() {
-    const visualizerFolder = App.gui.addFolder('VISUALIZER TYPE')
+    const visualizerFolder = App.gui.addFolder('TYPE')
     visualizerFolder.open()
     
     this.visualizerSwitcherConfig = {
