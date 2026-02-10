@@ -1416,7 +1416,7 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new GUI({ title: 'VISUALIZER CONTROLS' })
+    App.gui = new GUI({ title: 'VISUALIZER' })
     
     // Disable collapse functionality on root GUI
     App.gui.open()
@@ -2761,7 +2761,7 @@ export default class App {
 
     this.variant3Config = { ...visualizer.getControlParams() }
     this.variant3PresetApplied = false
-    const folderName = 'Frequency Viz 3 Controls'
+    const folderName = 'FREQUENCY VIZ 3 CONTROLS'
     const folder = App.gui.addFolder(folderName)
     folder.open()
 
