@@ -3477,11 +3477,11 @@ export default class App {
 
     this.performanceQualityControllers.defaults = folder
       .add(this.performanceQualityConfig, 'saveAsDefaults')
-      .name('Save As PQ Defaults')
+      .name('Save As Global PQ Defaults')
 
     folder
       .add(this.performanceQualityConfig, 'clearUserValues')
-      .name('Clear Stored PQ Values')
+      .name('Clear Stored Local PQ Values')
 
     this.performanceQualityControllers.antialias = folder
       .add(this.performanceQualityConfig, 'antialias')
