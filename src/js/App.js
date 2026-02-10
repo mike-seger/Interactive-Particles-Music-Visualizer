@@ -2675,6 +2675,17 @@ export default class App {
     // Insert the button right after the title button
     titleButton.parentNode.insertBefore(titleCloseBtn, titleButton.nextSibling)
     
+    // Add click handler to hide all child folders
+    titleCloseBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      e.preventDefault()
+      const childrenContainer = guiRoot.querySelector('.lil-children')
+      if (childrenContainer) {
+        childrenContainer.style.display = 
+          childrenContainer.style.display === 'none' ? '' : 'none'
+      }
+    })
+    
     // Get the title container
     const titleElement = guiRoot.querySelector('.title')
     if (!titleElement) return
