@@ -18,9 +18,15 @@
   right: 20px;
   width: 600px;
   height: 100px;
-  background: rgba(0, 0, 0, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
+  // background: rgba(0, 0, 0, 0.8);
+  // border: 1px solid rgba(255, 255, 255, 0.2);
+  // border-radius: 8px;
+
+  background: #0f1219 !important;
+  border: 1px solid #2b2f3a !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px #00000059 !important;
+
   display: flex;
   flex-direction: column;
   align-items: center;
