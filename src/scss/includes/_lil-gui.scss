@@ -25,24 +25,15 @@
   box-sizing: border-box !important;
 }
 
-/* Hide the collapse arrow - ONLY FIRST */
-.lil-gui.lil-root > .title button.lil-title:first-of-type::before {
-  display: none !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
-  width: 0 !important;
-  height: 0 !important;
-  min-width: 0 !important;
-  min-height: 0 !important;
+/* Hide the collapse arrow - lil-gui adds it via ::before content */
+.lil-gui.lil-root > button.lil-title:not(.gui-title-close-btn)::before {
   content: '' !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: none !important;
-  background: none !important;
+  width: 0 !important;
+  margin-right: 0 !important;
 }
 
-/* Make title button non-collapsible - ONLY FIRST */
-.lil-gui.lil-root > .title button.lil-title:first-of-type {
+/* Make title button non-collapsible - exclude close button */
+.lil-gui.lil-root > button.lil-title:not(.gui-title-close-btn) {
   cursor: default !important;
   pointer-events: none !important;
   padding-left: 0 !important;
@@ -51,14 +42,9 @@
   flex: 0 0 auto !important;
 }
 
-/* Make title row a flexbox */
-.lil-gui.lil-root > .title {
+/* Make lil-root container positioned for absolute children */
+.lil-gui.lil-root {
   position: relative;
-  padding-right: 30px !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: flex-start !important;
-  gap: 8px !important;
 }
 
 /* Small square 'X' button - absolute positioned at top right */
