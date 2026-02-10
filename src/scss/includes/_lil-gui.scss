@@ -24,9 +24,8 @@
   box-sizing: border-box !important;
 }
 
-/* Hide the collapse arrow on the root title button ONLY */
-.lil-gui.lil-root > div.title .lil-title::before,
-.lil-root.lil-gui > .title button.lil-title::before {
+/* Hide the collapse arrow - ONLY FIRST */
+.lil-gui.lil-root > button.lil-title:first-of-type::before {
   display: none !important;
   visibility: hidden !important;
   opacity: 0 !important;
@@ -41,13 +40,12 @@
   background: none !important;
 }
 
-/* Make root title button non-collapsible and adjust position ONLY */
-.lil-gui.lil-root > div.title .lil-title,
-.lil-root.lil-gui > .title button.lil-title {
+/* Make title button non-collapsible - ONLY FIRST */
+.lil-gui.lil-root > button.lil-title:first-of-type {
   cursor: default !important;
   pointer-events: none !important;
   padding-left: 0 !important;
-  margin-left: -10px !important;
+  margin-left: 2px !important;
 }
 
 /* Make root title container relative for close button positioning */

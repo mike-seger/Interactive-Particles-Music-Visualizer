@@ -1416,7 +1416,7 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new GUI({ title: 'Visualizer Controls' })
+    App.gui = new GUI({ title: 'VISUALIZER CONTROLS' })
     
     // Disable collapse functionality on root GUI
     App.gui.open()
