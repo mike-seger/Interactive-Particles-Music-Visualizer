@@ -2681,8 +2681,21 @@ export default class App {
       e.preventDefault()
       const childrenContainer = guiRoot.querySelector('.lil-children')
       if (childrenContainer) {
-        childrenContainer.style.display = 
-          childrenContainer.style.display === 'none' ? '' : 'none'
+        const isHidden = childrenContainer.style.display === 'none'
+        childrenContainer.style.display = isHidden ? '' : 'none'
+        titleCloseBtn.innerHTML = isHidden ? 'X' : 'O'
+        guiRoot.classList.toggle('gui-collapsed', !isHidden)
+      }
+    })
+    
+    // When collapsed, clicking anywhere in the GUI should toggle it open
+    guiRoot.addEventListener('click', (e) => {
+      const childrenContainer = guiRoot.querySelector('.lil-children')
+      if (childrenContainer && childrenContainer.style.display === 'none') {
+        // We're collapsed, so expand
+        childrenContainer.style.display = ''
+        titleCloseBtn.innerHTML = 'X'
+        guiRoot.classList.remove('gui-collapsed')
       }
     })
     

@@ -79,6 +79,17 @@
   border-color: rgba(255, 255, 255, 0.5);
 }
 
+/* Hide GUI when collapsed unless hovering */
+.lil-gui.lil-root.gui-collapsed {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  height: 50px;
+}
+
+.lil-gui.lil-root.gui-collapsed:hover {
+  opacity: 1;
+}
+
 /* Re-enable pointer events for the close button inside the title */
 .lil-gui.lil-root > .title .gui-close-btn {
   pointer-events: auto !important;
