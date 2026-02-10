@@ -2667,6 +2667,14 @@ export default class App {
       return false
     }, true)
     
+    // Create small square 'x' button next to title
+    const titleCloseBtn = document.createElement('button')
+    titleCloseBtn.className = 'gui-title-close-btn'
+    titleCloseBtn.innerHTML = 'X'
+    titleCloseBtn.title = 'Close controls'
+    // Insert the button right after the title button
+    titleButton.parentNode.insertBefore(titleCloseBtn, titleButton.nextSibling)
+    
     // Get the title container
     const titleElement = guiRoot.querySelector('.title')
     if (!titleElement) return
