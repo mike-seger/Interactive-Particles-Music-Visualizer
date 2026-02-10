@@ -600,10 +600,14 @@ export default class App {
     const playPauseBtn = document.getElementById('play-pause-btn')
     const muteBtn = document.getElementById('mute-btn')
     const micBtn = document.getElementById('mic-btn')
+    const lockBtn = document.getElementById('lock-btn')
     const syncButton = document.getElementById('syncButton')
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
     const fpsDisplay = document.getElementById('fps-display')
+
+    // Lock state management
+    let isLocked = localStorage.getItem('playerControlsLocked') === 'true'
 
     // Optional FPS counter (standalone UI only)
     this.fpsDisplay = fpsDisplay || null
@@ -631,6 +635,7 @@ export default class App {
     }
 
     const hideControls = () => {
+      if (isLocked) return
       controls.style.display = 'none'
       controls.style.pointerEvents = 'none'
     }
@@ -644,6 +649,7 @@ export default class App {
 
     const scheduleIdle = () => {
       clearTimers()
+      if (isLocked) return
       idleTimer = setTimeout(() => {
         if (!pointerInside) hideControls()
       }, idleDelayMs)
@@ -782,6 +788,32 @@ export default class App {
       micBtn.textContent = 'mic_off'
     }
 
+    // Lock button functionality
+    const updateLockState = () => {
+      if (!lockBtn) return
+      if (isLocked) {
+        lockBtn.textContent = 'lock'
+        lockBtn.title = 'Unlock controls (allow auto-hide)'
+      } else {
+        lockBtn.textContent = 'lock_open_right'
+        lockBtn.title = 'Lock controls visible'
+      }
+    }
+
+    lockBtn?.addEventListener('click', () => {
+      isLocked = !isLocked
+      localStorage.setItem('playerControlsLocked', isLocked.toString())
+      updateLockState()
+      if (isLocked) {
+        showControls()
+        clearTimers()
+      } else {
+        scheduleIdle()
+      }
+    })
+
+    updateLockState()
+
     positionSlider?.addEventListener('mousedown', () => { isSeeking = true })
     positionSlider?.addEventListener('mouseup', () => { isSeeking = false })
     positionSlider?.addEventListener('input', (e) => {
@@ -823,7 +855,7 @@ export default class App {
           resetVisibility()
         } else if (controls.style.display === 'none') {
           resetVisibility()
-        } else {
+        } else if (!isLocked) {
           pointerInside = false
           hideControls()
         }

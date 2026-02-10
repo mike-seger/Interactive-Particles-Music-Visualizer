@@ -49,7 +49,8 @@
 /* Safety: ensure these remain icon buttons even if a class (like .letter-btn) is present. */
 #play-pause-btn,
 #mute-btn,
-#mic-btn {
+#mic-btn,
+#lock-btn {
   font-family: 'Material Symbols Rounded', 'Local Material Symbols Rounded', 'Inter', system-ui, -apple-system, sans-serif;
   font-variant-ligatures: normal;
   font-feature-settings: 'liga' 1;
@@ -62,7 +63,8 @@ html:not(.icons-ready) #player-controls button {
 
 #play-pause-btn,
 #mute-btn,
-#mic-btn {
+#mic-btn,
+#lock-btn {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.3);
   color: white;
@@ -80,7 +82,8 @@ html:not(.icons-ready) #player-controls button {
 
 #play-pause-btn:hover,
 #mute-btn:hover,
-#mic-btn:hover {
+#mic-btn:hover,
+#lock-btn:hover {
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.5);
   transform: scale(1.05);
