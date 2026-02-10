@@ -2739,10 +2739,12 @@ export default class App {
       .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget .lil-display {
         flex: 1 1 auto;
       }
+      /* Constrain select to not cover Edit button */
       .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget select {
-        flex: 1 1 auto;
+        width: calc(100% - 70px) !important;
+        max-width: calc(100% - 70px) !important;
       }
-      /* Edit button stays compact */
+      /* Edit button stays compact with high z-index */
       .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget button.fv3-edit-btn {
         flex: 0 0 auto;
         padding: 4px 12px;
@@ -2756,6 +2758,9 @@ export default class App {
         border-radius: var(--widget-border-radius);
         cursor: pointer;
         transition: background 0.12s ease;
+        position: relative;
+        z-index: 10;
+        pointer-events: auto;
       }
       .lil-gui .fv3-controls .lil-controller.fv3-load-preset .lil-widget button.fv3-edit-btn:hover {
         background: var(--hover-color);
@@ -3212,9 +3217,17 @@ export default class App {
     let isSyncingPreset = false
 
     const syncLoadDropdowns = (value) => {
-      const selectEl = this.variant3LoadController?.domElement?.querySelector('select')
-      if (selectEl) selectEl.value = value || ''
-      if (this.variant3LoadController?.updateDisplay) this.variant3LoadController.updateDisplay()
+      const ctrl = this.variant3LoadController
+      const selectEl = ctrl?.domElement?.querySelector('select')
+      const display = ctrl?.domElement?.querySelector('.lil-display')
+      if (selectEl) {
+        selectEl.value = value || ''
+        if (display) {
+          const selectedOption = selectEl.options[selectEl.selectedIndex]
+          display.textContent = selectedOption?.textContent || ''
+        }
+      }
+      if (ctrl?.updateDisplay) ctrl.updateDisplay()
     }
 
     const onPresetSelect = (value) => {
@@ -3241,7 +3254,10 @@ export default class App {
       const updateLoadController = () => {
         const ctrl = this.variant3LoadController
         const select = ctrl?.domElement?.querySelector('select')
+        const display = ctrl?.domElement?.querySelector('.lil-display')
         if (!ctrl || !select) return
+        
+        // Update select options
         select.innerHTML = ''
         const placeholder = document.createElement('option')
         placeholder.value = ''
@@ -3253,11 +3269,17 @@ export default class App {
           opt.textContent = name
           select.appendChild(opt)
         })
+        
+        // Set the selected value
         if (names.includes(this.variant3PresetState?.loadPreset)) {
           select.value = this.variant3PresetState.loadPreset
+          if (display) display.textContent = this.variant3PresetState.loadPreset
         } else {
           select.value = ''
+          if (display) display.textContent = placeholder.textContent
         }
+        
+        // Update the controller's internal state
         if (ctrl.updateDisplay) ctrl.updateDisplay()
       }
 
@@ -3640,20 +3662,32 @@ export default class App {
       // Create dropdown controller for preset selection
       const presetOptions = {}
       const ctrl = folder.add(this.variant3PresetState, 'loadPreset', presetOptions).name('Load preset').listen()
-      ctrl.onChange((value) => {
-        if (isSyncingPreset) return
-        onPresetSelect(value)
-      })
       this.variant3LoadController = ctrl
       
-      // Inject Edit button into the controller's widget area
+      // Get the select element and add change handler directly
       const widget = ctrl.domElement.querySelector('.lil-widget')
+      const select = ctrl.domElement.querySelector('select')
+      
+      if (select) {
+        select.addEventListener('change', (e) => {
+          if (isSyncingPreset) return
+          const value = e.target.value
+          this.variant3PresetState.loadPreset = value
+          onPresetSelect(value)
+        })
+      }
+      
+      // Inject Edit button into the controller's widget area
       if (widget) {
         const editBtn = document.createElement('button')
         editBtn.type = 'button'
         editBtn.textContent = 'Edit'
         editBtn.className = 'fv3-edit-btn'
-        editBtn.addEventListener('click', () => openOverlay())
+        editBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          openOverlay()
+        })
         widget.appendChild(editBtn)
       }
       
