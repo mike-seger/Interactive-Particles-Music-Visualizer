@@ -1,4 +1,5 @@
 import ShadertoyMultipassVisualizer from './ShadertoyMultipassVisualizer'
+import { loadShaderConfig, injectUniforms } from '../shaderCustomization'
 
 // Eager-load all GLSL sources as raw strings.
 // Note: path is relative to this file: src/js/visualizers -> src/shaders
@@ -28,10 +29,28 @@ function stableSortEntries(entries) {
 
 const entries = Object.entries(shaderModules).map(([filePath, source]) => {
   const displayName = `Shader: ${niceTitleFromFile(filePath)}`
+  const fileName = fileBaseName(filePath)
+  
   return {
     name: displayName,
     filePath,
-    create: () => new ShadertoyMultipassVisualizer({ name: displayName, source, filePath }),
+    fileName,
+    create: async () => {
+      // Try to load optional shader config
+      const config = await loadShaderConfig(fileName)
+      
+      // Inject uniforms if config exists
+      const processedSource = config ? injectUniforms(source, config) : source
+      
+      const visualizer = new ShadertoyMultipassVisualizer({ 
+        name: displayName, 
+        source: processedSource, 
+        filePath,
+        shaderConfig: config
+      })
+      
+      return visualizer
+    },
   }
 })
 

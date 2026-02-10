@@ -1595,13 +1595,14 @@ function resampleTo512(src, dst /* Uint8Array */) {
 }
 
 export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
-  constructor({ name, source, filePath } = {}) {
+  constructor({ name, source, filePath, shaderConfig } = {}) {
     super()
 
     this.name = name || `Shader: ${niceTitleFromFile(filePath || 'shader')}`
     this._debugName = filePath || this.name
 
     this._source = String(source || '')
+    this.shaderConfig = shaderConfig || null
 
     this._geo = null
     this._camera = null
@@ -1990,7 +1991,7 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       new THREE.Vector3(res.x, res.y, 1),
     ]
 
-    return {
+    const uniforms = {
       iResolution: { value: res },
       uPixelRatio: { value: pr },
       iTime: { value: 0 },
@@ -2009,6 +2010,22 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       iChannelResolution: { value: chRes },
       iChannelTime: { value: [0, 0, 0, 0] },
     }
+
+    // Add custom uniforms from shader config
+    if (this.shaderConfig && this.shaderConfig.controls) {
+      for (const control of this.shaderConfig.controls) {
+        if (control.uniform && control.default !== undefined) {
+          let value = control.default
+          if (control.type === 'color' && Array.isArray(control.default)) {
+            value = new THREE.Vector3(...control.default)
+          }
+          uniforms[control.uniform] = { value }
+          console.log(`[_makeUniforms] Added custom uniform ${control.uniform} = ${value}`)
+        }
+      }
+    }
+
+    return uniforms
   }
 
   _getLogicalResolutionVec3() {
@@ -2199,6 +2216,35 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     if (this._imageMat) {
       this._applyCommonUniforms(this._imageMat, t, dt, audioTime)
       this._applyChannelUniformsForImage(this._imageMat)
+    }
+  }
+
+  /**
+   * Set a custom uniform value on all shader passes.
+   * Used for runtime shader customization via GUI controls.
+   * @param {string} uniformName - The name of the uniform to set
+   * @param {*} value - The value to set (number, Vector2, Vector3, etc.)
+   */
+  setUniform(uniformName, value) {
+    console.log(`[ShadertoyMultipassVisualizer] setUniform(${uniformName}, ${value})`)
+    let updated = 0
+    // Update all buffer pass materials
+    for (const pass of this._passes) {
+      if (pass.mat?.uniforms?.[uniformName]) {
+        pass.mat.uniforms[uniformName].value = value
+        updated++
+        console.log(`  Updated pass "${pass.name}" uniform ${uniformName} = ${value}`)
+      }
+    }
+    // Update image material if exists
+    if (this._imageMat?.uniforms?.[uniformName]) {
+      this._imageMat.uniforms[uniformName].value = value
+      updated++
+      console.log(`  Updated image material uniform ${uniformName} = ${value}`)
+    }
+    if (updated === 0) {
+      console.warn(`[ShadertoyMultipassVisualizer] Uniform "${uniformName}" not found in any materials!`)
+      console.log('  Available uniforms:', this._imageMat?.uniforms ? Object.keys(this._imageMat.uniforms) : 'none')
     }
   }
 

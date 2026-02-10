@@ -249,12 +249,63 @@ html:not(.icons-ready) #player-controls button {
     box-sizing: border-box;
   }
 
+  /* Dark mode for select elements - target the .c container */
+  .c select {
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    margin: 0;
+    margin-top: 5px;
+    background-color: #363232 !important;
+    color: white !important;
+    border: 1px solid #3a3a3a !important;
+    padding: 4px 8px;
+    border-radius: 3px;
+    
+    option {
+      background-color: #363232 !important;
+      color: white !important;
+    }
+  }
+
   /* Keep selects aligned and let the panel width be controlled by JS measurement */
   select {
     box-sizing: border-box;
     display: block;
     width: 100%;
     margin: 0;
+  }
+
+  /* Dark mode styling for input fields */
+  .c input[type="text"],
+  .c input[type="number"] {
+    background-color: #363232 !important;
+    color: white !important;
+    border: 1px solid #3a3a3a !important;
+    padding: 4px 8px;
+    border-radius: 3px;
+  }
+
+  /* Dark mode styling for checkboxes */
+  input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background-color: #363232 !important;
+    border: 1px solid #3a3a3a !important;
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    
+    &:checked::after {
+      content: '✓';
+      position: absolute;
+      top: -2px;
+      left: 2px;
+      color: white;
+      font-size: 14px;
+    }
   }
 
   /* Base styling; sizing is handled in JS based on label */

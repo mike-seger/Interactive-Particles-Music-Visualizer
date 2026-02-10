@@ -6,6 +6,7 @@ import * as dat from 'dat.gui'
 import BPMManager from './managers/BPMManager'
 import { VideoSyncClient } from './sync-client/SyncClient.mjs'
 import AudioManager from './managers/AudioManager'
+import { createShaderControls } from './shaderCustomization'
 
 class WebGLGpuTimer {
   constructor(gl) {
@@ -558,14 +559,23 @@ export default class App {
       ? overrides.pixelRatio
       : (this.renderer.getPixelRatio?.() || 1)
 
+    const snappedPr = this._snapPixelRatio(effectivePr, { min: 0.25, max: 2 })
+
     this._syncingPerformanceQualityGui = true
     this.performanceQualityConfig.antialias = !!effectiveAa
-    this.performanceQualityConfig.pixelRatio = this._snapPixelRatio(effectivePr, { min: 0.25, max: 2 })
+    this.performanceQualityConfig.pixelRatio = snappedPr
     this._syncingPerformanceQualityGui = false
 
     const ctrls = this.performanceQualityControllers
     if (ctrls?.antialias?.updateDisplay) ctrls.antialias.updateDisplay()
-    if (ctrls?.pixelRatio?.updateDisplay) ctrls.pixelRatio.updateDisplay()
+    if (ctrls?.pixelRatio?.updateDisplay) {
+      // Force dat.GUI to sync by temporarily setting to undefined then back
+      const temp = this.performanceQualityConfig.pixelRatio
+      this.performanceQualityConfig.pixelRatio = undefined
+      ctrls.pixelRatio.updateDisplay()
+      this.performanceQualityConfig.pixelRatio = temp
+      ctrls.pixelRatio.updateDisplay()
+    }
   }
 
   restoreSessionOnPlay() {
@@ -2091,7 +2101,7 @@ export default class App {
     this.fpsDisplay.textContent = `FPS: ${fpsText} (${dtText}ms)`
   }
   
-  switchVisualizer(type, { notify = true } = {}) {
+  async switchVisualizer(type, { notify = true } = {}) {
     // Destroy current visualizer if exists
     if (App.currentVisualizer) {
       if (typeof App.currentVisualizer.destroy === 'function') {
@@ -2113,8 +2123,8 @@ export default class App {
     this._applyPerVisualizerQualityOverrides(type)
     this.renderer.clear()
 
-    // Create new visualizer
-    const shaderVisualizer = createShaderVisualizerByName(type)
+    // Create new visualizer (async now due to shader config loading)
+    const shaderVisualizer = await createShaderVisualizerByName(type)
     App.currentVisualizer = shaderVisualizer || createEntityVisualizerByName(type)
 
     if (!App.currentVisualizer) {
@@ -2123,7 +2133,7 @@ export default class App {
         : ENTITY_VISUALIZER_NAMES[0]
 
       App.currentVisualizer = (fallbackName ? createEntityVisualizerByName(fallbackName) : null)
-        || createShaderVisualizerByName(SHADER_VISUALIZER_NAMES[0])
+        || await createShaderVisualizerByName(SHADER_VISUALIZER_NAMES[0])
     }
 
     if (!App.currentVisualizer) {
@@ -2137,6 +2147,13 @@ export default class App {
       this.setupFrequencyViz3Controls(App.currentVisualizer)
     } else {
       this.teardownFrequencyViz3Controls()
+    }
+
+    // Setup shader-specific controls if config exists
+    if (App.currentVisualizer.shaderConfig) {
+      this.setupShaderControls(App.currentVisualizer)
+    } else {
+      this.teardownShaderControls()
     }
 
     App.visualizerType = type
@@ -3169,6 +3186,30 @@ export default class App {
       this.variant3Overlay.parentElement.removeChild(this.variant3Overlay)
     }
     this.variant3Overlay = null
+  }
+
+  setupShaderControls(visualizer) {
+    this.teardownShaderControls()
+    if (!visualizer?.shaderConfig || !App.gui) return
+
+    // Use the generic createShaderControls from shaderCustomization.js
+    this.shaderControlsFolder = createShaderControls(App.gui, visualizer, visualizer.shaderConfig)
+  }
+
+  teardownShaderControls() {
+    if (!this.shaderControlsFolder) return
+    const folder = this.shaderControlsFolder
+    const parent = folder.domElement?.parentElement
+    if (parent && folder.domElement) {
+      parent.removeChild(folder.domElement)
+    }
+    if (App.gui?.__folders && folder.name && App.gui.__folders[folder.name]) {
+      delete App.gui.__folders[folder.name]
+    }
+    if (typeof App.gui?.onResize === 'function') {
+      App.gui.onResize()
+    }
+    this.shaderControlsFolder = null
   }
 
   setupFrequencyViz3Controls(visualizer) {

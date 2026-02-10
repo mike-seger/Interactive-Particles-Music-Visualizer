@@ -41,8 +41,12 @@ vec3 color(vec2 p) {
 }
 
 */
-// Palette index (change this to 0-3 to switch)
-#define PALETTE_INDEX 2
+// Palette index - controlled by shader config UI
+// The uniform will be injected by the shader customization system
+// Default value is set in shaders-config/reactive-radial-ripples.js
+#ifndef PALETTE_INDEX
+#define PALETTE_INDEX 0
+#endif
 
 float hash(in vec2 p) {
     float r = dot(p,vec2(12.1,31.7)) + dot(p,vec2(299.5,78.3));
