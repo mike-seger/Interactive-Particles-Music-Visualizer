@@ -2660,6 +2660,8 @@ export default class App {
          Styled to match the FV3 modal overlay. */
       .lil-gui.lil-root {
         --width: 445px;
+        --widget-color: #1a1a1c;
+        --background-color: #0f1219;
         position: relative;
         max-height: 60vh;
         overflow: hidden;
