@@ -259,7 +259,6 @@
 }
 
 .lil-gui .fv3-controls.blur-active > :not(.fv3-overlay) {
-//filter: blur(3px);
   pointer-events: none;
 }
 
@@ -272,13 +271,12 @@
   align-items: flex-start;
   justify-content: center;
   z-index: 50;
-  padding: 16px;
+  padding-top: 18px;
   box-sizing: border-box;
 }
 
 .fv3-overlay .fv3-modal {
   width: 100%;
-  max-width: 460px;
   background: #0f1219;
   border: 1px solid #2b2f3a;
   border-radius: 10px;
@@ -307,8 +305,7 @@
 
 .fv3-overlay .close-btn {
   background: transparent;
-  border: 1px solid #3a3f4d;
-  border-radius: 999px;
+  border: 0;
   color: #e6e9f0;
   font-size: 16px;
   width: 24px;
@@ -316,6 +313,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  margin: -7px -7px 0 0;
   cursor: pointer;
   transition: border-color 120ms ease, background 120ms ease;
 }
@@ -338,7 +336,7 @@
 }
 
 .fv3-overlay .label {
-  width: 40%;
+  width: 25%;
   font-weight: 600;
   font-size: 12px;
 }
