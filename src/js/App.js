@@ -3218,16 +3218,9 @@ export default class App {
 
     const syncLoadDropdowns = (value) => {
       const ctrl = this.variant3LoadController
-      const selectEl = ctrl?.domElement?.querySelector('select')
-      const display = ctrl?.domElement?.querySelector('.lil-display')
-      if (selectEl) {
-        selectEl.value = value || ''
-        if (display) {
-          const selectedOption = selectEl.options[selectEl.selectedIndex]
-          display.textContent = selectedOption?.textContent || ''
-        }
-      }
-      if (ctrl?.updateDisplay) ctrl.updateDisplay()
+      if (!ctrl) return
+      this.variant3PresetState.loadPreset = value || ''
+      ctrl.updateDisplay()
     }
 
     const onPresetSelect = (value) => {
@@ -3253,34 +3246,35 @@ export default class App {
 
       const updateLoadController = () => {
         const ctrl = this.variant3LoadController
-        const select = ctrl?.domElement?.querySelector('select')
-        const display = ctrl?.domElement?.querySelector('.lil-display')
-        if (!ctrl || !select) return
-        
-        // Update select options
-        select.innerHTML = ''
-        const placeholder = document.createElement('option')
-        placeholder.value = ''
-        placeholder.textContent = names.length ? 'Select…' : 'No presets'
-        select.appendChild(placeholder)
-        names.forEach((name) => {
-          const opt = document.createElement('option')
-          opt.value = name
-          opt.textContent = name
-          select.appendChild(opt)
-        })
-        
-        // Set the selected value
-        if (names.includes(this.variant3PresetState?.loadPreset)) {
-          select.value = this.variant3PresetState.loadPreset
-          if (display) display.textContent = this.variant3PresetState.loadPreset
-        } else {
-          select.value = ''
-          if (display) display.textContent = placeholder.textContent
+        if (!ctrl) return
+
+        // Build an options map: { displayName: value, ... }
+        const optionsMap = {}
+        names.forEach((name) => { optionsMap[name] = name })
+
+        // Use lil-gui's .options() API so internal _values stays in sync
+        ctrl.options(optionsMap)
+
+        // Set the current value
+        if (!names.includes(this.variant3PresetState?.loadPreset)) {
+          this.variant3PresetState.loadPreset = names[0] || ''
         }
-        
-        // Update the controller's internal state
-        if (ctrl.updateDisplay) ctrl.updateDisplay()
+        ctrl.updateDisplay()
+
+        // Re-inject Edit button (options() rebuilds the select, removing our button)
+        const widget = ctrl.domElement.querySelector('.lil-widget')
+        if (widget && !widget.querySelector('.fv3-edit-btn')) {
+          const editBtn = document.createElement('button')
+          editBtn.type = 'button'
+          editBtn.textContent = 'Edit'
+          editBtn.className = 'fv3-edit-btn'
+          editBtn.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            openOverlay()
+          })
+          widget.appendChild(editBtn)
+        }
       }
 
       updateLoadController()
@@ -3661,23 +3655,15 @@ export default class App {
     const addLoadRow = () => {
       // Create dropdown controller for preset selection
       const presetOptions = {}
-      const ctrl = folder.add(this.variant3PresetState, 'loadPreset', presetOptions).name('Load preset').listen()
+      const ctrl = folder.add(this.variant3PresetState, 'loadPreset', presetOptions).name('Load preset')
+      ctrl.onChange((value) => {
+        if (isSyncingPreset) return
+        onPresetSelect(value)
+      })
       this.variant3LoadController = ctrl
       
-      // Get the select element and add change handler directly
-      const widget = ctrl.domElement.querySelector('.lil-widget')
-      const select = ctrl.domElement.querySelector('select')
-      
-      if (select) {
-        select.addEventListener('change', (e) => {
-          if (isSyncingPreset) return
-          const value = e.target.value
-          this.variant3PresetState.loadPreset = value
-          onPresetSelect(value)
-        })
-      }
-      
       // Inject Edit button into the controller's widget area
+      const widget = ctrl.domElement.querySelector('.lil-widget')
       if (widget) {
         const editBtn = document.createElement('button')
         editBtn.type = 'button'
