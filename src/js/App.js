@@ -1,6 +1,14 @@
 import * as THREE from 'three'
 import { ENTITY_VISUALIZER_NAMES, createEntityVisualizerByName } from './visualizers/entityRegistry'
 import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
+
+// MilkDrop (Butterchurn) presets are lazy-loaded to keep the initial bundle small.
+// The module and its heavy dependencies (~800 kB) are fetched on first use.
+let _milkdropModule = null
+const _milkdropReady = import('./visualizers/milkdropRegistry').then((m) => {
+  _milkdropModule = m
+  return m
+})
 import { loadSpectrumFilters } from './spectrumFilters'
 import GUI from 'lil-gui'
 import BPMManager from './managers/BPMManager'
@@ -138,6 +146,7 @@ export default class App {
   static currentVisualizer = null
   static visualizerType = 'Reactive Particles'
   static visualizerList = [...ENTITY_VISUALIZER_NAMES, ...SHADER_VISUALIZER_NAMES]
+  static _milkdropNamesAppended = false
 
   constructor() {
     this.onClickBinder = () => this.init()
@@ -1436,7 +1445,6 @@ export default class App {
       guiRoot.style.top = '12px'
       guiRoot.style.zIndex = '2500'
       guiRoot.style.pointerEvents = 'auto'
-      guiRoot.style.maxWidth = 'calc(100vw - 24px)'
       guiRoot.style.boxSizing = 'border-box'
     }
 
@@ -1715,22 +1723,20 @@ export default class App {
     const guiHidden = getComputedStyle(guiContainer).display === 'none'
     if (!(isEmbedded && (wantsHide || guiHidden))) return
 
+    // With the bridge-collapsed approach the GUI is revealed via hover + click
+    // on its own title bar — no blocking hotspot needed. Instead, use a
+    // pointer-events-transparent overlay that only shows a cursor hint.
     const hotspot = document.createElement('div')
     hotspot.style.position = 'fixed'
     hotspot.style.top = '0'
     hotspot.style.right = '0'
     hotspot.style.width = '200px'
     hotspot.style.height = '200px'
-    hotspot.style.zIndex = '2600'
+    hotspot.style.zIndex = '2400'          // below lil-gui (2500)
     hotspot.style.cursor = 'pointer'
     hotspot.style.background = 'transparent'
+    hotspot.style.pointerEvents = 'none'   // let clicks pass through to GUI
     hotspot.title = 'Show controls'
-
-    hotspot.addEventListener('click', () => {
-      guiContainer.style.display = 'block'
-      guiContainer.style.pointerEvents = 'auto'
-      guiContainer.style.opacity = '1'
-    })
 
     document.body.appendChild(hotspot)
     this.bridgeGuiHotspotEnabled = true
@@ -2162,7 +2168,10 @@ export default class App {
 
     // Create new visualizer (async now due to shader config loading)
     const shaderVisualizer = await createShaderVisualizerByName(type)
-    App.currentVisualizer = shaderVisualizer || createEntityVisualizerByName(type)
+    const milkdropVisualizer = !shaderVisualizer
+      ? (await _milkdropReady, _milkdropModule?.createMilkdropVisualizerByName(type) ?? null)
+      : null
+    App.currentVisualizer = shaderVisualizer || milkdropVisualizer || createEntityVisualizerByName(type)
 
     if (!App.currentVisualizer) {
       const fallbackName = ENTITY_VISUALIZER_NAMES.includes('Reactive Particles')
@@ -2523,7 +2532,9 @@ export default class App {
       let desiredGuiWidth = Math.ceil(neededRowWidth + overhead)
 
       // Clamp to viewport; our container is positioned with 12px gutters.
-      const maxGuiWidth = Math.max(220, window.innerWidth - 24)
+      // Also cap at max(35vw, 350px) to match the CSS --width rule.
+      const maxByDesign = Math.max(window.innerWidth * 0.35, 350)
+      const maxGuiWidth = Math.max(220, Math.min(window.innerWidth - 24, maxByDesign))
       desiredGuiWidth = Math.max(220, Math.min(desiredGuiWidth, maxGuiWidth))
 
       guiRoot.style.setProperty('--width', `${desiredGuiWidth}px`)
@@ -3458,6 +3469,23 @@ export default class App {
 
     // Size the GUI to fit the longest option label (no truncation).
     requestAnimationFrame(() => this._updateGuiWidthToFitVisualizerSelect())
+
+    // Once MilkDrop presets finish lazy-loading, append them to the dropdown.
+    if (!App._milkdropNamesAppended) {
+      _milkdropReady.then((m) => {
+        if (App._milkdropNamesAppended) return
+        App._milkdropNamesAppended = true
+        const names = m.MILKDROP_VISUALIZER_NAMES
+        if (!names?.length) return
+        App.visualizerList.push(...names)
+        // Rebuild dropdown options to include MilkDrop presets
+        if (this.visualizerController) {
+          this.visualizerController.options(App.visualizerList)
+          this.visualizerController.setValue(App.visualizerType)
+          requestAnimationFrame(() => this._updateGuiWidthToFitVisualizerSelect())
+        }
+      })
+    }
   }
 
   addPerformanceQualityControls() {

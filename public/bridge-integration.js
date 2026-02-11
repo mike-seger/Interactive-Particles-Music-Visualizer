@@ -30,7 +30,7 @@
   // Store BPM audio buffer received from bridge
   window.__bridgeBPMBuffer = null;
   
-  // Hide UI elements if requested
+  // Hide UI elements if requested — but keep lil-gui controls accessible
   if (hideui) {
     const style = document.createElement('style');
     style.textContent = `
@@ -38,9 +38,46 @@
       #player-controls { display: none !important; }
       .user_interaction { display: none !important; }
       .dg.ac { display: none !important; }
+
+      /* Bridge mode: lil-gui starts collapsed, reveal on hover */
+      .lil-gui.lil-root.bridge-collapsed > .lil-children { display: none; }
+      .lil-gui.lil-root.bridge-collapsed .gui-title-close-btn { display: none !important; }
+      .lil-gui.lil-root.bridge-collapsed {
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: auto;
+      }
+      .lil-gui.lil-root.bridge-collapsed:hover {
+        opacity: 1;
+      }
     `;
     document.head.appendChild(style);
-    console.log('[Visualizer] UI elements hidden');
+    console.log('[Visualizer] UI elements hidden (bridge mode, controls on hover)');
+
+    // Auto-collapse lil-gui once it appears in the DOM
+    const collapseBridgeGui = () => {
+      const guiRoot = document.querySelector('.lil-gui.lil-root');
+      if (!guiRoot) return false;
+      guiRoot.classList.add('bridge-collapsed');
+      // Click anywhere on the collapsed title bar to fully expand
+      guiRoot.addEventListener('click', function onExpand() {
+        guiRoot.classList.remove('bridge-collapsed');
+        guiRoot.classList.remove('gui-collapsed');
+        const children = guiRoot.querySelector('.lil-children');
+        if (children) children.style.display = '';
+        const closeBtn = guiRoot.querySelector('.gui-title-close-btn');
+        if (closeBtn) closeBtn.innerHTML = 'X';
+      }, { once: true });
+      return true;
+    };
+
+    if (!collapseBridgeGui()) {
+      // GUI not in DOM yet — watch for it
+      const obs = new MutationObserver(() => {
+        if (collapseBridgeGui()) obs.disconnect();
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+    }
   }
   
   // Auto-start on click requirement
@@ -69,9 +106,35 @@
             #player-controls { display: none !important; }
             .user_interaction { display: none !important; }
             .dg.ac { display: none !important; }
+
+            /* Bridge mode: lil-gui starts collapsed, reveal on hover */
+            .lil-gui.lil-root.bridge-collapsed > .lil-children { display: none; }
+            .lil-gui.lil-root.bridge-collapsed .gui-title-close-btn { display: none !important; }
+            .lil-gui.lil-root.bridge-collapsed {
+              opacity: 0;
+              transition: opacity 0.3s ease;
+              pointer-events: auto;
+            }
+            .lil-gui.lil-root.bridge-collapsed:hover {
+              opacity: 1;
+            }
           `;
           if (!document.getElementById('bridge-ui-hide')) {
             document.head.appendChild(style);
+          }
+
+          // Collapse lil-gui for bridge mode
+          const guiRoot = document.querySelector('.lil-gui.lil-root');
+          if (guiRoot && !guiRoot.classList.contains('bridge-collapsed')) {
+            guiRoot.classList.add('bridge-collapsed');
+            guiRoot.addEventListener('click', function onExpand() {
+              guiRoot.classList.remove('bridge-collapsed');
+              guiRoot.classList.remove('gui-collapsed');
+              const children = guiRoot.querySelector('.lil-children');
+              if (children) children.style.display = '';
+              const closeBtn = guiRoot.querySelector('.gui-title-close-btn');
+              if (closeBtn) closeBtn.innerHTML = 'X';
+            }, { once: true });
           }
         }
         

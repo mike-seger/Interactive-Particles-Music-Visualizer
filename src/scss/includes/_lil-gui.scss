@@ -10,7 +10,9 @@
    Only .fv3-scroll inside the FV3 folder scrolls.
    Styled to match the FV3 modal overlay. */
 .lil-gui.lil-root {
-  --width: 445px;
+  /* Prefer 445px but shrink gracefully in narrow iframes;
+     never exceed max(35vw, 350px) so long preset names don't blow out the panel. */
+  --width: min(445px, calc(100vw - 24px), max(35vw, 350px));
   --widget-color: #2b2c2d !important;
   --background-color: #0f1219 !important;
   position: relative;

@@ -15,6 +15,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     cssCodeSplit: true,
+    // milkdrop-presets (~645 kB) and three.js (~477 kB) are the largest chunks.
+    // Both are lazy-loaded or cache-stable; suppress the default 500 kB warning.
+    chunkSizeWarningLimit: 700,
     rollupOptions: {
       input: {
         visualizer: './index.html',
@@ -43,6 +46,8 @@ export default defineConfig({
           if (id.includes('/dat.gui/')) return 'datgui'
           if (id.includes('/gsap/')) return 'gsap'
           if (id.includes('/web-audio-beat-detector/')) return 'beat-detector'
+          if (id.includes('/butterchurn-presets/')) return 'milkdrop-presets'
+          if (id.includes('/butterchurn/')) return 'milkdrop-engine'
 
           return 'vendor'
         },
