@@ -24,6 +24,49 @@
     <link rel="stylesheet" href="./src/scss/style.scss" />
     <script>
       document.documentElement.className = 'js'
+      
+      // Immediate mode detection - hide UI elements ASAP for canvas/gui modes
+      ;(function() {
+        const params = new URLSearchParams(window.location.search);
+        const mode = params.get('mode') || 'full';
+        
+        if (mode === 'canvas' || mode === 'gui') {
+          const style = document.createElement('style');
+          style.id = 'early-mode-styles';
+          style.textContent = `
+            .user_interaction { display: none !important; }
+            ${mode === 'canvas' ? `
+              html, body {
+                background: #000000 !important;
+                pointer-events: none !important;
+              }
+              .lil-gui { display: none !important; }
+              #player-controls { display: none !important; }
+              .frame { display: none !important; }
+              .user_interaction { display: none !important; }
+            ` : ''}
+            ${mode === 'gui' ? `
+              body { background: transparent !important; background-color: transparent !important; }
+              html { background: transparent !important; background-color: transparent !important; }
+              canvas { display: none !important; }
+              .content { background: transparent !important; background-color: transparent !important; }
+              /* Force transparency on everything except controls */
+              *:not(.lil-gui):not(.lil-gui *) { background-color: transparent !important; }
+              /* Ensure the GUI container itself is visible but its background follows theme */
+              .lil-gui { display: block !important; }
+              #player-controls { display: none !important; }
+            ` : ''}
+          `;
+          document.head.appendChild(style);
+          
+          // Re-apply styles after load to ensure they win over external CSS
+          window.addEventListener('load', () => {
+             const laterStyle = document.createElement('style');
+             laterStyle.textContent = style.textContent;
+             document.head.appendChild(laterStyle);
+          });
+        }
+      })();
     </script>
     <!-- Bridge integration for Polaris Player -->
     <script type="module" defer src="/bridge-integration.js"></script>

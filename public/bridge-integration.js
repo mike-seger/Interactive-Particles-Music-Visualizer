@@ -12,9 +12,68 @@
   const params = new URLSearchParams(window.location.search);
   const autostart = params.get('autostart') === '1';
   const hideui = params.get('hideui') === '1';
-  const bridgeMode = autostart || hideui;
+  const mode = params.get('mode') || 'full';  // 'canvas', 'gui', or 'full'
+  const bridgeMode = autostart || hideui || (mode !== 'full');
   
-  console.log('[Visualizer] Bridge integration:', { autostart, hideui, bridgeMode });
+  console.log('[Visualizer] Bridge integration:', { autostart, hideui, mode, bridgeMode });
+  
+  // Dual-iframe mode support (Option C)
+  if (mode === 'canvas' || mode === 'gui') {
+    window.__visualizerMode = mode;
+    
+    // Setup BroadcastChannel for state sync between canvas and GUI iframes
+    try {
+      window.__visualizerChannel = new BroadcastChannel('visualizer-sync');
+      console.log(`[Visualizer] ${mode} mode - BroadcastChannel ready`);
+    } catch (e) {
+      // Fallback to localStorage for cross-origin scenarios
+      console.warn('[Visualizer] BroadcastChannel unavailable, using localStorage fallback');
+      window.__visualizerChannel = {
+        postMessage: (data) => {
+          try {
+            localStorage.setItem('visualizer-sync', JSON.stringify({ ...data, _timestamp: Date.now() }));
+          } catch {}
+        },
+        addEventListener: (type, handler) => {
+          window.addEventListener('storage', (e) => {
+            if (e.key === 'visualizer-sync' && e.newValue) {
+              try {
+                const data = JSON.parse(e.newValue);
+                handler({ data });
+              } catch {}
+            }
+          });
+        }
+      };
+    }
+    
+    // Mode-specific initialization
+    if (mode === 'canvas') {
+      // Canvas-only mode: hide GUI, disable pointer events on body
+      const style = document.createElement('style');
+      style.id = 'canvas-mode-styles';
+      style.textContent = `
+        body { pointer-events: none !important; }
+        .lil-gui { display: none !important; }
+        #player-controls { display: none !important; }
+        .user_interaction { display: none !important; }
+        .frame { display: none !important; }
+      `;
+      document.head.appendChild(style);
+      console.log('[Visualizer] Canvas mode: UI disabled, pointer-events:none');
+    } else if (mode === 'gui') {
+      // GUI-only mode: hide canvas, transparent background
+      const style = document.createElement('style');
+      style.id = 'gui-mode-styles';
+      style.textContent = `
+        body { background: transparent !important; }
+        canvas { display: none !important; }
+        .content { background: transparent !important; }
+      `;
+      document.head.appendChild(style);
+      console.log('[Visualizer] GUI mode: Canvas hidden, transparent background');
+    }
+  }
   
   // Store reference to external audio element provided by bridge
   window.__bridgeAudioElement = null;

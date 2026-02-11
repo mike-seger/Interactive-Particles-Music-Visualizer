@@ -267,7 +267,10 @@ html:not(.icons-ready) #player-controls button {
     border: 1px solid #3a3a3a !important;
     padding: 4px 8px;
     border-radius: 3px;
+    white-space: nowrap;
+    overflow: hidden;
     text-overflow: ellipsis;  /* show … when name is clipped */
+    max-width: 100%;          /* ensure it never exceeds container */
     
     option {
       background-color: #2b2c2d !important;

@@ -21,6 +21,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         visualizer: './index.html',
+        canvas: './canvas.html',
+        gui: './gui.html',
+        bridge: './bridge.html',
       },
       output: {
         manualChunks(id) {

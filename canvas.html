@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Visualizer Canvas Frame</title>
+    <!-- Basic styles - minimal loading since this is just the canvas -->
+    <link rel="stylesheet" href="./src/scss/style.scss" />
+    <style>
+      /* Enforce black background and no UI */
+      html, body {
+        background: #000000 !important;
+        margin: 0;
+        overflow: hidden;
+        width: 100%;
+        height: 100%;
+        pointer-events: none !important; /* Pass clicks through to parent/underlay if needed, though usually this is bottom layer */
+      }
+      
+      /* Hide all UI elements */
+      .lil-gui, 
+      #player-controls, 
+      .frame, 
+      .user_interaction, 
+      .loading,
+      .content {
+        display: none !important;
+      }
+      
+      /* Ensure canvas is visible and fills screen */
+      canvas {
+        display: block !important;
+        position: fixed !important;
+        top: 0;
+        left: 0;
+        z-index: 1;
+      }
+    </style>
+    <script>
+      document.documentElement.className = 'js';
+      // Explicitly set mode for App.js
+      window.__visualizerMode = 'canvas';
+    </script>
+    <script type="module" defer src="/bridge-integration.js"></script>
+    <script type="module" defer src="./src/js/index.js"></script>
+  </head>
+  <body>
+    <!-- App.js will append the canvas here -->
+  </body>
+</html>

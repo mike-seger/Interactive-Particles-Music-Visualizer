@@ -149,8 +149,27 @@ export default class App {
   static _milkdropNamesAppended = false
 
   constructor() {
+    // Detect dual-iframe mode directly from URL (most robust) or fallback to bridge global
+    const params = new URLSearchParams(window.location.search);
+    const urlMode = params.get('mode');
+    this.visualizerMode = urlMode || window.__visualizerMode || 'full';
+    
+    // Also try to recover channel if not globally set yet (rare race condition)
+    if (!this.channel && window.BroadcastChannel && (this.visualizerMode === 'canvas' || this.visualizerMode === 'gui')) {
+      try {
+        this.channel = new BroadcastChannel('visualizer-sync');
+      } catch (e) { /* ignore */ }
+    }
+    
+    this.channel = this.channel || window.__visualizerChannel || null;
+    
     this.onClickBinder = () => this.init()
     document.addEventListener('click', this.onClickBinder)
+    
+    // In dual-iframe mode (canvas or GUI), skip the click requirement
+    if (this.visualizerMode === 'canvas' || this.visualizerMode === 'gui') {
+      setTimeout(() => this.init(), 100);
+    }
 
     // Bind hotkey handler
     this.onKeyDown = (e) => this.handleKeyDown(e)
@@ -1326,7 +1345,8 @@ export default class App {
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: this.debugAntialias,
-      alpha: true,
+      // Force opaque canvas in canvas-mode to prevent white background show-through
+      alpha: this.visualizerMode !== 'canvas',
       powerPreference: 'high-performance',
     })
 
@@ -1425,13 +1445,18 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new GUI({ title: 'VISUALIZER' })
-    
-    // Disable collapse functionality on root GUI
-    App.gui.open()
-    
-    // Apply root GUI styles (border, shadow, padding)
-    this.setupGuiCloseButton()
+    // Skip GUI creation in canvas-only mode
+    if (this.visualizerMode !== 'canvas') {
+      App.gui = new GUI({ title: 'VISUALIZER' })
+      
+      // Disable collapse functionality on root GUI
+      App.gui.open()
+      
+      // Apply root GUI styles (border, shadow, padding)
+      this.setupGuiCloseButton()
+    } else {
+      console.log('[App] Canvas mode: skipping GUI initialization');
+    }
 
     // Keep the controls visible above any full-screen overlay canvases.
     // (Some visualizers render into their own 2D canvas and may clear to black.)
@@ -1446,6 +1471,11 @@ export default class App {
       guiRoot.style.zIndex = '2500'
       guiRoot.style.pointerEvents = 'auto'
       guiRoot.style.boxSizing = 'border-box'
+    }
+
+    // Setup state sync between canvas/GUI iframes
+    if (this.channel) {
+      this.setupChannelSync();
     }
 
     this.createManagers()
@@ -1607,14 +1637,38 @@ export default class App {
   }
 
   async createManagers() {
+    // In GUI mode, we do NOT want active audio management or BPM processing,
+    // as that is handled by the canvas instance (accessed via sync).
+    // We only need empty shells for the GUI to bind against.
+    if (this.visualizerMode === 'gui') {
+      // Mock audio manager with just enough structure for the GUI
+      App.audioManager = {
+        audio: { volume: 1, muted: false, paused: true },
+        isMuted: false,
+        setMuted: () => {},
+        setVolume: () => {},
+        play: () => {},
+        pause: () => {},
+        loadAudioBuffer: async () => Promise.resolve(),
+      }
+      App.bpmManager = {
+        setBPM: () => {},
+        addEventListener: () => {},
+      }
+      this.initPlayerControls()
+      return
+    }
+
     App.audioManager = new AudioManager()
     
     // Show loading progress
     const loadingText = document.querySelector('.user_interaction')
-    const originalHTML = loadingText.innerHTML
+    const originalHTML = loadingText ? loadingText.innerHTML : ''
     
     await App.audioManager.loadAudioBuffer((progress, isComplete) => {
-      loadingText.innerHTML = `<div style="font-family: monospace; font-size: 24px; color: white;">Loading: ${Math.round(progress)}%</div>`
+      if (loadingText) {
+        loadingText.innerHTML = `<div style="font-family: monospace; font-size: 24px; color: white;">Loading: ${Math.round(progress)}%</div>`
+      }
     })
 
     App.bpmManager = new BPMManager()
@@ -1627,7 +1681,9 @@ export default class App {
     // Start with default BPM
     App.bpmManager.setBPM(140)
 
-    loadingText.remove()
+    if (loadingText) {
+      loadingText.remove()
+    }
 
     // Initialize player controls
     this.initPlayerControls()
@@ -1679,8 +1735,11 @@ export default class App {
     App.visualizerType = initialVisualizer
 
     // Build common controls first so they appear above visualizer-specific folders.
-    this.addVisualizerSwitcher()
-    this.addPerformanceQualityControls()
+    // Skip in canvas mode (GUI is not initialized)
+    if (this.visualizerMode !== 'canvas') {
+      this.addVisualizerSwitcher()
+      this.addPerformanceQualityControls()
+    }
 
     // Now create the actual visualizer.
     this.switchVisualizer(initialVisualizer, { notify: false })
@@ -1740,6 +1799,25 @@ export default class App {
 
     document.body.appendChild(hotspot)
     this.bridgeGuiHotspotEnabled = true
+  }
+
+  setupChannelSync() {
+    if (!this.channel) return
+    
+    // Listen for state changes from sibling iframe (canvas ↔ GUI sync)
+    this.channel.addEventListener('message', (e) => {
+      const { type, visualizerName } = e.data || {}
+      
+      if (type === 'SWITCH_VISUALIZER' && visualizerName) {
+        // Only canvas mode should respond to GUI commands
+        if (this.visualizerMode === 'canvas') {
+          console.log('[Channel Sync] Received visualizer switch:', visualizerName)
+          this.switchVisualizer(visualizerName, { notify: false })
+        }
+      }
+    })
+    
+    console.log(`[Channel Sync] Listening for state changes in ${this.visualizerMode} mode`)
   }
 
   resize() {
@@ -2236,6 +2314,14 @@ export default class App {
     }
 
     console.log('Switched to visualizer:', type)
+    
+    // Broadcast state change to sibling iframe (canvas/GUI sync)
+    if (this.channel && this.visualizerMode === 'gui') {
+      this.channel.postMessage({
+        type: 'SWITCH_VISUALIZER',
+        visualizerName: type
+      });
+    }
 
     // Keep the Performance + Quality controls in sync.
     this._syncPerformanceQualityControls(type)

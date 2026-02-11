@@ -54,6 +54,14 @@ export default class AudioManager {
 
       // Gain node to control muting without pausing audio
       this.outputGain = this.audioContext.createGain()
+      
+      // If we are in CANVAS mode (and presuming Polaris Player is playing the audio),
+      // we must force the local visualizer audio to be muted so we don't hear double audio.
+      const isCanvasMode = typeof window !== 'undefined' && window.__visualizerMode === 'canvas'
+      if (isCanvasMode) {
+        this.isMuted = true
+      }
+      
       this.outputGain.gain.value = this.isMuted ? 0 : 1
       
       // Connect: source -> analyser -> destination (speakers)

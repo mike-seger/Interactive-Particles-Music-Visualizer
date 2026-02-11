@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dual-Iframe Visualizer Test</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      background: #000;
+    }
+    
+    /* Canvas iframe (background, z: 1) */
+    #visualizer-canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      z-index: 1;
+      pointer-events: none;
+    }
+    
+    /* Test player controls (z: 100) */
+    #player-controls {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      padding: 20px 30px;
+      border-radius: 12px;
+      color: white;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    #player-controls h3 {
+      margin: 0 0 15px 0;
+      font-size: 14px;
+      font-weight: 600;
+      text-align: center;
+      color: #aaa;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    
+    .control-row {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    
+    .control-row:last-child {
+      margin-bottom: 0;
+    }
+    
+    button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    button:active {
+      transform: translateY(0);
+    }
+    
+    input[type="range"] {
+      width: 150px;
+      accent-color: #667eea;
+    }
+    
+    label {
+      font-size: 13px;
+      color: #999;
+      min-width: 60px;
+    }
+    
+    /* GUI iframe (overlay, z: 1001) */
+    #visualizer-gui {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border: none;
+      z-index: 1001;
+      background: transparent;
+      pointer-events: auto;
+    }
+    
+    /* Status indicator */
+    #status {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1002;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(10px);
+      color: #0f0;
+      padding: 10px 15px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      border: 1px solid rgba(0, 255, 0, 0.3);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+    
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #0f0;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 2s infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Canvas visualization (background) -->
+  <iframe
+    id="visualizer-canvas"
+    src="http://localhost:5173/?mode=canvas"
+  ></iframe>
+  
+  <!-- Test player controls (middle layer - should be clickable) -->
+  <div id="player-controls">
+    <h3>🎵 Test Player Controls (z:100)</h3>
+    <div class="control-row">
+      <button onclick="togglePlay()">▶️ Play/Pause</button>
+      <button onclick="skipTrack()">⏭️ Skip</button>
+    </div>
+    <div class="control-row">
+      <label for="volume">Volume:</label>
+      <input id="volume" type="range" min="0" max="100" value="50" oninput="setVolume(this.value)">
+      <span id="volume-value">50%</span>
+    </div>
+  </div>
+  
+  <!-- GUI controls (top layer) -->
+  <iframe
+    id="visualizer-gui"
+    src="http://localhost:5173/?mode=gui"
+  ></iframe>
+  
+  <!-- Status indicator -->
+  <div id="status">
+    <span class="status-dot"></span>
+    <span id="status-text">Dual-iframe mode active</span>
+  </div>
+  
+  <script>
+    const canvasIframe = document.getElementById('visualizer-canvas');
+    const guiIframe = document.getElementById('visualizer-gui');
+    const statusText = document.getElementById('status-text');
+    const volumeValue = document.getElementById('volume-value');
+    
+    let isPlaying = false;
+    let audioDataInterval = null;
+    
+    // Simulate audio data (replace with real audio analysis in production)
+    function sendAudioData() {
+      const time = performance.now() / 1000;
+      const bass = Math.abs(Math.sin(time * 2)) * 255;
+      const mid = Math.abs(Math.sin(time * 3)) * 200;
+      const treble = Math.abs(Math.sin(time * 5)) * 150;
+      
+      // Generate realistic frequency data
+      const frequencyData = new Array(128).fill(0).map((_, i) => {
+        if (i < 20) return bass * (1 - i / 20);
+        if (i < 60) return mid * (1 - (i - 20) / 40);
+        return treble * (1 - (i - 60) / 68);
+      });
+      
+      const timeDomainData = new Array(128).fill(0).map(() => 
+        128 + Math.sin(time * 10 + Math.random()) * 50
+      );
+      
+      const message = {
+        type: 'AUDIO_DATA',
+        frequencyData,
+        timeDomainData
+      };
+      
+      try {
+        canvasIframe.contentWindow.postMessage(message, '*');
+        guiIframe.contentWindow.postMessage(message, '*');
+      } catch (e) {
+        console.warn('Failed to send audio data:', e);
+      }
+    }
+    
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      const btn = event.target;
+      
+      if (isPlaying) {
+        btn.textContent = '⏸️ Pause';
+        statusText.textContent = 'Playing + Sending audio data';
+        audioDataInterval = setInterval(sendAudioData, 1000 / 60);
+      } else {
+        btn.textContent = '▶️ Play';
+        statusText.textContent = 'Paused';
+        if (audioDataInterval) {
+          clearInterval(audioDataInterval);
+          audioDataInterval = null;
+        }
+      }
+      
+      console.log('Playback:', isPlaying ? 'Playing' : 'Paused');
+    }
+    
+    function skipTrack() {
+      console.log('Skip to next track');
+      statusText.textContent = 'Track skipped';
+      setTimeout(() => {
+        statusText.textContent = isPlaying ? 'Playing + Sending audio data' : 'Paused';
+      }, 1500);
+    }
+    
+    function setVolume(value) {
+      volumeValue.textContent = value + '%';
+      console.log('Set volume:', value);
+    }
+    
+    // Auto-start audio data simulation
+    console.log('🎵 Dual-iframe test loaded');
+    console.log('Canvas iframe (z:1):', canvasIframe);
+    console.log('GUI iframe (z:1001):', guiIframe);
+    console.log('');
+    console.log('✅ Click Play/Pause to start sending audio data');
+    console.log('✅ Player controls should be clickable (z:100)');
+    console.log('✅ GUI controls should appear on top-right (z:1001)');
+    console.log('✅ Canvas should render behind everything (z:1)');
+  </script>
+</body>
+</html>
