@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Music Visualizer in Three.js | Codrops</title>
+    <title>Audio Visualizer</title>
     <meta
       name="description"
       content="Demo for the tutorial where you will learn how to build a particles music visualizer with Three.js, with techniques covering audio synchronization and 3D visual effects, inspired by ARKx's work for Coala Music's website."
@@ -31,12 +31,6 @@
   </head>
   <body class="demo-1">
     <main>
-      <div class="frame">
-        <h1 class="frame__title">Music Visualizer</h1>
-           <!-- by <a href="https://instagram.com/tgcnzn">Tiago Canzian</a> / <a href="https://arkx.cc/ARKx">ARKx</a></h1> -->
-        <!-- <a class="frame__back" href="https://tympanus.net/codrops/?p=74700">Read the tutorial</a>
-        <a class="frame__prev" href="http://tympanus.net/Tutorials/MouseInstancing/">Previous demo</a> -->
-      </div>
       <div class="content"></div>
       
       <!-- Player Controls -->
@@ -46,6 +40,7 @@
           <button id="mute-btn">volume_up</button>
           <button id="mic-btn">mic_off</button>
           <div id="syncButton" title="Sync"></div>
+          <button id="lock-btn" title="Lock controls visible">lock_open_right</button>
         </div>
         <input type="range" id="position-slider" min="0" max="100" value="0" step="0.1">
         <div id="player-metrics">

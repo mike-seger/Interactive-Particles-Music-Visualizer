@@ -1,5 +1,5 @@
 import RandomFlowers from './RandomFlowers'
 
-export const meta = { name: 'Random Flowers', order: 31 }
+export const meta = { name: 'Random Flowers' }
 
 export default RandomFlowers

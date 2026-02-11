@@ -1,5 +1,5 @@
 import Iris from './Iris'
 
-export const meta = { name: 'Iris', order: 23 }
+export const meta = { name: 'Iris' }
 
 export default Iris

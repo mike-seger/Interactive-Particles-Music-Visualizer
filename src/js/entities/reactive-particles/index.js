@@ -1,5 +1,5 @@
 import ReactiveParticles from './ReactiveParticles'
 
-export const meta = { name: 'Reactive Particles', order: 30 }
+export const meta = { name: 'Reactive Particles' }
 
 export default ReactiveParticles

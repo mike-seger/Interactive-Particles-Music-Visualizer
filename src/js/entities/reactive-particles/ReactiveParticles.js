@@ -269,11 +269,11 @@ export default class ReactiveParticles extends THREE.Object3D {
   removeGUIFolders() {
     const gui = App.gui
     if (this.particlesFolder) {
-      gui.removeFolder(this.particlesFolder)
+      this.particlesFolder.destroy()
       this.particlesFolder = null
     }
     if (this.visualizerFolder) {
-      gui.removeFolder(this.visualizerFolder)
+      this.visualizerFolder.destroy()
       this.visualizerFolder = null
     }
   }

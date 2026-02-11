@@ -1,5 +1,5 @@
 import FrequencyBars from './FrequencyBars'
 
-export const meta = { name: 'Frequency Bars', order: 18 }
+export const meta = { name: 'Frequency Bars' }
 
 export default FrequencyBars

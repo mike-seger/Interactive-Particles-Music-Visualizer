@@ -2,10 +2,126 @@ import * as THREE from 'three'
 import { ENTITY_VISUALIZER_NAMES, createEntityVisualizerByName } from './visualizers/entityRegistry'
 import { SHADER_VISUALIZER_NAMES, createShaderVisualizerByName } from './visualizers/shaderRegistry'
 import { loadSpectrumFilters } from './spectrumFilters'
-import * as dat from 'dat.gui'
+import GUI from 'lil-gui'
 import BPMManager from './managers/BPMManager'
 import { VideoSyncClient } from './sync-client/SyncClient.mjs'
 import AudioManager from './managers/AudioManager'
+import { createShaderControls } from './shaderCustomization'
+
+class WebGLGpuTimer {
+  constructor(gl) {
+    this.gl = gl || null
+    this.isWebGL2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext
+    this.ext = null
+    this.supported = false
+
+    this.currentQuery = null
+    this.pendingQueries = []
+    this.lastGpuMs = null
+
+    if (!this.gl) return
+
+    try {
+      if (this.isWebGL2) {
+        this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2')
+      } else {
+        this.ext = this.gl.getExtension('EXT_disjoint_timer_query')
+      }
+      this.supported = !!this.ext
+    } catch (e) {
+      this.ext = null
+      this.supported = false
+    }
+  }
+
+  begin() {
+    if (!this.supported || !this.gl) return
+    if (this.currentQuery) return
+
+    try {
+      if (this.isWebGL2) {
+        const q = this.gl.createQuery()
+        if (!q) return
+        this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, q)
+        this.currentQuery = q
+      } else {
+        const q = this.ext.createQueryEXT()
+        if (!q) return
+        this.ext.beginQueryEXT(this.ext.TIME_ELAPSED_EXT, q)
+        this.currentQuery = q
+      }
+    } catch (e) {
+      this.currentQuery = null
+    }
+  }
+
+  end() {
+    if (!this.supported || !this.gl) return
+    if (!this.currentQuery) return
+
+    try {
+      if (this.isWebGL2) {
+        this.gl.endQuery(this.ext.TIME_ELAPSED_EXT)
+      } else {
+        this.ext.endQueryEXT(this.ext.TIME_ELAPSED_EXT)
+      }
+
+      this.pendingQueries.push(this.currentQuery)
+      this.currentQuery = null
+
+      // Avoid unbounded growth if polling falls behind.
+      while (this.pendingQueries.length > 4) {
+        const old = this.pendingQueries.shift()
+        this._deleteQuery(old)
+      }
+    } catch (e) {
+      this._deleteQuery(this.currentQuery)
+      this.currentQuery = null
+    }
+  }
+
+  poll() {
+    if (!this.supported || !this.gl) return this.lastGpuMs
+    if (this.pendingQueries.length === 0) return this.lastGpuMs
+
+    const q = this.pendingQueries[0]
+    try {
+      const available = this.isWebGL2
+        ? this.gl.getQueryParameter(q, this.gl.QUERY_RESULT_AVAILABLE)
+        : this.ext.getQueryObjectEXT(q, this.ext.QUERY_RESULT_AVAILABLE_EXT)
+
+      if (!available) return this.lastGpuMs
+
+      const disjoint = !!this.gl.getParameter(this.ext.GPU_DISJOINT_EXT)
+
+      const ns = this.isWebGL2
+        ? this.gl.getQueryParameter(q, this.gl.QUERY_RESULT)
+        : this.ext.getQueryObjectEXT(q, this.ext.QUERY_RESULT_EXT)
+
+      this.pendingQueries.shift()
+      this._deleteQuery(q)
+
+      if (!disjoint && Number.isFinite(ns)) {
+        this.lastGpuMs = ns / 1e6
+      }
+    } catch (e) {
+      this.pendingQueries.shift()
+      this._deleteQuery(q)
+    }
+
+    return this.lastGpuMs
+  }
+
+  _deleteQuery(q) {
+    if (!q || !this.gl || !this.supported) return
+    try {
+      if (this.isWebGL2) this.gl.deleteQuery(q)
+      else this.ext.deleteQueryEXT(q)
+    } catch (e) {
+      // ignore
+    }
+  }
+}
 
 export default class App {
   //THREE objects
@@ -64,6 +180,54 @@ export default class App {
       fv3Presets: 'visualizer.fv3.presets',
       fv3SelectedPreset: 'visualizer.fv3.selectedPreset'
     }
+
+    // Per-visualizer quality overrides (localStorage keys are derived from visualizer type).
+    this.performanceQualityFolder = null
+    this.performanceQualityConfig = null
+    this.performanceQualityControllers = {
+      antialias: null,
+      pixelRatio: null,
+      defaults: null,
+    }
+    this._syncingPerformanceQualityGui = false
+
+    // Snapshot of the initial (URL/defaults-derived) quality state so we can
+    // revert when per-visualizer overrides are cleared.
+    this._baseQualityState = null
+
+    // Lightweight rAF cadence stats for perf debugging.
+    this.rafStats = { lastAt: 0, frames: 0, sumDt: 0, maxDt: 0 }
+    this.lastFrameDtMs = null
+
+    // Auto-quality runtime state (initialized in init()).
+    this.autoQualityEnabled = true
+    this.autoQualityDynamic = false
+    this.autoQualityDynamicRequested = null
+    this.pixelRatioOverridden = false
+    this.pixelRatioLocked = false
+    this.antialiasOverridden = false
+    this.quality = null
+    // Short sliding window for auto-quality sampling.
+    // Important: a lifetime average reacts far too slowly after a sudden perf drop.
+    this.qualityWindow = { frames: 0, sumDt: 0, maxDt: 0, startAt: 0 }
+  }
+
+  _snapPixelRatio(value, { min = 0.25, max = 2 } = {}) {
+    const v = Number.isFinite(value) ? value : 1
+    const allowed = [0.25, 0.5, 1, 2]
+    const candidates = allowed.filter((r) => r >= min - 1e-6 && r <= max + 1e-6)
+    if (candidates.length === 0) return Math.max(min, Math.min(max, v))
+    let best = candidates[0]
+    let bestErr = Math.abs(v - best)
+    for (let i = 1; i < candidates.length; i += 1) {
+      const r = candidates[i]
+      const err = Math.abs(v - r)
+      if (err < bestErr) {
+        bestErr = err
+        best = r
+      }
+    }
+    return best
   }
 
   getStoredPlaybackPosition() {
@@ -103,6 +267,317 @@ export default class App {
     }
   }
 
+  _getGlobalQualityDefaultKeys() {
+    return {
+      antiAlias: 'visualizer.defaults.quality.antiAlias',
+      pixelRatio: 'visualizer.defaults.quality.pixelRatio',
+    }
+  }
+
+  getStoredGlobalQualityDefaults() {
+    try {
+      const keys = this._getGlobalQualityDefaultKeys()
+      const aaRaw = window.localStorage.getItem(keys.antiAlias)
+      const prRaw = window.localStorage.getItem(keys.pixelRatio)
+
+      let aa = null
+      if (aaRaw != null) {
+        const v = String(aaRaw).trim().toLowerCase()
+        aa = (v === '' || v === '1' || v === 'true' || v === 'yes' || v === 'on')
+      }
+
+      let pr = null
+      if (prRaw != null && prRaw !== '') {
+        const parsed = Number.parseFloat(prRaw)
+        const allowed = [0.25, 0.5, 1, 2]
+        pr = Number.isFinite(parsed) && allowed.includes(parsed) ? parsed : null
+      }
+
+      return { antialias: aa, pixelRatio: pr }
+    } catch (e) {
+      return { antialias: null, pixelRatio: null }
+    }
+  }
+
+  saveGlobalQualityDefaults({ antialias, pixelRatio } = {}) {
+    try {
+      const keys = this._getGlobalQualityDefaultKeys()
+      if (antialias == null) window.localStorage.removeItem(keys.antiAlias)
+      else window.localStorage.setItem(keys.antiAlias, antialias ? '1' : '0')
+
+      if (pixelRatio == null) {
+        window.localStorage.removeItem(keys.pixelRatio)
+      } else {
+        const allowed = [0.25, 0.5, 1, 2]
+        const pr = Number.isFinite(pixelRatio) && allowed.includes(pixelRatio) ? pixelRatio : null
+        if (pr == null) window.localStorage.removeItem(keys.pixelRatio)
+        else window.localStorage.setItem(keys.pixelRatio, String(pr))
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _getPerVisualizerAutoQualityKeys(type) {
+    const t = String(type || '').trim()
+    return {
+      antiAlias: `visualizer[${t}].quality.auto.antiAlias`,
+      pixelRatio: `visualizer[${t}].quality.auto.pixelRatio`,
+    }
+  }
+
+  _readPerVisualizerAutoQuality(type) {
+    try {
+      const { antiAlias, pixelRatio } = this._getPerVisualizerAutoQualityKeys(type)
+      const aaRaw = window.localStorage.getItem(antiAlias)
+      const prRaw = window.localStorage.getItem(pixelRatio)
+
+      let aa = null
+      if (aaRaw != null) {
+        const v = String(aaRaw).trim().toLowerCase()
+        aa = (v === '' || v === '1' || v === 'true' || v === 'yes' || v === 'on')
+      }
+
+      let pr = null
+      if (prRaw != null && prRaw !== '') {
+        const parsed = Number.parseFloat(prRaw)
+        const allowed = [0.25, 0.5, 1, 2]
+        pr = Number.isFinite(parsed) && allowed.includes(parsed) ? parsed : null
+      }
+
+      return { antialias: aa, pixelRatio: pr }
+    } catch (e) {
+      return { antialias: null, pixelRatio: null }
+    }
+  }
+
+  _writePerVisualizerAutoQuality(type, { antialias, pixelRatio } = {}) {
+    try {
+      const keys = this._getPerVisualizerAutoQualityKeys(type)
+      if (antialias == null) window.localStorage.removeItem(keys.antiAlias)
+      else window.localStorage.setItem(keys.antiAlias, antialias ? '1' : '0')
+
+      if (pixelRatio == null) {
+        window.localStorage.removeItem(keys.pixelRatio)
+      } else {
+        const allowed = [0.25, 0.5, 1, 2]
+        const pr = Number.isFinite(pixelRatio) && allowed.includes(pixelRatio) ? pixelRatio : null
+        if (pr == null) window.localStorage.removeItem(keys.pixelRatio)
+        else window.localStorage.setItem(keys.pixelRatio, String(pr))
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _persistAutoQualityForCurrentVisualizer() {
+    try {
+      if (!this.renderer) return
+      const type = App.visualizerType
+      if (!type) return
+
+      const base = this._baseQualityState
+      const user = this._readPerVisualizerQualityOverrides(type)
+      const urlLocksAa = !!base?.antialiasOverridden
+      const urlLocksPr = !!base?.pixelRatioOverridden
+
+      const canPersistAa = !urlLocksAa && user.antialias == null
+      const canPersistPr = !urlLocksPr && user.pixelRatio == null
+
+      if (!canPersistAa && !canPersistPr) return
+
+      const aa = this._getContextAntialias()
+      const pr = this.renderer.getPixelRatio?.() || 1
+      const next = {
+        antialias: canPersistAa ? !!aa : null,
+        pixelRatio: canPersistPr ? this._snapPixelRatio(pr, { min: 0.25, max: 2 }) : null,
+      }
+      this._writePerVisualizerAutoQuality(type, next)
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _getPerVisualizerQualityKeys(type) {
+    const t = String(type || '').trim()
+    return {
+      antiAlias: `visualizer[${t}].quality.antiAlias`,
+      pixelRatio: `visualizer[${t}].quality.pixelRatio`,
+    }
+  }
+
+  _readPerVisualizerQualityOverrides(type) {
+    try {
+      const { antiAlias, pixelRatio } = this._getPerVisualizerQualityKeys(type)
+      const aaRaw = window.localStorage.getItem(antiAlias)
+      const prRaw = window.localStorage.getItem(pixelRatio)
+
+      let aa = null
+      if (aaRaw != null) {
+        const v = String(aaRaw).trim().toLowerCase()
+        aa = (v === '' || v === '1' || v === 'true' || v === 'yes' || v === 'on')
+      }
+
+      let pr = null
+      if (prRaw != null && prRaw !== '') {
+        const parsed = Number.parseFloat(prRaw)
+        const allowed = [0.25, 0.5, 1, 2]
+        pr = Number.isFinite(parsed) && allowed.includes(parsed) ? parsed : null
+      }
+
+      return { antialias: aa, pixelRatio: pr }
+    } catch (e) {
+      return { antialias: null, pixelRatio: null }
+    }
+  }
+
+  _writePerVisualizerQualityOverride(type, { antialias, pixelRatio } = {}) {
+    try {
+      const keys = this._getPerVisualizerQualityKeys(type)
+
+      if (antialias == null) {
+        window.localStorage.removeItem(keys.antiAlias)
+      } else {
+        window.localStorage.setItem(keys.antiAlias, antialias ? '1' : '0')
+      }
+
+      if (pixelRatio == null) {
+        window.localStorage.removeItem(keys.pixelRatio)
+      } else {
+        const allowed = [0.25, 0.5, 1, 2]
+        const pr = Number.isFinite(pixelRatio) && allowed.includes(pixelRatio) ? pixelRatio : null
+        if (pr == null) window.localStorage.removeItem(keys.pixelRatio)
+        else window.localStorage.setItem(keys.pixelRatio, String(pr))
+      }
+    } catch (e) {
+      // ignore storage errors
+    }
+  }
+
+  _clearPerVisualizerQualityOverrides(type) {
+    try {
+      const keys = this._getPerVisualizerQualityKeys(type)
+      window.localStorage.removeItem(keys.antiAlias)
+      window.localStorage.removeItem(keys.pixelRatio)
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _applyPerVisualizerQualityOverrides(type, { applyBaseIfNoOverride = true } = {}) {
+    const base = this._baseQualityState
+    const overrides = this._readPerVisualizerQualityOverrides(type)
+    const hasAaOverride = overrides.antialias != null
+    const hasPrOverride = overrides.pixelRatio != null
+
+    const auto = this._readPerVisualizerAutoQuality(type)
+    const hasAutoAa = auto.antialias != null
+    const hasAutoPr = auto.pixelRatio != null
+
+    const urlLocksAa = !!base?.antialiasOverridden
+    const urlLocksPr = !!base?.pixelRatioOverridden
+
+    // Update effective flags (dynamic loop reads these).
+    if (base) {
+      // URL overrides always win. User overrides win next. Auto values are not overrides.
+      this.antialiasOverridden = urlLocksAa ? true : !!hasAaOverride
+      this.pixelRatioOverridden = urlLocksPr ? true : !!hasPrOverride
+      this.pixelRatioLocked = urlLocksPr ? !!base.pixelRatioLocked : !!hasPrOverride
+
+      const desiredAa = urlLocksAa
+        ? base.debugAntialias
+        : (hasAaOverride ? !!overrides.antialias : (hasAutoAa ? !!auto.antialias : base.debugAntialias))
+
+      const desiredPr = urlLocksPr
+        ? base.debugPixelRatio
+        : (hasPrOverride ? overrides.pixelRatio : (hasAutoPr ? auto.pixelRatio : base.debugPixelRatio))
+
+      this.debugAntialias = !!desiredAa
+      this.debugPixelRatio = desiredPr
+
+      // Keep dynamic quality disabled whenever pixelRatio is locked.
+      this.autoQualityDynamic = !!base.autoQualityDynamic && !this.pixelRatioLocked
+    }
+
+    if (!this.renderer) return
+
+    // Apply desired AA by recreating renderer if needed.
+    {
+      const curAa = this._getContextAntialias()
+      const desiredAa = urlLocksAa
+        ? !!base?.debugAntialias
+        : (hasAaOverride
+          ? !!overrides.antialias
+          : (hasAutoAa
+            ? !!auto.antialias
+            : (applyBaseIfNoOverride
+              ? !!base?.debugAntialias
+              : (curAa ?? !!this.debugAntialias))))
+
+      if (typeof desiredAa === 'boolean' && curAa !== desiredAa) {
+        this._recreateRendererWithAntialias(desiredAa)
+      }
+    }
+
+    // Apply desired pixelRatio.
+    const targetPr = urlLocksPr
+      ? base?.debugPixelRatio
+      : (hasPrOverride
+        ? overrides.pixelRatio
+        : (hasAutoPr
+          ? auto.pixelRatio
+          : (applyBaseIfNoOverride && base && Number.isFinite(base.debugPixelRatio) ? base.debugPixelRatio : null)))
+
+    if (targetPr != null && Number.isFinite(targetPr)) {
+      const oldPr = this.renderer.getPixelRatio?.() || 1
+      if (Math.abs(oldPr - targetPr) > 1e-6) {
+        this.renderer.setPixelRatio(targetPr)
+        if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+          this.renderer.setSize(this.width, this.height, false)
+        }
+        try {
+          const v = App.currentVisualizer
+          if (v && typeof v.onPixelRatioChange === 'function') {
+            v.onPixelRatioChange(targetPr, oldPr)
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+  }
+
+  _syncPerformanceQualityControls(type) {
+    if (!this.performanceQualityConfig || !this.renderer) return
+    const overrides = this._readPerVisualizerQualityOverrides(type)
+
+    const effectiveAa = (overrides.antialias != null)
+      ? !!overrides.antialias
+      : (this._getContextAntialias() ?? !!this.debugAntialias)
+
+    const effectivePr = (overrides.pixelRatio != null)
+      ? overrides.pixelRatio
+      : (this.renderer.getPixelRatio?.() || 1)
+
+    const snappedPr = this._snapPixelRatio(effectivePr, { min: 0.25, max: 2 })
+
+    this._syncingPerformanceQualityGui = true
+    this.performanceQualityConfig.antialias = !!effectiveAa
+    this.performanceQualityConfig.pixelRatio = snappedPr
+    this._syncingPerformanceQualityGui = false
+
+    const ctrls = this.performanceQualityControllers
+    if (ctrls?.antialias?.updateDisplay) ctrls.antialias.updateDisplay()
+    if (ctrls?.pixelRatio?.updateDisplay) {
+      // Force lil-gui to sync by temporarily setting to undefined then back
+      const temp = this.performanceQualityConfig.pixelRatio
+      this.performanceQualityConfig.pixelRatio = undefined
+      ctrls.pixelRatio.updateDisplay()
+      this.performanceQualityConfig.pixelRatio = temp
+      ctrls.pixelRatio.updateDisplay()
+    }
+  }
+
   restoreSessionOnPlay() {
     if (!App.audioManager || !App.audioManager.audio || App.audioManager.isUsingMicrophone) return
 
@@ -125,10 +600,14 @@ export default class App {
     const playPauseBtn = document.getElementById('play-pause-btn')
     const muteBtn = document.getElementById('mute-btn')
     const micBtn = document.getElementById('mic-btn')
+    const lockBtn = document.getElementById('lock-btn')
     const syncButton = document.getElementById('syncButton')
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
     const fpsDisplay = document.getElementById('fps-display')
+
+    // Lock state management
+    let isLocked = localStorage.getItem('playerControlsLocked') === 'true'
 
     // Optional FPS counter (standalone UI only)
     this.fpsDisplay = fpsDisplay || null
@@ -156,6 +635,7 @@ export default class App {
     }
 
     const hideControls = () => {
+      if (isLocked) return
       controls.style.display = 'none'
       controls.style.pointerEvents = 'none'
     }
@@ -169,6 +649,7 @@ export default class App {
 
     const scheduleIdle = () => {
       clearTimers()
+      if (isLocked) return
       idleTimer = setTimeout(() => {
         if (!pointerInside) hideControls()
       }, idleDelayMs)
@@ -307,6 +788,32 @@ export default class App {
       micBtn.textContent = 'mic_off'
     }
 
+    // Lock button functionality
+    const updateLockState = () => {
+      if (!lockBtn) return
+      if (isLocked) {
+        lockBtn.textContent = 'lock'
+        lockBtn.title = 'Unlock controls (allow auto-hide)'
+      } else {
+        lockBtn.textContent = 'lock_open_right'
+        lockBtn.title = 'Lock controls visible'
+      }
+    }
+
+    lockBtn?.addEventListener('click', () => {
+      isLocked = !isLocked
+      localStorage.setItem('playerControlsLocked', isLocked.toString())
+      updateLockState()
+      if (isLocked) {
+        showControls()
+        clearTimers()
+      } else {
+        scheduleIdle()
+      }
+    })
+
+    updateLockState()
+
     positionSlider?.addEventListener('mousedown', () => { isSeeking = true })
     positionSlider?.addEventListener('mouseup', () => { isSeeking = false })
     positionSlider?.addEventListener('input', (e) => {
@@ -348,7 +855,7 @@ export default class App {
           resetVisibility()
         } else if (controls.style.display === 'none') {
           resetVisibility()
-        } else {
+        } else if (!isLocked) {
           pointerInside = false
           hideControls()
         }
@@ -364,21 +871,536 @@ export default class App {
   init() {
     document.removeEventListener('click', this.onClickBinder)
 
+    const getMergedUrlParams = () => {
+      const merged = new URLSearchParams()
+
+      const addFromQueryString = (queryString) => {
+        if (!queryString) return
+
+        let qs = String(queryString)
+        if (qs.startsWith('#')) {
+          const idx = qs.indexOf('?')
+          if (idx === -1) return
+          qs = qs.slice(idx)
+        }
+
+        const params = new URLSearchParams(qs)
+        for (const [key, value] of params.entries()) {
+          if (!merged.has(key)) merged.set(key, value)
+        }
+
+        // Preserve valueless params like `?gpuInfo`.
+        for (const key of params.keys()) {
+          if (!merged.has(key)) merged.set(key, '')
+        }
+      }
+
+      // Prefer top-level URL params if same-origin.
+      try {
+        addFromQueryString(window.top?.location?.search)
+        addFromQueryString(window.top?.location?.hash)
+      } catch (e) {
+        // ignore cross-origin
+      }
+
+      // When embedded cross-origin, `window.top` may be inaccessible, but
+      // `document.referrer` often contains the host URL (and its query params).
+      try {
+        if (document.referrer) {
+          const refUrl = new URL(document.referrer, window.location.href)
+          addFromQueryString(refUrl.search)
+          addFromQueryString(refUrl.hash)
+        }
+      } catch (e) {
+        // ignore invalid referrer
+      }
+
+      addFromQueryString(window.location.search)
+      addFromQueryString(window.location.hash)
+
+      return merged
+    }
+
+    const isTruthyParam = (params, name) => {
+      if (!params || !name) return false
+      if (!params.has(name)) return false
+      const raw = params.get(name)
+      if (raw === null) return true
+      const value = String(raw).trim().toLowerCase()
+      if (value === '' || value === '1' || value === 'true' || value === 'yes' || value === 'on') return true
+      if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false
+      return true
+    }
+
+    const getOptionalBool = (params, ...names) => {
+      if (!params) return null
+      for (const name of names) {
+        if (params.has(name)) return isTruthyParam(params, name)
+      }
+      return null
+    }
+
+    const urlParams = getMergedUrlParams()
+
+    const globalDefaults = this.getStoredGlobalQualityDefaults()
+
+    // Default debug profile: if a setting isn't explicitly provided via URL,
+    // apply a sensible default for performance diagnostics.
+    // Disable with `&noDefaults=1` (or `&defaults=0`).
+    const noDefaults =
+      isTruthyParam(urlParams, 'noDefaults') ||
+      isTruthyParam(urlParams, 'nodefaults') ||
+      String(urlParams.get('defaults') || '').trim() === '0'
+
+    if (!noDefaults) {
+      const injected = new Set()
+      const defaults = {
+        // Baseline defaults (can be overridden by URL params or per-visualizer overrides).
+        // Note: we still treat injected defaults as "soft" (not hard user overrides).
+        dpr: String(globalDefaults.pixelRatio ?? 2),
+        aa: String((globalDefaults.antialias ?? false) ? '1' : '0'),
+        aqDynamic: '1',
+      }
+
+      for (const [key, value] of Object.entries(defaults)) {
+        if (!urlParams.has(key)) {
+          urlParams.set(key, value)
+          injected.add(key)
+        }
+      }
+
+      // Track which params came from our debug-profile defaults so we don't
+      // treat them as hard user overrides later.
+      this._injectedDefaultParams = injected
+
+      // Only choose a default visualizer on first-run. If the user has a stored
+      // last-visualizer choice, keep it unless they explicitly override via URL.
+      const hasVisualizerOverride = urlParams.has('visualizer') || urlParams.has('viz') || urlParams.has('v')
+      if (!hasVisualizerOverride) {
+        const stored = this.getStoredVisualizerType()
+        if (!stored) {
+          urlParams.set('visualizer', 'Shader: Skinpeeler')
+        }
+      }
+    }
+    const wantsGpuInfo =
+      isTruthyParam(urlParams, 'gpuInfo') ||
+      isTruthyParam(urlParams, 'gpuinfo') ||
+      isTruthyParam(urlParams, 'debugGpu') ||
+      isTruthyParam(urlParams, 'debuggpu')
+
+    const wantsPerf =
+      isTruthyParam(urlParams, 'perf') ||
+      isTruthyParam(urlParams, 'debugPerf') ||
+      isTruthyParam(urlParams, 'debugperf')
+
+    const qualityLogsEnabled = wantsPerf
+
+    // Extra debug toggles useful for isolating rAF pacing vs GPU-bound rendering.
+    // - `&skipRender=1` (or `&render=0`) bypasses `renderer.render`.
+    // - `&dpr=1` (or `&pixelRatio=1`) forces renderer pixel ratio.
+    this.debugSkipRender =
+      isTruthyParam(urlParams, 'skipRender') ||
+      isTruthyParam(urlParams, 'skiprender') ||
+      isTruthyParam(urlParams, 'noRender') ||
+      isTruthyParam(urlParams, 'norender') ||
+      urlParams.get('render') === '0'
+
+    const dprOverrideRaw = urlParams.get('dpr') || urlParams.get('pixelRatio') || urlParams.get('pixelratio') || urlParams.get('pr')
+    const dprOverride = dprOverrideRaw != null && dprOverrideRaw !== '' ? Number.parseFloat(dprOverrideRaw) : NaN
+    this.debugPixelRatio = Number.isFinite(dprOverride) ? dprOverride : null
+
+    const dprKey = urlParams.has('dpr')
+      ? 'dpr'
+      : (urlParams.has('pixelRatio') ? 'pixelRatio' : (urlParams.has('pixelratio') ? 'pixelratio' : (urlParams.has('pr') ? 'pr' : null)))
+
+    // autoQuality (default on) selects performance-friendly defaults unless
+    // explicitly overridden via query params.
+    const autoQualityOverride = getOptionalBool(urlParams, 'autoQuality', 'autoquality', 'aq')
+    this.autoQualityEnabled = autoQualityOverride == null ? true : !!autoQualityOverride
+
+    // Dynamic autoQuality can be explicitly controlled:
+    // - `&autoQualityDynamic=1` (or `&aqDynamic=1`) forces the dynamic loop on.
+    // - `&autoQualityDynamic=0` forces it off.
+    // Default (param absent): dynamic is enabled only when pixel ratio isn't explicitly overridden.
+    const autoQualityDynamicOverride = getOptionalBool(
+      urlParams,
+      'autoQualityDynamic',
+      'autoqualitydynamic',
+      'aqDynamic',
+      'aqdynamic',
+      'aqdyn'
+    )
+    this.autoQualityDynamicRequested = autoQualityDynamicOverride
+
+    // `&aa=0` disables antialias/MSAA (useful for isolating MSAA cost regressions).
+    const aaKey = urlParams.has('aa') ? 'aa' : (urlParams.has('antialias') ? 'antialias' : (urlParams.has('msaa') ? 'msaa' : null))
+    const aaOverride = aaKey ? isTruthyParam(urlParams, aaKey) : null
+    const injectedDefaults = this._injectedDefaultParams
+    const hasAaOverride = aaOverride != null && !(aaKey === 'aa' && injectedDefaults?.has?.('aa'))
+    // Baseline default: from stored global defaults (fallback: off) unless explicitly overridden.
+    this.debugAntialias = hasAaOverride ? !!aaOverride : !!(globalDefaults.antialias ?? false)
+
+    const hasPixelRatioOverride = this.debugPixelRatio != null && !(dprKey === 'dpr' && injectedDefaults?.has?.('dpr'))
+
+    this.pixelRatioOverridden = !!hasPixelRatioOverride
+    this.antialiasOverridden = !!hasAaOverride
+
+    // If the user explicitly requests dynamic autoQuality, treat `dpr=` as a seed value
+    // rather than a hard lock.
+    this.pixelRatioLocked = !!hasPixelRatioOverride && autoQualityDynamicOverride !== true
+
+    // Apply autoQuality defaults only when user didn't explicitly set them.
+    // Heuristic: on high-DPR displays, cap render resolution to reduce fragment cost.
+    // (This is intentionally conservative and can be overridden with `dpr=` / `aa=`)
+    let qualityReason = 'manual'
+    if (this.autoQualityEnabled) {
+      // Leave antialias enabled by default; the dynamic controller will disable
+      // it first if the frame-rate target isn't being met.
+
+      if (!hasPixelRatioOverride) {
+        const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1
+        const seeded = Number.isFinite(globalDefaults.pixelRatio)
+          ? globalDefaults.pixelRatio
+          : 2
+        this.debugPixelRatio = this._snapPixelRatio(seeded, { min: 0.25, max: 2 })
+        qualityReason = `auto(dpr=${deviceDpr} seed=${seeded} snap=${this.debugPixelRatio})`
+      } else {
+        qualityReason = autoQualityDynamicOverride === true ? 'auto(with pixelRatio seed)' : 'auto(with pixelRatio override)'
+      }
+    }
+
+    // Dynamic auto-quality: adjust pixelRatio over time to track display refresh.
+    // Default: disabled when user explicitly sets pixel ratio.
+    // If `autoQualityDynamic=1`, dynamic is enabled even with a pixelRatio override.
+    // If `autoQualityDynamic=0`, dynamic is disabled regardless.
+    if (autoQualityDynamicOverride === false) {
+      this.autoQualityDynamic = false
+    } else if (autoQualityDynamicOverride === true) {
+      this.autoQualityDynamic = !!this.autoQualityEnabled
+    } else {
+      this.autoQualityDynamic = this.autoQualityEnabled && !this.pixelRatioLocked
+    }
+
+    // Best-effort refresh-rate probe (Chrome doesn't expose refresh Hz directly).
+    // Runs a short rAF loop before heavy rendering starts and sets targetFps.
+    this.quality = {
+      // Start conservative; will be refined by the probe.
+      targetFps: 60,
+      refreshHz: null,
+      minPixelRatio: 0.25,
+      maxPixelRatio: Math.max(2, Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : 1),
+      // Slower cadence reduces flicker/thrashing, especially for multipass shaders
+      // that resize render targets on pixelRatio changes.
+      adjustEveryMs: 2000,
+      lastAdjustAt: 0,
+      lastStatusAt: 0,
+      lastMetric: null,
+
+      // Smoothed metrics to avoid reacting to noisy single-sample GPU queries.
+      gpuEmaMs: null,
+      rafEmaDtMs: null,
+
+      // Upscale gating: only increase quality slowly when there's sustained headroom.
+      goodGpuWindows: 0,
+      stableWindows: 0,
+      lastIncreaseAt: 0,
+      increaseCooldownMs: 12000,
+      settled: false,
+      settledAt: 0,
+    }
+
+    const probeRefreshRate = () => {
+      try {
+        const samples = []
+        let last = 0
+        const startAt = performance.now()
+        const maxMs = 700
+        const maxSamples = 90
+
+        const step = (t) => {
+          const now = Number.isFinite(t) ? t : performance.now()
+          if (last) {
+            const dt = now - last
+            if (Number.isFinite(dt) && dt > 0 && dt < 100) samples.push(dt)
+          }
+          last = now
+
+          const elapsed = now - startAt
+          if (elapsed < maxMs && samples.length < maxSamples) {
+            requestAnimationFrame(step)
+            return
+          }
+
+          if (samples.length < 10) return
+          const sorted = samples.slice().sort((a, b) => a - b)
+          const mid = sorted[Math.floor(sorted.length / 2)]
+          if (!Number.isFinite(mid) || mid <= 0) return
+          const hz = 1000 / mid
+
+          // Snap to common refresh rates.
+          const candidates = [240, 165, 144, 120, 90, 75, 60]
+          let snapped = 60
+          let bestErr = Infinity
+          for (const c of candidates) {
+            const err = Math.abs(hz - c)
+            if (err < bestErr) {
+              bestErr = err
+              snapped = c
+            }
+          }
+
+          this.quality.refreshHz = snapped
+          this.quality.targetFps = snapped
+          if (qualityLogsEnabled) {
+            console.log('[Quality] refresh probe', {
+              medianDtMs: Number(mid.toFixed(2)),
+              measuredHz: Number(hz.toFixed(1)),
+              snappedHz: snapped,
+            })
+          }
+        }
+
+        requestAnimationFrame(step)
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (this.autoQualityDynamic) probeRefreshRate()
+
+    try {
+      const deviceDpr = Number.isFinite(window.devicePixelRatio) ? window.devicePixelRatio : null
+      if (qualityLogsEnabled) {
+        console.log('[Quality]', {
+          autoQuality: this.autoQualityEnabled,
+          dynamic: this.autoQualityDynamic,
+          dynamicRequested: this.autoQualityDynamicRequested,
+          reason: qualityReason,
+          defaultsInjected: Array.isArray(this._injectedDefaultParams ? Array.from(this._injectedDefaultParams) : null)
+            ? Array.from(this._injectedDefaultParams)
+            : null,
+          deviceDpr,
+          pixelRatio: this.debugPixelRatio,
+          antialias: this.debugAntialias,
+          pixelRatioOverridden: hasPixelRatioOverride,
+          pixelRatioLocked: this.pixelRatioLocked,
+          antialiasOverridden: hasAaOverride,
+        })
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // Persist debug flags/merged params for later (createManagers, per-frame timing).
+    this.urlParams = urlParams
+
+    // Capture baseline quality state (URL/debug-profile defaults) so per-visualizer
+    // overrides can be reverted cleanly.
+    if (!this._baseQualityState) {
+      this._baseQualityState = {
+        debugAntialias: this.debugAntialias,
+        debugPixelRatio: this.debugPixelRatio,
+        pixelRatioOverridden: this.pixelRatioOverridden,
+        pixelRatioLocked: this.pixelRatioLocked,
+        antialiasOverridden: this.antialiasOverridden,
+        autoQualityDynamic: this.autoQualityDynamic,
+      }
+    }
+    this.perfEnabled = wantsPerf
+    this.qualityLogsEnabled = qualityLogsEnabled
+    if (this.perfEnabled) {
+      this.perfState = {
+        visualizerUpdateMs: 0,
+        audioUpdateMs: 0,
+        renderMs: 0,
+        totalMs: 0,
+        gpuRenderMs: null,
+      }
+      console.log('[Perf] perf enabled (add `?perf=1` to the URL)')
+
+      if (!this.perfIntervalId) {
+        this.perfIntervalId = window.setInterval(() => {
+          try {
+            const snapshotNow = performance.now()
+            const sampleMs = Number.isFinite(this.perfSnapshotLastAt) ? (snapshotNow - this.perfSnapshotLastAt) : null
+            this.perfSnapshotLastAt = snapshotNow
+
+            const lastFrameDtMs = Number.isFinite(this.lastFrameDtMs) ? this.lastFrameDtMs : null
+
+            let rafFrames = null
+            let avgRafDtMs = null
+            let maxRafDtMs = null
+            let rafFps = null
+            if (this.rafStats && Number.isFinite(this.rafStats.frames) && this.rafStats.frames > 0) {
+              rafFrames = this.rafStats.frames
+              avgRafDtMs = this.rafStats.sumDt / this.rafStats.frames
+              maxRafDtMs = this.rafStats.maxDt
+              rafFps = avgRafDtMs > 0 ? (1000 / avgRafDtMs) : null
+
+              // Reset sample window while keeping `lastAt` intact.
+              this.rafStats.frames = 0
+              this.rafStats.sumDt = 0
+              this.rafStats.maxDt = 0
+            }
+
+            const fps = this.fpsState?.fpsEma
+            const gl = this.renderer?.getContext?.()
+            const ctxAttrs = gl?.getContextAttributes?.() || null
+            const canvas = this.renderer?.domElement || null
+            const snapshot = {
+              t: Number((snapshotNow / 1000).toFixed(3)),
+              sampleMs: Number.isFinite(sampleMs) ? Number(sampleMs.toFixed(0)) : null,
+              fps: Number.isFinite(fps) ? Number(fps.toFixed(2)) : null,
+              dpr: Number.isFinite(window.devicePixelRatio) ? Number(window.devicePixelRatio.toFixed(3)) : null,
+              pixelRatio: Number.isFinite(this.renderer?.getPixelRatio?.()) ? Number(this.renderer.getPixelRatio().toFixed(3)) : null,
+              autoQuality: typeof this.autoQualityEnabled === 'boolean' ? this.autoQualityEnabled : null,
+              aaReq: typeof this.debugAntialias === 'boolean' ? this.debugAntialias : null,
+              aa: typeof ctxAttrs?.antialias === 'boolean' ? ctxAttrs.antialias : null,
+              skipRender: !!this.debugSkipRender,
+              dbw: Number.isFinite(gl?.drawingBufferWidth) ? gl.drawingBufferWidth : null,
+              dbh: Number.isFinite(gl?.drawingBufferHeight) ? gl.drawingBufferHeight : null,
+              canvasW: Number.isFinite(canvas?.width) ? canvas.width : null,
+              canvasH: Number.isFinite(canvas?.height) ? canvas.height : null,
+              clientW: Number.isFinite(canvas?.clientWidth) ? canvas.clientWidth : null,
+              clientH: Number.isFinite(canvas?.clientHeight) ? canvas.clientHeight : null,
+              lastFrameDtMs: Number.isFinite(lastFrameDtMs) ? Number(lastFrameDtMs.toFixed(2)) : null,
+              rafFrames,
+              avgRafDtMs: Number.isFinite(avgRafDtMs) ? Number(avgRafDtMs.toFixed(2)) : null,
+              maxRafDtMs: Number.isFinite(maxRafDtMs) ? Number(maxRafDtMs.toFixed(2)) : null,
+              rafFps: Number.isFinite(rafFps) ? Number(rafFps.toFixed(2)) : null,
+              updMs: Number.isFinite(this.perfState?.visualizerUpdateMs) ? Number(this.perfState.visualizerUpdateMs.toFixed(2)) : null,
+              audMs: Number.isFinite(this.perfState?.audioUpdateMs) ? Number(this.perfState.audioUpdateMs.toFixed(2)) : null,
+              rndMs: Number.isFinite(this.perfState?.renderMs) ? Number(this.perfState.renderMs.toFixed(2)) : null,
+              gpuMs: Number.isFinite(this.perfState?.gpuRenderMs) ? Number(this.perfState.gpuRenderMs.toFixed(2)) : null,
+              totMs: Number.isFinite(this.perfState?.totalMs) ? Number(this.perfState.totalMs.toFixed(2)) : null,
+              visualizer: App.visualizerType || null,
+              visibility: document.visibilityState || null,
+            }
+
+            console.log('[Perf]', snapshot)
+            console.log('[PerfJSON]', JSON.stringify(snapshot))
+          } catch (e) {
+            // ignore
+          }
+        }, 5000)
+
+        window.addEventListener('beforeunload', () => {
+          try {
+            if (this.perfIntervalId) {
+              clearInterval(this.perfIntervalId)
+              this.perfIntervalId = null
+            }
+          } catch (e) {
+            // ignore
+          }
+        })
+      }
+    }
+
     // Hotkeys: numpad + / - to cycle visualizers
     window.addEventListener('keydown', this.onKeyDown)
+    
+    // Capture Num+/Num- before lil-gui can stop propagation
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'NumpadAdd' || e.code === 'NumpadSubtract' || 
+          ((e.key === '+' || e.key === '-') && e.location === 3)) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.code === 'NumpadAdd' || e.key === '+') {
+          this.cycleVisualizer(1)
+        } else {
+          this.cycleVisualizer(-1)
+        }
+      }
+    }, { capture: true })
 
     this.renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: this.debugAntialias,
       alpha: true,
+      powerPreference: 'high-performance',
     })
+
+    if (this.perfEnabled) {
+      try {
+        console.log('[Perf] antialias requested:', this.debugAntialias)
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (this.debugPixelRatio != null) {
+      try {
+        const clamped = Math.max(0.25, Math.min(4, this.debugPixelRatio))
+        this.renderer.setPixelRatio(clamped)
+        if (this.perfEnabled) console.log('[Perf] pixelRatio override:', clamped)
+
+        // Keep quality bounds in sync with an explicitly set starting ratio.
+        if (this.quality) {
+          this.quality.maxPixelRatio = Math.max(this.quality.maxPixelRatio, clamped)
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    if (wantsGpuInfo) {
+      console.log('[GPU] gpuInfo enabled (add `?gpuInfo=1` to the URL)')
+      try {
+        console.log('[GPU] href', window.location.href)
+        if (document.referrer) console.log('[GPU] referrer', document.referrer)
+        console.log('[GPU] param keys', [...urlParams.keys()])
+      } catch (e) {
+        // ignore
+      }
+      this.logWebGLInfo(this.renderer.getContext(), 'THREE.WebGLRenderer')
+
+      // Periodic logging helps compare Stable vs Canary over time.
+      // Keep it low-frequency to avoid console overhead.
+      if (!this.gpuInfoIntervalId) {
+        this.gpuInfoIntervalId = window.setInterval(() => {
+          try {
+            this.logWebGLInfo(this.renderer?.getContext?.(), 'THREE.WebGLRenderer')
+          } catch (e) {
+            // ignore
+          }
+        }, 5000)
+
+        window.addEventListener('beforeunload', () => {
+          try {
+            if (this.gpuInfoIntervalId) {
+              clearInterval(this.gpuInfoIntervalId)
+              this.gpuInfoIntervalId = null
+            }
+          } catch (e) {
+            // ignore
+          }
+        })
+      }
+    }
 
     // Expose renderer for visualizers needing post-processing
     App.renderer = this.renderer
 
+    if (this.perfEnabled) {
+      try {
+        const gl = this.renderer.getContext()
+        this.gpuTimer = new WebGLGpuTimer(gl)
+        console.log('[Perf] GPU timer query support:', !!this.gpuTimer?.supported)
+      } catch (e) {
+        this.gpuTimer = null
+      }
+    }
+
     this.renderer.setClearColor(0x000000, 0)
-    this.renderer.setSize(window.innerWidth, window.innerHeight)
+    // Use updateStyle=false; CSS sizing is handled explicitly.
+    this.renderer.setSize(window.innerWidth, window.innerHeight, false)
     this.renderer.autoClear = false
-    document.querySelector('.content').appendChild(this.renderer.domElement)
+    const content = document.querySelector('.content')
+    if (content) {
+      this._applyMainCanvasStyle(this.renderer.domElement)
+      content.appendChild(this.renderer.domElement)
+    }
 
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 10000)
     this.camera.position.z = 12
@@ -394,34 +1416,186 @@ export default class App {
     this.scene.add(App.holder)
     App.holder.sortObjects = false
 
-    App.gui = new dat.GUI()
+    App.gui = new GUI({ title: 'VISUALIZER' })
+    
+    // Disable collapse functionality on root GUI
+    App.gui.open()
+    
+    // Apply root GUI styles (border, shadow, padding)
+    this.setupGuiCloseButton()
 
     // Keep the controls visible above any full-screen overlay canvases.
     // (Some visualizers render into their own 2D canvas and may clear to black.)
     if (App.gui?.domElement) {
       const guiRoot = App.gui.domElement
-      // dat.GUI autoPlace uses a wrapper (usually `.dg.ac`) for positioning.
-      const guiContainer = guiRoot.parentElement || guiRoot
-
-      guiContainer.style.position = 'fixed'
-      guiContainer.style.zIndex = '2500'
-      guiContainer.style.pointerEvents = 'auto'
-      guiContainer.style.display = 'block'
-      guiContainer.style.right = '12px'
-      guiContainer.style.left = 'auto'
-      guiContainer.style.top = '12px'
-      guiContainer.style.maxWidth = 'calc(100vw - 24px)'
-      guiContainer.style.boxSizing = 'border-box'
-
-      // Also set on the root in case autoPlace behavior differs.
-      guiRoot.style.position = 'relative'
+      // lil-gui autoPlace appends directly to document.body (no wrapper).
+      // Only style the guiRoot element — never its parent (which is body).
+      guiRoot.style.position = 'fixed'
+      guiRoot.style.right = '12px'
+      guiRoot.style.left = 'auto'
+      guiRoot.style.top = '12px'
       guiRoot.style.zIndex = '2500'
+      guiRoot.style.pointerEvents = 'auto'
+      guiRoot.style.maxWidth = 'calc(100vw - 24px)'
+      guiRoot.style.boxSizing = 'border-box'
     }
 
     this.createManagers()
 
     this.resize()
     window.addEventListener('resize', () => this.resize())
+  }
+
+  _getContextAntialias() {
+    try {
+      const gl = this.renderer?.getContext?.()
+      const attrs = gl?.getContextAttributes?.()
+      return typeof attrs?.antialias === 'boolean' ? attrs.antialias : null
+    } catch (e) {
+      return null
+    }
+  }
+
+  _applyMainCanvasStyle(canvas) {
+    try {
+      if (!canvas || !canvas.style) return
+      // Ensure the canvas fills the app container even when we call
+      // `renderer.setSize(..., false)` (which intentionally does not touch CSS).
+      canvas.style.position = 'absolute'
+      canvas.style.top = '0'
+      canvas.style.left = '0'
+      canvas.style.width = '100%'
+      canvas.style.height = '100%'
+      canvas.style.display = 'block'
+      canvas.style.zIndex = '0'
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  _recreateRendererWithAntialias(antialias) {
+    try {
+      if (!this.renderer) return false
+
+      const old = this.renderer
+      const oldCanvas = old.domElement
+      const parent = oldCanvas?.parentElement || null
+
+      // Preserve CSS sizing/positioning so the replacement canvas doesn't
+      // fall back to the default 300x150 size (which looks like a shrink to
+      // the top-left).
+      const oldCanvasStyleText = oldCanvas?.style?.cssText || ''
+      const oldCanvasClassName = oldCanvas?.className || ''
+
+      const oldPixelRatio = old.getPixelRatio?.() || 1
+
+      let size = { x: window.innerWidth, y: window.innerHeight }
+      try {
+        const v = new THREE.Vector2()
+        old.getSize(v)
+        if (Number.isFinite(v.x) && Number.isFinite(v.y) && v.x > 0 && v.y > 0) size = { x: v.x, y: v.y }
+      } catch (e) {
+        // ignore
+      }
+
+      let clearColor = new THREE.Color(0x000000)
+      let clearAlpha = 0
+      try {
+        old.getClearColor(clearColor)
+        clearAlpha = typeof old.getClearAlpha === 'function' ? old.getClearAlpha() : 0
+      } catch (e) {
+        // ignore
+      }
+
+      try {
+        old.dispose()
+      } catch (e) {
+        // ignore
+      }
+
+      const next = new THREE.WebGLRenderer({
+        antialias: !!antialias,
+        alpha: true,
+        powerPreference: 'high-performance',
+      })
+
+      next.setPixelRatio(oldPixelRatio)
+      next.setClearColor(clearColor, clearAlpha)
+      next.autoClear = false
+      next.setSize(size.x, size.y, false)
+
+      try {
+        if (oldCanvasClassName) next.domElement.className = oldCanvasClassName
+        if (oldCanvasStyleText) next.domElement.style.cssText = oldCanvasStyleText
+      } catch (e) {
+        // ignore
+      }
+      this._applyMainCanvasStyle(next.domElement)
+
+      if (parent && oldCanvas) {
+        parent.replaceChild(next.domElement, oldCanvas)
+      }
+
+      this.renderer = next
+      App.renderer = next
+
+      if (this.perfEnabled) {
+        try {
+          const gl = next.getContext()
+          this.gpuTimer = new WebGLGpuTimer(gl)
+        } catch (e) {
+          this.gpuTimer = null
+        }
+      }
+
+      // Keep viewport/camera and cached dims consistent.
+      try {
+        this.resize()
+      } catch (e) {
+        // ignore
+      }
+
+      // Visualizers that cache renderer-dependent resources may want to resync.
+      try {
+        const v = App.currentVisualizer
+        if (v && typeof v.onRendererRecreated === 'function') {
+          v.onRendererRecreated(next, old)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      return true
+    } catch (e) {
+      return false
+    }
+  }
+
+  logWebGLInfo(gl, label = 'WebGL') {
+    try {
+      if (!gl) return
+
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info')
+      const unmaskedVendor = debugInfo
+        ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL)
+        : null
+      const unmaskedRenderer = debugInfo
+        ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+        : null
+
+      const info = {
+        unmaskedVendor,
+        unmaskedRenderer,
+        vendor: gl.getParameter(gl.VENDOR),
+        renderer: gl.getParameter(gl.RENDERER),
+        version: gl.getParameter(gl.VERSION),
+        shadingLanguageVersion: gl.getParameter(gl.SHADING_LANGUAGE_VERSION),
+      }
+
+      console.log(`[${label}]`, info)
+    } catch (e) {
+      console.warn(`[${label}] Failed to query WebGL info:`, e)
+    }
   }
 
   async createManagers() {
@@ -452,10 +1626,56 @@ export default class App {
 
     // Initialize last-used visualizer (fallback to default)
     const storedVisualizer = this.getStoredVisualizerType()
-    this.switchVisualizer(storedVisualizer || 'Reactive Particles', { notify: false })
-    
-    // Add visualizer switcher to GUI
+    const urlParams = this.urlParams || new URLSearchParams(window.location.search || '')
+    const urlVisualizerRaw = urlParams.get('visualizer') || urlParams.get('viz') || urlParams.get('v')
+
+    const getAllVisualizerNames = () => {
+      if (Array.isArray(App.visualizerList) && App.visualizerList.length > 0) return App.visualizerList
+      return [...ENTITY_VISUALIZER_NAMES, ...SHADER_VISUALIZER_NAMES]
+    }
+
+    const resolveVisualizerName = (name) => {
+      if (!name) return null
+      const trimmed = String(name).trim()
+      if (!trimmed) return null
+
+      const all = getAllVisualizerNames()
+      const exact = all.find((n) => n === trimmed)
+      if (exact) return exact
+
+      const lower = trimmed.toLowerCase()
+      const ci = all.find((n) => String(n).toLowerCase() === lower)
+      if (ci) return ci
+
+      // Convenience: allow `Starbattle` instead of `Shader: Starbattle`.
+      const shaderPrefixed = `Shader: ${trimmed}`
+      const shaderExact = all.find((n) => n === shaderPrefixed)
+      if (shaderExact) return shaderExact
+
+      const shaderCi = all.find((n) => String(n).toLowerCase() === shaderPrefixed.toLowerCase())
+      if (shaderCi) return shaderCi
+
+      return null
+    }
+
+    const urlVisualizer = resolveVisualizerName(urlVisualizerRaw)
+    if (urlVisualizerRaw && !urlVisualizer) {
+      console.warn('[Visualizer] Unknown `visualizer` param:', urlVisualizerRaw)
+    }
+    if (urlVisualizer) {
+      console.log('[Visualizer] URL override visualizer:', urlVisualizer)
+    }
+
+    const initialVisualizer = urlVisualizer || storedVisualizer || 'Reactive Particles'
+    // Ensure the top selector reflects what we'll load.
+    App.visualizerType = initialVisualizer
+
+    // Build common controls first so they appear above visualizer-specific folders.
     this.addVisualizerSwitcher()
+    this.addPerformanceQualityControls()
+
+    // Now create the actual visualizer.
+    this.switchVisualizer(initialVisualizer, { notify: false })
 
     // Restore last playback position before starting audio so reload resumes.
     this.restoreSessionOnPlay()
@@ -490,7 +1710,7 @@ export default class App {
     const isEmbedded = window.parent && window.parent !== window
     const params = new URLSearchParams(window.location.search || '')
     const wantsHide = params.get('hideui') === '1' || params.get('autostart') === '1'
-    const guiContainer = document.querySelector('.dg.ac')
+    const guiContainer = document.querySelector('.lil-gui.autoPlace') || App.gui?.domElement
     if (!guiContainer) return
     const guiHidden = getComputedStyle(guiContainer).display === 'none'
     if (!(isEmbedded && (wantsHide || guiHidden))) return
@@ -522,13 +1742,59 @@ export default class App {
 
     this.camera.aspect = this.width / this.height
     this.camera.updateProjectionMatrix()
-    this.renderer.setSize(this.width, this.height)
+    // Avoid touching canvas CSS size; only update drawing buffer.
+    this.renderer.setSize(this.width, this.height, false)
+
+    // Some visualizers use raw WebGL calls; keep viewport/scissor sane.
+    try {
+      this.renderer.setScissorTest(false)
+      this.renderer.setViewport(0, 0, this.width, this.height)
+    } catch (e) {
+      // ignore
+    }
   }
 
   update(now) {
     requestAnimationFrame((t) => this.update(t))
 
-    this.tickFpsCounter(Number.isFinite(now) ? now : performance.now())
+    const frameNow = Number.isFinite(now) ? now : performance.now()
+    const perfStart = this.perfEnabled ? performance.now() : 0
+
+    // Track rAF cadence independent of FPS EMA.
+    if (this.rafStats) {
+      if (this.rafStats.lastAt) {
+        const dt = frameNow - this.rafStats.lastAt
+        if (Number.isFinite(dt) && dt >= 0) {
+          this.rafStats.frames += 1
+          this.rafStats.sumDt += dt
+          if (dt > this.rafStats.maxDt) this.rafStats.maxDt = dt
+          this.lastFrameDtMs = dt
+        }
+      }
+      this.rafStats.lastAt = frameNow
+    }
+
+    // Track a *short* window for auto-quality adjustments.
+    if (this.qualityWindow && Number.isFinite(this.lastFrameDtMs)) {
+      const dt = this.lastFrameDtMs
+      if (dt >= 0 && dt < 1000) {
+        if (!this.qualityWindow.startAt) this.qualityWindow.startAt = frameNow
+        const ageMs = frameNow - this.qualityWindow.startAt
+        // Keep it responsive: ~1s window (or ~90 frames max).
+        if (ageMs > 1000 || this.qualityWindow.frames > 90) {
+          this.qualityWindow.startAt = frameNow
+          this.qualityWindow.frames = 0
+          this.qualityWindow.sumDt = 0
+          this.qualityWindow.maxDt = 0
+        }
+
+        this.qualityWindow.frames += 1
+        this.qualityWindow.sumDt += dt
+        if (dt > this.qualityWindow.maxDt) this.qualityWindow.maxDt = dt
+      }
+    }
+
+    this.tickFpsCounter(frameNow)
 
     // Update visualizer with audio data
     const audioData = App.audioManager ? {
@@ -541,12 +1807,305 @@ export default class App {
     } : null
     
     const activeVisualizer = App.currentVisualizer
+    const t0 = this.perfEnabled ? performance.now() : 0
     activeVisualizer?.update(audioData)
+    const t1 = this.perfEnabled ? performance.now() : 0
+
     App.audioManager.update()
+    const t2 = this.perfEnabled ? performance.now() : 0
 
     // Some visualizers render into their own canvas/renderer.
     if (!activeVisualizer?.rendersSelf) {
-      this.renderer.render(this.scene, this.camera)
+      const r0 = this.perfEnabled ? performance.now() : 0
+
+      if (!this.debugSkipRender) {
+        if (this.perfEnabled && this.gpuTimer?.supported) {
+          this.gpuTimer.begin()
+        }
+
+        // Defensive: ensure viewport wasn't modified by raw GL code.
+        if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+          try {
+            this.renderer.setScissorTest(false)
+            this.renderer.setViewport(0, 0, this.width, this.height)
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        this.renderer.render(this.scene, this.camera)
+
+        if (this.perfEnabled && this.gpuTimer?.supported) {
+          this.gpuTimer.end()
+        }
+      }
+
+      const r1 = this.perfEnabled ? performance.now() : 0
+      if (this.perfEnabled && this.perfState) this.perfState.renderMs = r1 - r0
+    } else if (this.perfEnabled && this.perfState) {
+      this.perfState.renderMs = 0
+    }
+
+    if (this.perfEnabled && this.perfState) {
+      this.perfState.visualizerUpdateMs = t1 - t0
+      this.perfState.audioUpdateMs = t2 - t1
+      this.perfState.totalMs = performance.now() - perfStart
+
+      if (this.gpuTimer?.supported) {
+        this.perfState.gpuRenderMs = this.gpuTimer.poll()
+      } else {
+        this.perfState.gpuRenderMs = null
+      }
+    }
+
+    // Dynamic auto-quality adjustment (pixelRatio) to track target refresh.
+    this.maybeAdjustQuality(frameNow)
+  }
+
+  maybeAdjustQuality(frameNow) {
+    try {
+      if (!this.autoQualityDynamic || !this.quality || !this.renderer) return
+      if (this.pixelRatioLocked) return
+      if (this.debugSkipRender) return
+
+      const v = App.currentVisualizer
+      if (v?.rendersSelf) return
+
+      const getVisualizerQualityConstraints = () => {
+        try {
+          if (!v) return null
+          if (typeof v.getQualityConstraints === 'function') return v.getQualityConstraints() || null
+          return v.qualityConstraints || null
+        } catch {
+          return null
+        }
+      }
+
+      const nowMs = Number.isFinite(frameNow) ? frameNow : performance.now()
+
+      // Periodic status log (helps confirm the loop is running).
+      if (!this.quality.lastStatusAt || (nowMs - this.quality.lastStatusAt) >= 5000) {
+        this.quality.lastStatusAt = nowMs
+        const cur = this.renderer.getPixelRatio?.() || 1
+        if (this.qualityLogsEnabled) {
+          console.log('[Quality] status', {
+            targetFps: this.quality.targetFps,
+            refreshHz: this.quality.refreshHz,
+            pixelRatio: Number(cur.toFixed(3)),
+            minPixelRatio: this.quality.minPixelRatio,
+            maxPixelRatio: this.quality.maxPixelRatio,
+            settled: !!this.quality.settled,
+            rafEmaDtMs: Number.isFinite(this.quality.rafEmaDtMs) ? Number(this.quality.rafEmaDtMs.toFixed(2)) : null,
+            gpuEmaMs: Number.isFinite(this.quality.gpuEmaMs) ? Number(this.quality.gpuEmaMs.toFixed(2)) : null,
+            metric: this.quality.lastMetric,
+          })
+        }
+      }
+
+      const targetFps = Math.max(10, Math.min(240, this.quality.targetFps || 60))
+      const targetFrameMs = 1000 / targetFps
+
+      // Compute a fresh rAF cadence sample *before* any gating.
+      // Note: if we gate using a stale EMA and also reset the window, we can
+      // get stuck never adapting even when FPS is low.
+      const avgDt = (this.qualityWindow?.frames > 0)
+        ? (this.qualityWindow.sumDt / this.qualityWindow.frames)
+        : null
+
+      // Prefer instantaneous cadence for responsiveness; fall back to short-window avg.
+      const dtSample = Number.isFinite(this.lastFrameDtMs)
+        ? this.lastFrameDtMs
+        : ((avgDt != null && Number.isFinite(avgDt) && avgDt > 0) ? avgDt : null)
+
+      // Update EMA continuously so it reflects drops quickly.
+      if (dtSample != null && Number.isFinite(dtSample) && dtSample > 0 && dtSample < 1000) {
+        const a = 0.25
+        this.quality.rafEmaDtMs = (this.quality.rafEmaDtMs == null)
+          ? dtSample
+          : (this.quality.rafEmaDtMs * (1 - a) + dtSample * a)
+      }
+
+      // Do not adjust quality if we are achieving at least 80% of the target.
+      // This avoids constant churn and prevents breaking shaders that rely on
+      // stable pixel-space behavior.
+      const rafMetricForFps = Number.isFinite(this.quality.rafEmaDtMs)
+        ? this.quality.rafEmaDtMs
+        : dtSample
+      const achievedFps = (rafMetricForFps && rafMetricForFps > 0) ? (1000 / rafMetricForFps) : null
+      if (achievedFps != null && achievedFps >= targetFps * 0.8) {
+        // Do not touch `lastAdjustAt` here; only update it when we *change*
+        // quality. This allows immediate response if FPS later drops.
+        return
+      }
+
+      // Gate adjustments *after* updating metrics so we can react faster when FPS is very low.
+      const baseAdjustEveryMs = Number.isFinite(this.quality.adjustEveryMs) ? this.quality.adjustEveryMs : 2000
+      const severeLowFps = achievedFps != null && achievedFps < targetFps * 0.5
+      const effectiveAdjustEveryMs = severeLowFps ? Math.min(baseAdjustEveryMs, 800) : baseAdjustEveryMs
+      if (this.quality.lastAdjustAt && (nowMs - this.quality.lastAdjustAt) < effectiveAdjustEveryMs) return
+
+      const currentRatio = this.renderer.getPixelRatio?.() || 1
+      const constraints = getVisualizerQualityConstraints()
+      const constraintMin = Number.isFinite(constraints?.minPixelRatio) ? constraints.minPixelRatio : null
+      const constraintMax = Number.isFinite(constraints?.maxPixelRatio) ? constraints.maxPixelRatio : null
+      const minRatio = Math.max(this.quality.minPixelRatio, constraintMin != null ? constraintMin : this.quality.minPixelRatio)
+      const maxRatio = Math.min(this.quality.maxPixelRatio, constraintMax != null ? constraintMax : this.quality.maxPixelRatio)
+
+      // Use rAF cadence (frame pacing) to decide when to degrade.
+      // GPU timer queries can be noisy and are not required for the 80% policy.
+      const gpuMs = Number.isFinite(this.perfState?.gpuRenderMs) ? this.perfState.gpuRenderMs : null
+      // `avgDt` and `rafEmaDtMs` were already updated above.
+
+      if (gpuMs != null && Number.isFinite(gpuMs) && gpuMs > 0 && gpuMs < 1000) {
+        const a = 0.18
+        // If a sample jumps wildly, treat it as noise unless rAF cadence also indicates trouble.
+        const prev = this.quality.gpuEmaMs
+        const rafSuggestsSlow = Number.isFinite(this.quality.rafEmaDtMs)
+          ? (this.quality.rafEmaDtMs > (1000 / targetFps) * 1.08)
+          : false
+
+        const isWildJump = (prev != null) ? (gpuMs > prev * 2.2 || gpuMs < prev * 0.45) : false
+        if (!isWildJump || rafSuggestsSlow) {
+          this.quality.gpuEmaMs = (prev == null) ? gpuMs : (prev * (1 - a) + gpuMs * a)
+        }
+      }
+
+      let factor = 1
+      let basis = 'none'
+      let metric = null
+
+      const rafMetric = Number.isFinite(this.quality.rafEmaDtMs) ? this.quality.rafEmaDtMs : avgDt
+      if (rafMetric == null || !Number.isFinite(rafMetric) || rafMetric <= 0) return
+
+      basis = 'rafEmaDtMs'
+      metric = rafMetric
+
+      // If we're under 80% of target FPS, degrade quality.
+      const thresholdFrameMs = targetFrameMs / 0.8
+      if (rafMetric <= thresholdFrameMs) {
+        // (We should have returned earlier, but keep safe.)
+        this.quality.lastAdjustAt = nowMs
+        return
+      }
+
+      // Step 1: disable antialias (MSAA) before touching pixelRatio.
+      const currentAa = this._getContextAntialias()
+      const canChangeAa = !this.antialiasOverridden
+      if (currentAa === true && canChangeAa) {
+        const ok = this._recreateRendererWithAntialias(false)
+        if (ok) {
+          this.debugAntialias = false
+          this._persistAutoQualityForCurrentVisualizer()
+          this._syncPerformanceQualityControls(App.visualizerType)
+          this.quality.lastAdjustAt = nowMs
+          if (this.qualityWindow) {
+            this.qualityWindow.startAt = nowMs
+            this.qualityWindow.frames = 0
+            this.qualityWindow.sumDt = 0
+            this.qualityWindow.maxDt = 0
+          }
+          if (this.qualityLogsEnabled) {
+            console.log('[Quality] adjust', {
+              targetFps,
+              targetFrameMs: Number(targetFrameMs.toFixed(2)),
+              action: 'disableAA',
+              basis,
+              metric: Number(rafMetric.toFixed(2)),
+            })
+          }
+          return
+        }
+      }
+
+      // Step 2: reduce pixelRatio (only after AA is already off or locked by override).
+      // Pixel cost is ~ratio^2, so scale ratio by sqrt(time ratio).
+      const desired = Math.sqrt((thresholdFrameMs * 0.95) / rafMetric)
+      factor = Math.max(0.60, Math.min(0.97, desired))
+
+      this.quality.lastMetric = {
+        basis,
+        value: metric != null ? Number(metric.toFixed(2)) : null,
+        targetFrameMs: Number(targetFrameMs.toFixed(2)),
+      }
+
+      const nextRatioRaw = currentRatio * factor
+      const clamped = Math.max(minRatio, Math.min(maxRatio, nextRatioRaw))
+      const nextRatio = this._snapPixelRatio(clamped, { min: minRatio, max: maxRatio })
+      const delta = Math.abs(nextRatio - currentRatio)
+
+      const minDelta = Math.max(0.005, currentRatio * 0.02)
+      if (delta < minDelta) {
+        // Still reset the window so the next decision uses fresh data.
+        if (this.qualityWindow) {
+          this.qualityWindow.startAt = nowMs
+          this.qualityWindow.frames = 0
+          this.qualityWindow.sumDt = 0
+          this.qualityWindow.maxDt = 0
+        }
+        this.quality.lastAdjustAt = nowMs
+        return
+      }
+
+      this.renderer.setPixelRatio(nextRatio)
+      // Keep CSS size and camera projection stable; just refresh drawing buffer.
+      if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+        this.renderer.setSize(this.width, this.height, false)
+      }
+
+      // Notify active visualizer about pixelRatio change without doing a full
+      // window-resize path (which can reset animation state or cause flicker).
+      try {
+        const v = App.currentVisualizer
+        if (v && typeof v.onPixelRatioChange === 'function') {
+          v.onPixelRatioChange(nextRatio, currentRatio)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Resync renderer WebGL state after a drawing-buffer resize.
+      // (Needed when other code uses raw `gl.viewport` / scissor and desyncs Three's state cache.)
+      try {
+        if (typeof this.renderer.resetState === 'function') {
+          this.renderer.resetState()
+        }
+        if (Number.isFinite(this.width) && Number.isFinite(this.height)) {
+          this.renderer.setScissorTest(false)
+          this.renderer.setViewport(0, 0, this.width, this.height)
+        }
+        const gl = this.renderer.getContext?.()
+        if (gl?.drawingBufferWidth && gl?.drawingBufferHeight) {
+          gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight)
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Reset window after applying a change.
+      if (this.qualityWindow) {
+        this.qualityWindow.startAt = nowMs
+        this.qualityWindow.frames = 0
+        this.qualityWindow.sumDt = 0
+        this.qualityWindow.maxDt = 0
+      }
+
+      this.quality.lastAdjustAt = nowMs
+
+      this._persistAutoQualityForCurrentVisualizer()
+      this._syncPerformanceQualityControls(App.visualizerType)
+
+      if (this.qualityLogsEnabled) {
+        console.log('[Quality] adjust', {
+          targetFps,
+          targetFrameMs: Number(targetFrameMs.toFixed(2)),
+          from: Number(currentRatio.toFixed(3)),
+          to: Number(nextRatio.toFixed(3)),
+          basis,
+          metric: metric != null ? Number(metric.toFixed(2)) : null,
+        })
+      }
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -575,14 +2134,11 @@ export default class App {
 
     const fpsText = Number.isFinite(state.fpsEma) ? state.fpsEma.toFixed(1) : '--'
     const dtText = Number.isFinite(dtMs) ? dtMs.toFixed(1) : '--'
+
     this.fpsDisplay.textContent = `FPS: ${fpsText} (${dtText}ms)`
   }
   
-  switchVisualizer(type, { notify = true } = {}) {
-    // Normalize legacy/slugs to display names.
-    if (type === 'sparkling-boxes') type = 'Sparkling Boxes'
-    if (type === 'tubes-cursor') type = 'Tubes Cursor'
-
+  async switchVisualizer(type, { notify = true } = {}) {
     // Destroy current visualizer if exists
     if (App.currentVisualizer) {
       if (typeof App.currentVisualizer.destroy === 'function') {
@@ -600,10 +2156,12 @@ export default class App {
     }
 
     // Clear renderer
+    // Apply any per-visualizer quality overrides before creating the new visualizer.
+    this._applyPerVisualizerQualityOverrides(type)
     this.renderer.clear()
 
-    // Create new visualizer
-    const shaderVisualizer = createShaderVisualizerByName(type)
+    // Create new visualizer (async now due to shader config loading)
+    const shaderVisualizer = await createShaderVisualizerByName(type)
     App.currentVisualizer = shaderVisualizer || createEntityVisualizerByName(type)
 
     if (!App.currentVisualizer) {
@@ -612,7 +2170,7 @@ export default class App {
         : ENTITY_VISUALIZER_NAMES[0]
 
       App.currentVisualizer = (fallbackName ? createEntityVisualizerByName(fallbackName) : null)
-        || createShaderVisualizerByName(SHADER_VISUALIZER_NAMES[0])
+        || await createShaderVisualizerByName(SHADER_VISUALIZER_NAMES[0])
     }
 
     if (!App.currentVisualizer) {
@@ -626,6 +2184,13 @@ export default class App {
       this.setupFrequencyViz3Controls(App.currentVisualizer)
     } else {
       this.teardownFrequencyViz3Controls()
+    }
+
+    // Setup shader-specific controls if config exists
+    if (App.currentVisualizer.shaderConfig) {
+      this.setupShaderControls(App.currentVisualizer)
+    } else {
+      this.teardownShaderControls()
     }
 
     App.visualizerType = type
@@ -647,9 +2212,24 @@ export default class App {
       } else if (typeof this.visualizerController.setValue === 'function' && this.visualizerController.getValue?.() !== type) {
         this.visualizerController.setValue(type)
       }
+
+      // lil-gui uses a native <select>. Some browsers won't visually update an open/focused
+      // select's displayed value reliably from programmatic updates, so also force the
+      // underlying element's value to match.
+      const selectEl = this._getVisualizerSelectElement()
+      if (selectEl && selectEl.value !== type) {
+        try {
+          selectEl.value = type
+        } catch {
+          // ignore
+        }
+      }
     }
 
     console.log('Switched to visualizer:', type)
+
+    // Keep the Performance + Quality controls in sync.
+    this._syncPerformanceQualityControls(type)
 
     // Notify parent bridge about module change (only when embedded)
     if (notify && this.bridgeTarget) {
@@ -774,9 +2354,15 @@ export default class App {
   }
 
   handleKeyDown(event) {
-    // Ignore if focused on form inputs
     const target = event.target
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+    const isFormElement = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
+    
+    // For NumpadAdd/NumpadSubtract, always allow them to work (even in GUI)
+    const isNumpadPlusMinus = event.code === 'NumpadAdd' || event.code === 'NumpadSubtract' || 
+                               (event.key === '+' || event.key === '-')
+    
+    // Ignore form inputs, except for numpad +/- which should always work
+    if (isFormElement && !isNumpadPlusMinus) return
 
     // Spacebar: toggle play/pause
     if (event.code === 'Space' || event.key === ' ') {
@@ -833,11 +2419,180 @@ export default class App {
     const currentIndex = Math.max(0, list.indexOf(App.visualizerType))
     const nextIndex = (currentIndex + step + list.length) % list.length
     const next = list[nextIndex]
-    // Prefer updating the GUI controller so UI stays in sync and uses onChange
-    if (this.visualizerController) {
-      this.visualizerController.setValue(next)
-    } else {
-      this.switchVisualizer(next)
+
+    // If the dropdown's <select> currently has focus, blur it first so the UI updates
+    // immediately and we don't leave the user with a focused control showing stale value.
+    const selectEl = this._getVisualizerSelectElement()
+    if (selectEl && document.activeElement === selectEl) {
+      try {
+        selectEl.blur()
+      } catch {
+        // ignore
+      }
+    }
+
+    // Switch via the main codepath; it also keeps the GUI dropdown in sync.
+    this.switchVisualizer(next)
+  }
+
+  _getVisualizerSelectElement() {
+    try {
+      const root = this.visualizerController?.domElement
+      if (!root) return null
+      const el = root.querySelector('select')
+      return el instanceof HTMLSelectElement ? el : null
+    } catch {
+      return null
+    }
+  }
+
+  _updateGuiWidthToFitVisualizerSelect() {
+    try {
+      const gui = App.gui
+      const guiRoot = gui?.domElement
+      if (!gui || !guiRoot) return
+
+      const selectEl = this._getVisualizerSelectElement()
+      if (!selectEl) return
+
+      const options = Array.from(selectEl.options || [])
+        .map((o) => (o?.textContent || o?.label || o?.value || '').trim())
+        .filter(Boolean)
+
+      if (options.length === 0) return
+
+      const canvas = this._guiMeasureCanvas || (this._guiMeasureCanvas = document.createElement('canvas'))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      const selectStyle = window.getComputedStyle(selectEl)
+      const selectFont = selectStyle.font || `${selectStyle.fontWeight} ${selectStyle.fontSize} ${selectStyle.fontFamily}`
+      ctx.font = selectFont
+
+      let maxOptionWidth = 0
+      for (const label of options) {
+        const w = ctx.measureText(label).width
+        if (w > maxOptionWidth) maxOptionWidth = w
+      }
+
+      const selectPaddingLeft = parseFloat(selectStyle.paddingLeft) || 0
+      const selectPaddingRight = parseFloat(selectStyle.paddingRight) || 0
+      const selectHorizontalPadding = Math.max(0, selectPaddingLeft + selectPaddingRight)
+
+      // Allowance for native select arrow + internal padding differences across browsers.
+      const selectChromeAllowance = 56
+      const desiredControlWidth = Math.ceil(maxOptionWidth + selectHorizontalPadding + selectChromeAllowance)
+
+      const rowEl = selectEl.closest('.lil-controller')
+      const labelEl = rowEl?.querySelector?.('.lil-name')
+      const labelText = (labelEl?.textContent || '').trim()
+
+      let desiredLabelWidth = 0
+      if (labelText) {
+        const labelStyle = window.getComputedStyle(labelEl)
+        const labelFont = labelStyle.font || selectFont
+        ctx.font = labelFont
+        desiredLabelWidth = Math.ceil(ctx.measureText(labelText).width + 16)
+      }
+
+      const controlEl = rowEl?.querySelector?.('.lil-widget') || selectEl.parentElement
+
+      let controlFrac = 0.6
+      let labelFrac = 0.4
+      const rowRect = rowEl?.getBoundingClientRect?.()
+      const controlRect = controlEl?.getBoundingClientRect?.()
+      const labelRect = labelEl?.getBoundingClientRect?.()
+
+      if (rowRect?.width > 0 && controlRect?.width > 0) {
+        controlFrac = Math.min(0.9, Math.max(0.1, controlRect.width / rowRect.width))
+      }
+
+      if (rowRect?.width > 0 && labelRect?.width > 0) {
+        labelFrac = Math.min(0.9, Math.max(0.1, labelRect.width / rowRect.width))
+      }
+
+      const neededRowWidth = Math.ceil(
+        Math.max(
+          desiredControlWidth / (controlFrac || 0.6),
+          desiredLabelWidth > 0 ? desiredLabelWidth / (labelFrac || 0.4) : 0
+        )
+      )
+
+      const guiRect = guiRoot.getBoundingClientRect?.()
+      const overhead = guiRect?.width > 0 && rowRect?.width > 0 ? Math.max(0, guiRect.width - rowRect.width) : 0
+      let desiredGuiWidth = Math.ceil(neededRowWidth + overhead)
+
+      // Clamp to viewport; our container is positioned with 12px gutters.
+      const maxGuiWidth = Math.max(220, window.innerWidth - 24)
+      desiredGuiWidth = Math.max(220, Math.min(desiredGuiWidth, maxGuiWidth))
+
+      guiRoot.style.setProperty('--width', `${desiredGuiWidth}px`)
+
+      // lil-gui uses $title as the toggle element (click title to open/close).
+      // We inject a close X button into the VISUALIZER TYPE folder title.
+      const titleEl = gui.$title
+      if (titleEl) {
+        const syncTitleClose = () => {
+          try {
+            const guiIsClosed = !!gui._closed
+
+            // Find the VISUALIZER TYPE folder title for the X button.
+            const folderTitles = Array.from(guiRoot.querySelectorAll('.title') || [])
+            const vizTitle = folderTitles.find((el) => {
+              const t = (el?.textContent || '').trim().toLowerCase()
+              return t.startsWith('visualizer type')
+            })
+
+            if (vizTitle) {
+              vizTitle.classList.add('gui-close-host')
+              let xBtn = vizTitle.querySelector('.gui-close-x')
+              if (!xBtn) {
+                xBtn = document.createElement('button')
+                xBtn.type = 'button'
+                xBtn.className = 'gui-close-x'
+                xBtn.textContent = '×'
+                xBtn.setAttribute('aria-label', 'Close Controls')
+                xBtn.setAttribute('title', 'Close Controls')
+
+                xBtn.addEventListener('click', (e) => {
+                  try {
+                    e.preventDefault()
+                    e.stopPropagation()
+                  } catch {
+                    // ignore
+                  }
+                  try {
+                    gui.close()
+                  } catch {
+                    // ignore
+                  }
+                  window.setTimeout(syncTitleClose, 0)
+                })
+
+                vizTitle.appendChild(xBtn)
+              }
+
+              // Only show the X when the GUI is actually expanded.
+              xBtn.style.display = guiIsClosed ? 'none' : ''
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        // Update now.
+        syncTitleClose()
+
+        // Update after toggles too.
+        if (!titleEl.dataset?.closeSizingBound) {
+          titleEl.dataset.closeSizingBound = '1'
+          gui.onOpenClose(() => {
+            window.setTimeout(syncTitleClose, 0)
+          })
+        }
+      }
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -892,515 +2647,102 @@ export default class App {
     return input
   }
 
-  ensureVariant3GuiStyles() {
-    if (document.getElementById('fv3-gui-style')) return
-    const style = document.createElement('style')
-    style.id = 'fv3-gui-style'
-    style.textContent = `
-      @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
-
-      .dg.main {
-        width: 445px !important;
-        position: relative;
-        overflow: visible;
-        max-height: none !important;
-      }
-      .dg.main > ul {
-        max-height: none !important;
-        height: auto !important;
-        overflow: visible !important;
-      }
-      .dg .folder > ul {
-        max-height: none !important;
-        height: auto !important;
-        overflow: visible !important;
-      }
-      .dg .fv3-controls {
-        width: 100%;
-        max-width: 100%;
-        box-sizing: border-box;
-        max-height: 70vh;
-        overflow-y: auto;
-        overflow-x: hidden;
-      }
-      .dg .fv3-controls .fv3-scroll {
-        max-height: 45vh;
-        overflow-y: auto;
-        overflow-x: hidden;
-        margin: 0;
-        padding: 0;
-        scrollbar-color: #2f3545 #0f1219;
-      }
-      .dg .fv3-controls ul {
-        max-height: none;
-        overflow: visible;
-      }
-      .dg .fv3-controls,
-      .dg .fv3-controls ul {
-        scrollbar-color: #2f3545 #0f1219;
-      }
-
-      /* Global dark inputs (helps Firefox render select in dark mode) */
-      .dg select,
-      .dg input[type="text"],
-      .dg input[type="number"],
-      .dg input[type="checkbox"] {
-        background: #161921;
-        color: #e6e9f0;
-        border: 1px solid #3a3f4d;
-        -moz-appearance: none;
-      }
-      .dg select:focus,
-      .dg input[type="text"]:focus,
-      .dg input[type="number"]:focus,
-      .dg input[type="checkbox"]:focus {
-        outline: 1px solid #6ea8ff;
-        border-color: #6ea8ff;
-        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
-      }
-      .dg .fv3-controls::-webkit-scrollbar {
-        width: 10px;
-      }
-      .dg .fv3-controls::-webkit-scrollbar-track {
-        background: #0f1219;
-      }
-      .dg .fv3-controls::-webkit-scrollbar-thumb {
-        background: #2f3545;
-        border-radius: 8px;
-      }
-      .dg .fv3-controls::-webkit-scrollbar-thumb:hover {
-        background: #3c4458;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar {
-        width: 10px;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar-track {
-        background: #0f1219;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar-thumb {
-        background: #2f3545;
-        border-radius: 8px;
-      }
-      .dg .fv3-controls ul::-webkit-scrollbar-thumb:hover {
-        background: #3c4458;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar {
-        width: 10px;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-track {
-        background: #0f1219;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb {
-        background: #2f3545;
-        border-radius: 8px;
-      }
-      .dg .fv3-controls .fv3-scroll::-webkit-scrollbar-thumb:hover {
-        background: #3c4458;
-      }
-
-      /* Dark mode form controls for the top rows */
-      .dg .fv3-controls select,
-      .dg .fv3-controls input[type="text"],
-      .dg .fv3-controls input[type="number"],
-      .dg .fv3-controls input[type="checkbox"] {
-        background: #161921;
-        color: #e6e9f0;
-        border: 1px solid #3a3f4d;
-      }
-      .dg .fv3-controls select:focus,
-      .dg .fv3-controls input[type="text"]:focus,
-      .dg .fv3-controls input[type="number"]:focus,
-      .dg .fv3-controls input[type="checkbox"]:focus {
-        outline: 1px solid #6ea8ff;
-        border-color: #6ea8ff;
-        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.25);
-      }
-      .dg .fv3-controls ul.closed li:not(.title) { display: none; }
-      .dg .fv3-controls .cr.number { padding: 4px 4px 6px; }
-      .dg .fv3-controls .cr.number .property-name { width: 40%; text-align: left; font-weight: 600; }
-      .dg .fv3-controls .cr.number .c {
-        width: 60%;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .dg .fv3-controls .cr.number .c .slider,
-      .dg .fv3-controls .cr.number .c input[type="text"] {
-        float: none !important;
-        box-sizing: border-box;
-      }
-      .dg .fv3-controls .cr.number .c .slider {
-        order: 1;
-        flex: 1 1 auto;
-        min-width: 140px;
-        height: 16px;
-        position: relative;
-        overflow: hidden;
-      }
-      .dg .fv3-controls .cr.number .c input[type="text"] {
-        order: 2;
-        flex: 0 0 60px;
-        min-width: 60px;
-        max-width: 60px;
-        width: 60px !important;
-        padding: 2px 4px;
-        border: 1px solid #444;
-        opacity: 1;
-        text-align: right;
-      }
-      .dg .fv3-controls .slider-fg { position: relative; height: 100%; }
-
-      .dg .fv3-controls .cr.fv3-preset-line {
-        display: flex;
-        align-items: center;
-        padding: 4px 4px 6px;
-        border-top: 1px solid #2b2f3a;
-        border-bottom: 1px solid #2b2f3a;
-        box-sizing: border-box;
-      }
-      .dg .fv3-controls .cr.fv3-load-row {
-        display: flex;
-        align-items: center;
-        padding: 4px 4px 6px;
-        border-top: 1px solid #2b2f3a;
-        border-bottom: 1px solid #2b2f3a;
-        box-sizing: border-box;
-      }
-      .dg .fv3-controls .cr.fv3-load-row .property-name {
-        width: 40%;
-        font-weight: 600;
-        text-transform: none;
-        padding-right: 6px;
-      }
-      .dg .fv3-controls .cr.fv3-load-row .c {
-        width: 60%;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .dg .fv3-controls .cr.fv3-load-row select {
-        flex: 1 1 auto;
-        min-width: 140px;
-        background: #161921;
-        color: #e6e9f0;
-        border: 1px solid #444;
-        border-radius: 4px;
-        padding: 4px 6px;
-        height: 26px;
-        font-size: 12px;
-      }
-      .dg .fv3-controls .cr.fv3-load-row button {
-        height: 26px;
-        width: 36px;
-        min-width: 36px;
-        background: #1f2531;
-        color: #e6e9f0;
-        border: 1px solid #444;
-        border-radius: 4px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
-      }
-      .dg .fv3-controls .cr.fv3-load-row button:hover {
-        border-color: #6ea8ff;
-        color: #fff;
-        background: rgba(110, 168, 255, 0.08);
-      }
-      .dg .fv3-controls .cr.fv3-preset-line .property-name {
-        width: 40%;
-        font-weight: 600;
-        text-transform: none;
-        padding-right: 6px;
-      }
-      .dg .fv3-controls .cr.fv3-preset-line .c {
-        width: 60%;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .dg .fv3-controls .cr.fv3-preset-line select {
-        flex: 1 1 auto;
-        min-width: 120px;
-        background: #161921;
-        color: #e6e9f0;
-        border: 1px solid #444;
-        padding: 4px 6px;
-        height: 26px;
-        font-size: 12px;
-      }
-      .dg .fv3-controls .cr.fv3-preset-line button {
-        height: 26px;
-        width: 32px;
-        min-width: 32px;
-        background: transparent;
-        color: #e6e9f0;
-        border: 1px solid #444;
-        border-radius: 4px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
-      }
-      .dg .fv3-controls .cr.fv3-preset-line button:hover {
-        border-color: #6ea8ff;
-        color: #fff;
-        background: rgba(110, 168, 255, 0.08);
-      }
-      .dg .fv3-controls .cr.fv3-preset-line .fv3-icon {
-        font-family: 'Material Symbols Rounded';
-        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        font-size: 18px;
-        line-height: 1;
-        display: inline-block;
-      }
-
-      /* Edit Presets row */
-      .dg .fv3-controls .cr.fv3-edit-row {
-        display: flex;
-        align-items: center;
-        padding: 6px 8px;
-        box-sizing: border-box;
-      }
-      .dg .fv3-controls .cr.fv3-edit-row .property-name {
-        width: 40%;
-        font-weight: 600;
-        text-transform: none;
-        padding-right: 6px;
-      }
-      .dg .fv3-controls .cr.fv3-edit-row .c {
-        width: 60%;
-      }
-      .dg .fv3-controls .cr.fv3-edit-row button {
-        width: 100%;
-        height: 28px;
-        border-radius: 4px;
-        border: 1px solid #444;
-        background: linear-gradient(90deg, #1f2531, #1b212c);
-        color: #e6e9f0;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-        cursor: pointer;
-        transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
-      }
-      .dg .fv3-controls .cr.fv3-edit-row button:hover {
-        border-color: #6ea8ff;
-        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
-        background: linear-gradient(90deg, #263043, #1e2535);
-      }
-      /* Edit Presets trigger row */
-      .dg .fv3-controls .cr.fv3-edit-row {
-        padding: 6px 8px;
-        box-sizing: border-box;
-      }
-      .dg .fv3-controls .cr.fv3-edit-row button {
-        width: 100%;
-        height: 28px;
-        border-radius: 4px;
-        border: 1px solid #444;
-        background: linear-gradient(90deg, #1f2531, #1b212c);
-        color: #e6e9f0;
-        font-weight: 600;
-        letter-spacing: 0.01em;
-        cursor: pointer;
-        transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
-      }
-      .dg .fv3-controls .cr.fv3-edit-row button:hover {
-        border-color: #6ea8ff;
-        box-shadow: 0 0 0 1px rgba(110, 168, 255, 0.35);
-        background: linear-gradient(90deg, #263043, #1e2535);
-      }
-
-      /* Preset overlay */
-      .fv3-overlay {
-        position: absolute;
-        inset: 0;
-        background: rgba(8, 10, 16, 0.94);
-        display: none;
-        align-items: flex-start;
-        justify-content: center;
-        z-index: 50;
-        padding: 16px;
-        box-sizing: border-box;
-      }
-      .fv3-overlay .fv3-modal {
-        width: 100%;
-        max-width: 460px;
-        background: #0f1219;
-        border: 1px solid #2b2f3a;
-        border-radius: 10px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-        color: #e6e9f0;
-        font-family: 'Inter', system-ui, -apple-system, sans-serif;
-        padding: 10px 10px 8px;
-        box-sizing: border-box;
-        overflow: auto;
-        max-height: 86vh;
-        position: relative;
-      }
-      .dg .fv3-controls.blur-active > :not(.fv3-overlay) {
-        filter: blur(3px);
-        pointer-events: none;
-      }
-      .fv3-overlay header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 8px;
-      }
-      .fv3-overlay h3 {
-        margin: 0;
-        font-size: 17px;
-        letter-spacing: 0.01em;
-      }
-      .fv3-overlay .close-btn {
-        background: transparent;
-        border: 1px solid #3a3f4d;
-        border-radius: 999px;
-        color: #e6e9f0;
-        width: 30px;
-        height: 30px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        cursor: pointer;
-        transition: border-color 120ms ease, background 120ms ease;
-      }
-      .fv3-overlay .close-btn:hover {
-        border-color: #6ea8ff;
-        background: rgba(110, 168, 255, 0.08);
-      }
-      .fv3-overlay .row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 0;
-        border-top: 1px solid #1c202a;
-      }
-      .fv3-overlay .row:first-of-type {
-        border-top: none;
-      }
-      .fv3-overlay .label {
-        width: 40%;
-        font-weight: 600;
-        font-size: 12px;
-      }
-      .fv3-overlay .field {
-        width: 60%;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .fv3-overlay input[type="text"],
-      .fv3-overlay select {
-        flex: 1 1 auto;
-        min-width: 140px;
-        background: #11141c;
-        border: 1px solid #3a3f4d;
-        color: #e6e9f0;
-        padding: 6px 8px;
-        font-size: 12px;
-        border-radius: 4px;
-      }
-      .fv3-overlay .actions {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .fv3-overlay .icon-btn {
-        height: 30px;
-        width: 34px;
-        min-width: 34px;
-        background: transparent;
-        color: #e6e9f0;
-        border: 1px solid #3a3f4d;
-        border-radius: 4px;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-        transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
-      }
-      .fv3-overlay .icon-btn:hover {
-        border-color: #6ea8ff;
-        color: #fff;
-        background: rgba(110, 168, 255, 0.08);
-      }
-      .fv3-overlay .fv3-icon {
-        font-family: 'Material Symbols Rounded';
-        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-        font-size: 20px;
-        line-height: 1;
-        display: inline-block;
-      }
-      .fv3-overlay .fv3-confirm {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: rgba(8, 10, 16, 0.78);
-        z-index: 5;
-      }
-      .fv3-overlay .fv3-confirm .fv3-confirm-card {
-        min-width: 260px;
-        max-width: 360px;
-        padding: 14px 14px 12px;
-        border: 1px solid #3a3f4d;
-        border-radius: 10px;
-        background: #0f1219;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-      .fv3-overlay .fv3-confirm .msg {
-        font-size: 14px;
-        color: #e6e9f0;
-        line-height: 1.4;
-        text-align: center;
-      }
-      .fv3-overlay .fv3-confirm .actions {
-        display: flex;
-        justify-content: center;
-        gap: 10px;
-      }
-      .fv3-overlay .fv3-confirm button {
-        height: 30px;
-        min-width: 86px;
-        padding: 0 12px;
-        border-radius: 8px;
-        border: 1px solid #444;
-        background: #1f2531;
-        color: #e6e9f0;
-        cursor: pointer;
-        transition: border-color 120ms ease, background 120ms ease;
-      }
-      .fv3-overlay .fv3-confirm button:hover {
-        border-color: #6ea8ff;
-        background: rgba(110, 168, 255, 0.1);
-      }
-    `
-    document.head.appendChild(style)
+  setupGuiCloseButton() {
+    if (!App.gui?.domElement) return
+    
+    const guiRoot = App.gui.domElement
+    const titleButton = guiRoot.querySelector('.lil-title')
+    if (!titleButton) return
+    
+    // Disable the button to prevent collapsing
+    titleButton.disabled = true
+    titleButton.style.cursor = 'default'
+    titleButton.style.pointerEvents = 'none'
+    
+    // Prevent any click events from reaching the button
+    titleButton.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+      return false
+    }, true)
+    
+    // Create small square 'x' button next to title
+    const titleCloseBtn = document.createElement('button')
+    titleCloseBtn.className = 'gui-title-close-btn'
+    titleCloseBtn.innerHTML = 'X'
+    titleCloseBtn.title = 'Close controls'
+    // Insert the button right after the title button
+    titleButton.parentNode.insertBefore(titleCloseBtn, titleButton.nextSibling)
+    
+    // Add click handler to hide all child folders
+    titleCloseBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      e.preventDefault()
+      const childrenContainer = guiRoot.querySelector('.lil-children')
+      if (childrenContainer) {
+        const isHidden = childrenContainer.style.display === 'none'
+        childrenContainer.style.display = isHidden ? '' : 'none'
+        titleCloseBtn.innerHTML = isHidden ? 'X' : 'O'
+        guiRoot.classList.toggle('gui-collapsed', !isHidden)
+      }
+    })
+    
+    // When collapsed, clicking anywhere in the GUI should toggle it open
+    guiRoot.addEventListener('click', (e) => {
+      const childrenContainer = guiRoot.querySelector('.lil-children')
+      if (childrenContainer && childrenContainer.style.display === 'none') {
+        // We're collapsed, so expand
+        childrenContainer.style.display = ''
+        titleCloseBtn.innerHTML = 'X'
+        guiRoot.classList.remove('gui-collapsed')
+      }
+    })
+    
+    // Get the title container
+    const titleElement = guiRoot.querySelector('.title')
+    if (!titleElement) return
+    
+    // Create close button
+    const closeBtn = document.createElement('button')
+    closeBtn.className = 'gui-close-btn'
+    closeBtn.innerHTML = '×'
+    closeBtn.title = 'Hide controls'
+    closeBtn.style.pointerEvents = 'auto'
+    titleElement.appendChild(closeBtn)
+    
+    // Create show button (80x80px hot zone at top right)
+    const showBtn = document.createElement('button')
+    showBtn.className = 'gui-show-btn'
+    showBtn.title = 'Show controls'
+    showBtn.style.display = 'none'
+    document.body.appendChild(showBtn)
+    
+    // Close button handler
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      guiRoot.style.display = 'none'
+      showBtn.style.display = 'block'
+    })
+    
+    // Show button handler
+    showBtn.addEventListener('click', () => {
+      guiRoot.style.display = 'block'
+      showBtn.style.display = 'none'
+    })
   }
 
   teardownFrequencyViz3Controls() {
     if (!this.variant3Folder) return
     const folder = this.variant3Folder
-    const parent = folder.domElement?.parentElement
-    if (parent && folder.domElement) {
-      parent.removeChild(folder.domElement)
-    }
-    if (App.gui?.__folders && folder.name && App.gui.__folders[folder.name]) {
-      delete App.gui.__folders[folder.name]
-    }
-    if (typeof App.gui?.onResize === 'function') {
-      App.gui.onResize()
+    try {
+      folder.destroy()
+    } catch {
+      // fallback: manual DOM removal
+      const parent = folder.domElement?.parentElement
+      if (parent && folder.domElement) {
+        parent.removeChild(folder.domElement)
+      }
     }
     this.variant3Folder = null
     this.variant3Controllers = {}
@@ -1422,26 +2764,41 @@ export default class App {
     this.variant3Overlay = null
   }
 
+  setupShaderControls(visualizer) {
+    this.teardownShaderControls()
+    if (!visualizer?.shaderConfig || !App.gui) return
+
+    // Use the generic createShaderControls from shaderCustomization.js
+    this.shaderControlsFolder = createShaderControls(App.gui, visualizer, visualizer.shaderConfig)
+  }
+
+  teardownShaderControls() {
+    if (!this.shaderControlsFolder) return
+    const folder = this.shaderControlsFolder
+    try {
+      folder.destroy()
+    } catch {
+      // fallback: manual DOM removal
+      const parent = folder.domElement?.parentElement
+      if (parent && folder.domElement) {
+        parent.removeChild(folder.domElement)
+      }
+    }
+    this.shaderControlsFolder = null
+  }
+
   setupFrequencyViz3Controls(visualizer) {
     this.teardownFrequencyViz3Controls()
     if (!visualizer || typeof visualizer.getControlParams !== 'function' || typeof visualizer.setControlParams !== 'function' || !App.gui) return
 
-    this.ensureVariant3GuiStyles()
-
     this.variant3Config = { ...visualizer.getControlParams() }
     this.variant3PresetApplied = false
-    const folderName = 'Frequency Viz 3 Controls'
+    const folderName = 'FREQUENCY VIZ 3 CONTROLS'
     const folder = App.gui.addFolder(folderName)
     folder.open()
 
     folder.domElement.classList.add('fv3-controls')
     folder.domElement.style.position = 'relative'
-    folder.domElement.style.overflowY = 'auto'
-    folder.domElement.style.overflowX = 'hidden'
-    folder.domElement.style.maxHeight = '70vh'
-    folder.domElement.style.height = 'auto'
-    const parent = folder.domElement?.parentElement
-    if (parent) parent.classList.add('fv3-controls')
 
     if (this.variant3FolderObserver) {
       this.variant3FolderObserver.disconnect()
@@ -1451,12 +2808,6 @@ export default class App {
       this.variant3FolderObserver = new MutationObserver(() => {
         if (folder.domElement.classList.contains('closed')) {
           if (this.variant3Overlay) this.variant3Overlay.style.display = 'none'
-          folder.domElement.style.overflow = 'hidden'
-        } else {
-          folder.domElement.style.overflowY = 'auto'
-          folder.domElement.style.overflowX = 'hidden'
-          folder.domElement.style.maxHeight = '70vh'
-          folder.domElement.style.height = 'auto'
         }
       })
       this.variant3FolderObserver.observe(folder.domElement, { attributes: true, attributeFilter: ['class'] })
@@ -1508,9 +2859,10 @@ export default class App {
     }
 
     const updateSliderValueLabel = (controller, value) => {
-      const slider = controller?.__slider
-      const input = controller?.__input
-      const display = formatValue(value, controller.__impliedStep || controller.__step || 0.01)
+      // lil-gui: access DOM elements via $widget queries instead of dat.GUI internals
+      const input = controller?.domElement?.querySelector('input')
+      const step = controller?._step || controller?._stepExplicit || 0.01
+      const display = formatValue(value, step)
       if (input) input.value = display
       if (controller?.updateDisplay) controller.updateDisplay()
     }
@@ -1533,30 +2885,26 @@ export default class App {
     const relaxGuiHeights = () => {
       const root = App.gui?.domElement
       if (!root) return
-      const elems = [root, root.querySelector('ul'), ...root.querySelectorAll('ul')]
-      elems.forEach((el) => {
-        if (!el) return
-        const isFv3 = el.classList?.contains('fv3-controls') || el.closest?.('.fv3-controls')
-        if (isFv3) {
-          el.style.maxHeight = '70vh'
-          el.style.height = 'auto'
-          el.style.overflowY = 'auto'
-          el.style.overflowX = 'hidden'
-        } else {
-          el.style.maxHeight = 'none'
-          el.style.height = 'auto'
-          el.style.overflow = 'visible'
-        }
-      })
+      // Ensure the root children container doesn't scroll
+      const rootChildren = root.querySelector(':scope > .lil-children')
+      if (rootChildren) {
+        rootChildren.style.overflow = 'visible'
+      }
+      // The FV3 folder itself should not scroll; only .fv3-scroll inside it does
+      const fv3El = root.querySelector('.fv3-controls')
+      if (fv3El) {
+        const fv3Children = fv3El.querySelector(':scope > .lil-children')
+        if (fv3Children) fv3Children.style.overflow = 'visible'
+      }
     }
 
     let isSyncingPreset = false
 
     const syncLoadDropdowns = (value) => {
-      if (this.variant3LoadSelect) this.variant3LoadSelect.value = value || ''
-      const selectEl = this.variant3LoadController?.__select
-      if (selectEl) selectEl.value = value || ''
-      if (this.variant3LoadController?.updateDisplay) this.variant3LoadController.updateDisplay()
+      const ctrl = this.variant3LoadController
+      if (!ctrl) return
+      this.variant3PresetState.loadPreset = value || ''
+      ctrl.updateDisplay()
     }
 
     const onPresetSelect = (value) => {
@@ -1580,50 +2928,39 @@ export default class App {
       const currentPreset = this.variant3PresetState?.loadPreset || ''
       const preferred = currentPreset || this.getStoredFV3PresetName() || ''
 
-      const updateSelect = (select) => {
-        if (!select) return
-        select.innerHTML = ''
-        const placeholder = document.createElement('option')
-        placeholder.value = ''
-        placeholder.textContent = names.length ? 'Select…' : 'No presets'
-        select.appendChild(placeholder)
-        names.forEach((name) => {
-          const opt = document.createElement('option')
-          opt.value = name
-          opt.textContent = name
-          select.appendChild(opt)
-        })
-        if (names.includes(this.variant3PresetState?.loadPreset)) {
-          select.value = this.variant3PresetState.loadPreset
-        } else {
-          select.value = ''
-        }
-      }
-
       const updateLoadController = () => {
         const ctrl = this.variant3LoadController
-        const select = ctrl?.__select
-        if (!ctrl || !select) return
-        select.innerHTML = ''
-        const placeholder = document.createElement('option')
-        placeholder.value = ''
-        placeholder.textContent = names.length ? 'Select…' : 'No presets'
-        select.appendChild(placeholder)
-        names.forEach((name) => {
-          const opt = document.createElement('option')
-          opt.value = name
-          opt.textContent = name
-          select.appendChild(opt)
-        })
-        if (names.includes(this.variant3PresetState?.loadPreset)) {
-          select.value = this.variant3PresetState.loadPreset
-        } else {
-          select.value = ''
+        if (!ctrl) return
+
+        // Build an options map: { displayName: value, ... }
+        const optionsMap = {}
+        names.forEach((name) => { optionsMap[name] = name })
+
+        // Use lil-gui's .options() API so internal _values stays in sync
+        ctrl.options(optionsMap)
+
+        // Set the current value - use preferred if current isn't available yet
+        if (!names.includes(this.variant3PresetState?.loadPreset)) {
+          this.variant3PresetState.loadPreset = names.includes(preferred) ? preferred : (names[0] || '')
         }
-        if (ctrl.updateDisplay) ctrl.updateDisplay()
+        ctrl.updateDisplay()
+
+        // Re-inject Edit button (options() rebuilds the select, removing our button)
+        const widget = ctrl.domElement.querySelector('.lil-widget')
+        if (widget && !widget.querySelector('.fv3-edit-btn')) {
+          const editBtn = document.createElement('button')
+          editBtn.type = 'button'
+          editBtn.textContent = 'Edit'
+          editBtn.className = 'fv3-edit-btn'
+          editBtn.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            openOverlay()
+          })
+          widget.appendChild(editBtn)
+        }
       }
 
-      updateSelect(this.variant3LoadSelect)
       updateLoadController()
 
       if (!names.includes(this.variant3PresetState?.loadPreset)) {
@@ -1644,6 +2981,8 @@ export default class App {
       this.fv3FilePresetsLoaded = true
       loadSpectrumFilters().then((loaded) => {
         this.fv3FilePresets = loaded || {}
+        // Reset flag so stored preset can be applied after file presets load
+        this.variant3PresetApplied = false
         refreshLoadOptions()
       }).catch((err) => {
         console.warn('Failed to load spectrum filters', err)
@@ -1947,7 +3286,7 @@ export default class App {
       if (this.variant3ScrollContainer && this.variant3ScrollContainer.isConnected) {
         return this.variant3ScrollContainer
       }
-      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
+      const listEl = folder.$children || folder.domElement?.querySelector('ul') || folder.domElement
       if (!listEl) return null
       const scroller = document.createElement('div')
       scroller.className = 'fv3-scroll'
@@ -1957,7 +3296,7 @@ export default class App {
     }
 
     const moveToScroller = (ctrl) => {
-      const li = ctrl?.__li
+      const li = ctrl?.domElement
       const scroller = ensureScrollContainer()
       if (li && scroller && li.parentElement !== scroller) {
         scroller.appendChild(li)
@@ -1998,46 +3337,37 @@ export default class App {
       return ctrl
     }
 
-    // Load preset dropdown (moved from overlay)
+    // Load preset dropdown using standard lil-gui controls
     const addLoadRow = () => {
-      const li = document.createElement('li')
-      li.className = 'cr fv3-load-row'
-      const label = document.createElement('span')
-      label.className = 'property-name'
-      label.textContent = 'Load preset'
-
-      const c = document.createElement('div')
-      c.className = 'c'
-
-      const select = document.createElement('select')
-      select.addEventListener('change', (e) => {
+      // Create dropdown controller for preset selection
+      const presetOptions = {}
+      const ctrl = folder.add(this.variant3PresetState, 'loadPreset', presetOptions).name('Load preset')
+      ctrl.onChange((value) => {
         if (isSyncingPreset) return
-        onPresetSelect(e.target.value)
+        onPresetSelect(value)
       })
-      this.variant3LoadSelect = select
-
-      const editBtn = document.createElement('button')
-      editBtn.type = 'button'
-      editBtn.title = 'Edit presets'
-      editBtn.textContent = 'Edit'
-      editBtn.addEventListener('click', () => openOverlay())
-
-      c.appendChild(select)
-      c.appendChild(editBtn)
-
-      li.appendChild(label)
-      li.appendChild(c)
-
-      const listEl = folder.__ul || folder.domElement?.querySelector('ul') || folder.domElement
-      const titleLi = listEl?.querySelector('li.title')
-      if (titleLi?.parentElement === listEl) {
-        titleLi.insertAdjacentElement('afterend', li)
-      } else if (listEl) {
-        listEl.insertBefore(li, listEl.firstChild)
+      this.variant3LoadController = ctrl
+      
+      // Inject Edit button into the controller's widget area
+      const widget = ctrl.domElement.querySelector('.lil-widget')
+      if (widget) {
+        const editBtn = document.createElement('button')
+        editBtn.type = 'button'
+        editBtn.textContent = 'Edit'
+        editBtn.className = 'fv3-edit-btn'
+        editBtn.addEventListener('click', (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          openOverlay()
+        })
+        widget.appendChild(editBtn)
       }
-
+      
+      // Mark the preset dropdown controller
+      ctrl.domElement.classList.add('fv3-load-preset')
+      
       refreshLoadOptions()
-      return li
+      return ctrl
     }
 
     addLoadRow()
@@ -2111,7 +3441,7 @@ export default class App {
   }
   
   addVisualizerSwitcher() {
-    const visualizerFolder = App.gui.addFolder('VISUALIZER TYPE')
+    const visualizerFolder = App.gui.addFolder('TYPE')
     visualizerFolder.open()
     
     this.visualizerSwitcherConfig = {
@@ -2125,5 +3455,88 @@ export default class App {
       .onChange((value) => {
         this.switchVisualizer(value)
       })
+
+    // Size the GUI to fit the longest option label (no truncation).
+    requestAnimationFrame(() => this._updateGuiWidthToFitVisualizerSelect())
+  }
+
+  addPerformanceQualityControls() {
+    if (!App.gui) return
+    if (this.performanceQualityFolder) return
+
+    const folder = App.gui.addFolder('PERFORMANCE + QUALITY')
+    folder.open()
+    this.performanceQualityFolder = folder
+
+    // lil-gui builds a dropdown from an object map. Integer-like keys ("1", "2")
+    // are enumerated first by JS engines, which breaks ordering. Use labels that
+    // render identically but are not integer-like keys.
+    const prOptions = {
+      '0.25': 0.25,
+      '0.5': 0.5,
+      '1 ': 1,
+      '2 ': 2,
+    }
+    const initialPr = this.renderer?.getPixelRatio?.() || 1
+    const initialAa = this._getContextAntialias()
+
+    this.performanceQualityConfig = {
+      antialias: typeof initialAa === 'boolean' ? initialAa : !!this.debugAntialias,
+      pixelRatio: this._snapPixelRatio(initialPr, { min: 0.25, max: 2 }),
+      saveAsDefaults: () => {
+        const aa = this._getContextAntialias()
+        const pr = this.renderer?.getPixelRatio?.() || 1
+        const saved = {
+          antialias: !!aa,
+          pixelRatio: this._snapPixelRatio(pr, { min: 0.25, max: 2 }),
+        }
+        this.saveGlobalQualityDefaults(saved)
+
+        // Update the baseline state in-session (only when not locked by URL overrides).
+        if (this._baseQualityState) {
+          if (!this._baseQualityState.antialiasOverridden) this._baseQualityState.debugAntialias = saved.antialias
+          if (!this._baseQualityState.pixelRatioOverridden) this._baseQualityState.debugPixelRatio = saved.pixelRatio
+        }
+      },
+      clearUserValues: () => {
+        const type = App.visualizerType
+        this._clearPerVisualizerQualityOverrides(type)
+        // Re-apply effective quality (URL > user overrides > per-visualizer auto > global defaults).
+        this._applyPerVisualizerQualityOverrides(type)
+        this._syncPerformanceQualityControls(type)
+      }
+    }
+
+    this.performanceQualityControllers.antialias = folder
+      .add(this.performanceQualityConfig, 'antialias')
+      .name('Antialiasing')
+      .onChange((value) => {
+        if (this._syncingPerformanceQualityGui) return
+        const type = App.visualizerType
+        this._writePerVisualizerQualityOverride(type, { antialias: !!value })
+        this._applyPerVisualizerQualityOverrides(type)
+      })
+
+    this.performanceQualityControllers.pixelRatio = folder
+      .add(this.performanceQualityConfig, 'pixelRatio', prOptions)
+      .name('PixelRatio')
+      .onChange((value) => {
+        if (this._syncingPerformanceQualityGui) return
+        const type = App.visualizerType
+        const pr = typeof value === 'string' ? Number.parseFloat(value) : value
+        this._writePerVisualizerQualityOverride(type, { pixelRatio: pr })
+        this._applyPerVisualizerQualityOverrides(type)
+      })
+
+    this.performanceQualityControllers.defaults = folder
+      .add(this.performanceQualityConfig, 'saveAsDefaults')
+      .name('Save As Global PQ Defaults')
+
+    folder
+      .add(this.performanceQualityConfig, 'clearUserValues')
+      .name('Clear Stored Local PQ Values')
+
+    // Initialize displayed values from storage/effective state.
+    this._syncPerformanceQualityControls(App.visualizerType)
   }
 }

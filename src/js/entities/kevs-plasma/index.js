@@ -1,5 +1,5 @@
 import KevsPlasma from './KevsPlasma'
 
-export const meta = { name: 'Kevs Plasma', order: 26 }
+export const meta = { name: 'Kevs Plasma' }
 
 export default KevsPlasma

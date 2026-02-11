@@ -1255,7 +1255,10 @@ function ensureMainWrapper(source, opts = {}) {
   // makes the result fully transparent (appearing black) on our canvas.
   const alphaFixLine = forceOpaqueOutput ? '  fragColor.a = 1.0;\n' : ''
 
-  return `${source}\n\nvoid main() {\n  vec4 fragColor = vec4(0.0);\n  mainImage(fragColor, gl_FragCoord.xy);\n${alphaFixLine}  gl_FragColor = fragColor;\n}\n`
+  // Shadertoy semantics: fragCoord is in pixels of the *current render target*.
+  // Keeping this accurate avoids breaking shaders that do pixel addressing and
+  // feedback (e.g., writing state into specific pixel locations).
+  return `${source}\n\nvoid main() {\n  vec4 fragColor = vec4(0.0);\n  vec2 fragCoord = gl_FragCoord.xy;\n  mainImage(fragColor, fragCoord);\n${alphaFixLine}  gl_FragColor = fragColor;\n}\n`
 }
 
 function buildFragmentSource(common, passCode, opts = {}) {
@@ -1322,6 +1325,7 @@ function buildFragmentSource(common, passCode, opts = {}) {
 
   // Shadertoy uniforms (only if not already declared)
   if (!/\buniform\s+vec3\s+iResolution\b/.test(body)) prelude.push('uniform vec3 iResolution;')
+  if (!/\buniform\s+float\s+uPixelRatio\b/.test(body)) prelude.push('uniform float uPixelRatio;')
   if (!/\buniform\s+float\s+iTime\b/.test(body)) prelude.push('uniform float iTime;')
   if (!/\buniform\s+float\s+iTimeDelta\b/.test(body)) prelude.push('uniform float iTimeDelta;')
   if (!/\buniform\s+float\s+iFrameRate\b/.test(body)) prelude.push('uniform float iFrameRate;')
@@ -1511,6 +1515,17 @@ function compileAndLinkProgram(gl, { vertexSource, fragmentSource }) {
     programLog: null,
   }
 
+  const isProgram = (p) => {
+    try {
+      if (!p) return false
+      if (typeof gl?.isProgram === 'function') return !!gl.isProgram(p)
+      // If isProgram is unavailable, assume the caller passed a program.
+      return true
+    } catch {
+      return false
+    }
+  }
+
   const compile = (type, source) => {
     const shader = gl.createShader(type)
     gl.shaderSource(shader, source)
@@ -1536,8 +1551,8 @@ function compileAndLinkProgram(gl, { vertexSource, fragmentSource }) {
   gl.attachShader(program, vs.shader)
   gl.attachShader(program, fs.shader)
   gl.linkProgram(program)
-  const linkOk = !!gl.getProgramParameter(program, gl.LINK_STATUS)
-  result.programLog = formatGlslLog(gl.getProgramInfoLog(program))
+  const linkOk = isProgram(program) ? !!gl.getProgramParameter(program, gl.LINK_STATUS) : false
+  result.programLog = isProgram(program) ? formatGlslLog(gl.getProgramInfoLog(program)) : null
   result.ok = linkOk
 
   gl.deleteProgram(program)
@@ -1580,13 +1595,14 @@ function resampleTo512(src, dst /* Uint8Array */) {
 }
 
 export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
-  constructor({ name, source, filePath } = {}) {
+  constructor({ name, source, filePath, shaderConfig } = {}) {
     super()
 
     this.name = name || `Shader: ${niceTitleFromFile(filePath || 'shader')}`
     this._debugName = filePath || this.name
 
     this._source = String(source || '')
+    this.shaderConfig = shaderConfig || null
 
     this._geo = null
     this._camera = null
@@ -1964,7 +1980,8 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
 
   _makeUniforms() {
     const now = performance.now()
-    const res = this._getResolutionVec3()
+    const res = this._getRenderResolutionVec3()
+    const pr = App.renderer?.getPixelRatio?.() || 1
 
     // iChannelResolution[4]
     const chRes = [
@@ -1974,8 +1991,9 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       new THREE.Vector3(res.x, res.y, 1),
     ]
 
-    return {
+    const uniforms = {
       iResolution: { value: res },
+      uPixelRatio: { value: pr },
       iTime: { value: 0 },
       iTimeDelta: { value: 0 },
       iFrameRate: { value: 0 },
@@ -1992,32 +2010,64 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       iChannelResolution: { value: chRes },
       iChannelTime: { value: [0, 0, 0, 0] },
     }
+
+    // Add custom uniforms from shader config
+    if (this.shaderConfig && this.shaderConfig.controls) {
+      for (const control of this.shaderConfig.controls) {
+        if (control.uniform && control.default !== undefined) {
+          let value = control.default
+          if (control.type === 'color' && Array.isArray(control.default)) {
+            value = new THREE.Vector3(...control.default)
+          }
+          uniforms[control.uniform] = { value }
+          console.log(`[_makeUniforms] Added custom uniform ${control.uniform} = ${value}`)
+        }
+      }
+    }
+
+    return uniforms
   }
 
+  _getLogicalResolutionVec3() {
+    return new THREE.Vector3(Math.max(1, window.innerWidth || 1), Math.max(1, window.innerHeight || 1), 1)
+  }
+
+  _getRenderResolutionVec3() {
+    const pr = App.renderer?.getPixelRatio?.() || 1
+    const w = Math.max(1, window.innerWidth || 1)
+    const h = Math.max(1, window.innerHeight || 1)
+    // Match renderer's internal rounding (drawingBuffer sizes are integers).
+    return new THREE.Vector3(Math.max(1, Math.floor(w * pr)), Math.max(1, Math.floor(h * pr)), 1)
+  }
+
+  // Backwards-compat: older code paths expect this name.
+  // Represents the actual render-target resolution (CSS px * pixelRatio).
   _getResolutionVec3() {
-    const dpr = App.renderer?.getPixelRatio?.() || Math.max(1, window.devicePixelRatio || 1)
-    return new THREE.Vector3(window.innerWidth * dpr, window.innerHeight * dpr, 1)
+    return this._getRenderResolutionVec3()
   }
 
   _resizeTargets() {
-    const res = this._getResolutionVec3()
+    const renderRes = this._getRenderResolutionVec3()
+    const pr = App.renderer?.getPixelRatio?.() || 1
 
     // Update all uniforms iResolution + iChannelResolution
     for (const p of this._passes) {
-      p.mat.uniforms.iResolution.value.copy(res)
+      if (p.mat.uniforms.iResolution) p.mat.uniforms.iResolution.value.copy(renderRes)
+      if (p.mat.uniforms.uPixelRatio) p.mat.uniforms.uPixelRatio.value = pr
       p.mat.uniforms.iChannelResolution.value[0].set(512, 2, 1)
-      p.mat.uniforms.iChannelResolution.value[1].set(res.x, res.y, 1)
-      p.mat.uniforms.iChannelResolution.value[2].set(res.x, res.y, 1)
-      p.mat.uniforms.iChannelResolution.value[3].set(res.x, res.y, 1)
+      p.mat.uniforms.iChannelResolution.value[1].set(renderRes.x, renderRes.y, 1)
+      p.mat.uniforms.iChannelResolution.value[2].set(renderRes.x, renderRes.y, 1)
+      p.mat.uniforms.iChannelResolution.value[3].set(renderRes.x, renderRes.y, 1)
 
       if (p.rts) {
-        p.rts[0].setSize(res.x, res.y)
-        p.rts[1].setSize(res.x, res.y)
+        p.rts[0].setSize(renderRes.x, renderRes.y)
+        p.rts[1].setSize(renderRes.x, renderRes.y)
       }
     }
 
     if (this._imageMat) {
-      this._imageMat.uniforms.iResolution.value.copy(res)
+      if (this._imageMat.uniforms.iResolution) this._imageMat.uniforms.iResolution.value.copy(renderRes)
+      if (this._imageMat.uniforms.uPixelRatio) this._imageMat.uniforms.uPixelRatio.value = pr
       // Channel 0 resolution depends on what we bind (audio/noise/cube)
       if (this._imageChannelTypes?.[0] === 'samplerCube') {
         const w = this._cubeTex?.image?.[0]?.width || 1
@@ -2028,10 +2078,16 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
       } else {
         this._imageMat.uniforms.iChannelResolution.value[0].set(512, 2, 1)
       }
-      this._imageMat.uniforms.iChannelResolution.value[1].set(res.x, res.y, 1)
-      this._imageMat.uniforms.iChannelResolution.value[2].set(res.x, res.y, 1)
-      this._imageMat.uniforms.iChannelResolution.value[3].set(res.x, res.y, 1)
+      this._imageMat.uniforms.iChannelResolution.value[1].set(renderRes.x, renderRes.y, 1)
+      this._imageMat.uniforms.iChannelResolution.value[2].set(renderRes.x, renderRes.y, 1)
+      this._imageMat.uniforms.iChannelResolution.value[3].set(renderRes.x, renderRes.y, 1)
     }
+  }
+
+  onPixelRatioChange() {
+    // Pixel ratio changes affect internal render target resolution.
+    // Keep this lightweight and avoid resetting animation state.
+    this._resizeTargets()
   }
 
   _updateAudioTexture() {
@@ -2160,6 +2216,35 @@ export default class ShadertoyMultipassVisualizer extends THREE.Object3D {
     if (this._imageMat) {
       this._applyCommonUniforms(this._imageMat, t, dt, audioTime)
       this._applyChannelUniformsForImage(this._imageMat)
+    }
+  }
+
+  /**
+   * Set a custom uniform value on all shader passes.
+   * Used for runtime shader customization via GUI controls.
+   * @param {string} uniformName - The name of the uniform to set
+   * @param {*} value - The value to set (number, Vector2, Vector3, etc.)
+   */
+  setUniform(uniformName, value) {
+    console.log(`[ShadertoyMultipassVisualizer] setUniform(${uniformName}, ${value})`)
+    let updated = 0
+    // Update all buffer pass materials
+    for (const pass of this._passes) {
+      if (pass.mat?.uniforms?.[uniformName]) {
+        pass.mat.uniforms[uniformName].value = value
+        updated++
+        console.log(`  Updated pass "${pass.name}" uniform ${uniformName} = ${value}`)
+      }
+    }
+    // Update image material if exists
+    if (this._imageMat?.uniforms?.[uniformName]) {
+      this._imageMat.uniforms[uniformName].value = value
+      updated++
+      console.log(`  Updated image material uniform ${uniformName} = ${value}`)
+    }
+    if (updated === 0) {
+      console.warn(`[ShadertoyMultipassVisualizer] Uniform "${uniformName}" not found in any materials!`)
+      console.log('  Available uniforms:', this._imageMat?.uniforms ? Object.keys(this._imageMat.uniforms) : 'none')
     }
   }
 

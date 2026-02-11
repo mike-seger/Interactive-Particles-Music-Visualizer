@@ -1,5 +1,5 @@
 import Fluid from './Fluid'
 
-export const meta = { name: 'Fluid', order: 17 }
+export const meta = { name: 'Fluid' }
 
 export default Fluid

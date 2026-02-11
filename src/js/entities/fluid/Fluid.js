@@ -13,7 +13,7 @@ export default class Fluid extends THREE.Object3D {
 
         // Create canvas for fluid simulation.
         // IMPORTANT: mount inside `.content` so it stays behind UI overlays
-        // like dat.GUI and `#player-controls`.
+        // like lil-gui and `#player-controls`.
         this.canvas = document.createElement('canvas');
         this.canvas.style.position = 'fixed';
         this.canvas.style.inset = '0';
@@ -379,13 +379,23 @@ export default class Fluid extends THREE.Object3D {
         this.gl.attachShader(program, vertexShader);
         this.gl.attachShader(program, fragmentShader);
         this.gl.linkProgram(program);
-        
-        if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
-            console.error(this.gl.getProgramInfoLog(program));
+
+        const isProgram = (() => {
+            try {
+                return typeof this.gl?.isProgram === 'function' ? this.gl.isProgram(program) : true;
+            } catch (e) {
+                return false;
+            }
+        })();
+
+        if (isProgram) {
+            if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+                console.error(this.gl.getProgramInfoLog(program));
+            }
         }
         
         const uniforms = {};
-        const uniformCount = this.gl.getProgramParameter(program, this.gl.ACTIVE_UNIFORMS);
+        const uniformCount = isProgram ? this.gl.getProgramParameter(program, this.gl.ACTIVE_UNIFORMS) : 0;
         for (let i = 0; i < uniformCount; i++) {
             const uniformName = this.gl.getActiveUniform(program, i).name;
             uniforms[uniformName] = this.gl.getUniformLocation(program, uniformName);

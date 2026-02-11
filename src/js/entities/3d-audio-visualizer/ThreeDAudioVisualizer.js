@@ -33,8 +33,6 @@ uniform vec3 iResolution;
 uniform float iTime;
 uniform sampler2D iChannel0;
 uniform float iChannelTime0;
-
-#define st(t1, t2, v1, v2) mix(v1, v2, smoothstep(t1, t2, iTime))
 #define light(d, att) 1. / (1. + pow(abs(d * att), 1.3))
 
 /* Audio-related functions */
@@ -46,7 +44,10 @@ float getLevel(float x) {
 float logX(float x, float a, float c) { return (1. / (exp(-a * (x - c)) + 1.)); }
 
 float logisticAmp(float amp) {
-  float c = st(0., 10., .8, 1.), a = 20.;
+  // Keep amplitude mapping stable over time.
+  // A previous version slowly increased c during the first seconds, which
+  // makes the scene fade darker as the threshold rises.
+  float c = 0.88, a = 20.;
   return (logX(amp, a, c) - logX(0.0, a, c)) / (logX(1.0, a, c) - logX(0.0, a, c));
 }
 
