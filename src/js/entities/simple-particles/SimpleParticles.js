@@ -8,17 +8,20 @@ export default class SimpleParticles extends THREE.Object3D {
 
     this.params = {
       particleCount: 3000,
-      cloudRadius: 31,
+      cubeSize: 40,
+      velocityScale: 0.1,
       size: 0.5,
-      orbitSpeed: 0.045,
     }
 
-    this._orbits = null
     this._positions = null
     this._colors = null
+    this._velocities = null
+
     this._geometry = null
     this._material = null
     this._points = null
+
+    this._lastNow = 0
   }
 
   init() {
@@ -27,46 +30,28 @@ export default class SimpleParticles extends THREE.Object3D {
   }
 
   _createParticles() {
-    const { particleCount, cloudRadius, size } = this.params
+    const { particleCount, cubeSize, velocityScale, size } = this.params
+
     const positions = new Float32Array(particleCount * 3)
     const colors = new Float32Array(particleCount * 3)
-    const orbits = new Float32Array(particleCount * 6)
+    const velocities = new Float32Array(particleCount * 3)
 
-    for (let i = 0; i < particleCount; i++) {
-      const minRadius = cloudRadius * 0.3
-      const radius = minRadius + Math.pow(Math.random(), 0.4) * (cloudRadius - minRadius)
-      const theta = Math.random() * Math.PI * 2
-      const phi = Math.acos(2 * Math.random() - 1)
-      const speedMul = 0.5 + Math.random() * 1.0
-      const radialPhase = Math.random() * Math.PI * 2  // random phase for radial oscillation
+    const half = cubeSize * 0.5
 
-      orbits[i * 6] = radius
-      orbits[i * 6 + 1] = theta
-      orbits[i * 6 + 2] = phi
-      orbits[i * 6 + 3] = speedMul
-      orbits[i * 6 + 4] = Math.cos(phi) * radius  // baseY
-      orbits[i * 6 + 5] = radialPhase
+    for (let i = 0; i < particleCount * 3; i += 3) {
+      positions[i] = (Math.random() - 0.5) * cubeSize
+      positions[i + 1] = (Math.random() - 0.5) * cubeSize
+      positions[i + 2] = (Math.random() - 0.5) * cubeSize
 
-      positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
-      positions[i * 3 + 1] = Math.cos(phi) * radius
-      positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
+      velocities[i] = (Math.random() - 0.5) * velocityScale
+      velocities[i + 1] = (Math.random() - 0.5) * velocityScale
+      velocities[i + 2] = (Math.random() - 0.5) * velocityScale
 
-      colors[i * 3] = 0.3
-      colors[i * 3 + 1] = 0.35
-      colors[i * 3 + 2] = 0.45
+      // Start dim; will be driven by audio.
+      colors[i] = 0
+      colors[i + 1] = 0
+      colors[i + 2] = 0
     }
-
-    const canvas = document.createElement('canvas')
-    canvas.width = 32
-    canvas.height = 32
-    const ctx = canvas.getContext('2d')
-    const gradient = ctx.createRadialGradient(16, 16, 0, 16, 16, 16)
-    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)')
-    gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.5)')
-    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
-    ctx.fillStyle = gradient
-    ctx.fillRect(0, 0, 32, 32)
-    const circleTexture = new THREE.CanvasTexture(canvas)
 
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -74,88 +59,114 @@ export default class SimpleParticles extends THREE.Object3D {
 
     const material = new THREE.PointsMaterial({
       size,
-      map: circleTexture,
       vertexColors: true,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      sizeAttenuation: true,
     })
 
     const points = new THREE.Points(geometry, material)
     points.frustumCulled = false
 
-    this._orbits = orbits
     this._positions = positions
     this._colors = colors
+    this._velocities = velocities
     this._geometry = geometry
     this._material = material
     this._points = points
 
     this.add(points)
+
+    // Keep points centered.
     points.position.set(0, 0, 0)
 
-    App.camera.position.set(0, 0, 28)
-    App.camera.lookAt(0, 0, 0)
+    // Small camera hint: many entities rely on App.camera default; no-op here.
+    // Ensure a stable time base.
+    this._lastNow = performance.now()
+
+    // Cache for bounds.
+    this._half = half
   }
 
   update(audioData) {
-    if (!this._geometry || !this._positions || !this._orbits) return
+    if (!this._geometry || !this._positions || !this._colors || !this._velocities) return
+
+    const now = performance.now()
+    const dtMs = this._lastNow ? (now - this._lastNow) : 16.67
+    this._lastNow = now
+    const dt = Math.min(50, Math.max(0, dtMs)) / 16.67
 
     const bass = audioData?.frequencies?.bass ?? App.audioManager?.frequencyData?.low ?? 0
     const mid = audioData?.frequencies?.mid ?? App.audioManager?.frequencyData?.mid ?? 0
     const treble = audioData?.frequencies?.high ?? App.audioManager?.frequencyData?.high ?? 0
 
-    const t = performance.now() * 0.001
-    const { orbitSpeed, particleCount, cloudRadius } = this.params
-    const orbits = this._orbits
+    // Similar to the tmp demo: combine bands into a single force.
+    const audioForce = bass * 2 + mid * 1.5 + treble
+    const t = now * 0.001
+
     const positions = this._positions
     const colors = this._colors
+    const velocities = this._velocities
+    const half = this._half || 20
 
-    const audioLift = (bass * 2.0 + mid * 1.0 + treble * 0.5) * 1.5
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] += (velocities[i] + Math.sin(t + i) * audioForce * 0.1) * dt
+      positions[i + 1] += (velocities[i + 1] + Math.cos(t + i) * audioForce * 0.1) * dt
+      positions[i + 2] += (velocities[i + 2] + audioForce * 0.1) * dt
 
-    for (let i = 0; i < particleCount; i++) {
-      const baseRadius = orbits[i * 6]
-      const baseAngle = orbits[i * 6 + 1]
-      const phi = orbits[i * 6 + 2]
-      const speedMul = orbits[i * 6 + 3]
-      const baseY = orbits[i * 6 + 4]
-      const radialPhase = orbits[i * 6 + 5]
+      // Soft wrap to keep the cloud bounded.
+      if (positions[i] > half) positions[i] = -half
+      else if (positions[i] < -half) positions[i] = half
 
-      const angle = baseAngle + t * orbitSpeed * speedMul
+      if (positions[i + 1] > half) positions[i + 1] = -half
+      else if (positions[i + 1] < -half) positions[i + 1] = half
 
-      // Radial oscillation: +/-20% of base radius, each particle has its own phase
-      const radius = baseRadius * (1.0 + 0.5 * Math.sin(t * 0.15 + radialPhase))
+      if (positions[i + 2] > half) positions[i + 2] = -half
+      else if (positions[i + 2] < -half) positions[i + 2] = half
 
-      // Orbit on a tilted plane based on phi — preserves spherical shape
-      const sinPhi = Math.sin(phi)
-      positions[i * 3] = Math.cos(angle) * sinPhi * radius
-      positions[i * 3 + 2] = Math.sin(angle) * sinPhi * radius
-
-      const radiusFraction = baseRadius / cloudRadius
-      positions[i * 3 + 1] = Math.cos(phi) * radius + audioLift * radiusFraction * Math.sin(angle * 2.0)
-
-      const brightness = 0.4 + (bass + mid + treble) * 0.5
-      colors[i * 3] = brightness * 0.51      // R - steelblue: 70/255
-      colors[i * 3 + 1] = brightness * 0.7  // G - steelblue: 130/255
-      colors[i * 3 + 2] = brightness * 1.0   // B - steelblue: 180/255
+      colors[i] = bass
+      colors[i + 1] = mid
+      colors[i + 2] = treble
     }
 
-    this._geometry.getAttribute('position').needsUpdate = true
-    this._geometry.getAttribute('color').needsUpdate = true
+    const posAttr = this._geometry.getAttribute('position')
+    const colAttr = this._geometry.getAttribute('color')
+    if (posAttr) posAttr.needsUpdate = true
+    if (colAttr) colAttr.needsUpdate = true
+
+    // Gentle rotation for depth.
+    this.rotation.y += (0.002 + treble * 0.01) * dt
+    this.rotation.x += (0.001 + mid * 0.008) * dt
   }
 
   destroy() {
     try {
       if (this._points && this._points.parent) this._points.parent.remove(this._points)
-    } catch { /* ignore */ }
-    try { this._geometry?.dispose?.() } catch { /* ignore */ }
-    try { this._material?.dispose?.() } catch { /* ignore */ }
-    try { if (this.parent) this.parent.remove(this) } catch { /* ignore */ }
+    } catch {
+      // ignore
+    }
 
-    this._orbits = null
+    try {
+      this._geometry?.dispose?.()
+    } catch {
+      // ignore
+    }
+
+    try {
+      this._material?.dispose?.()
+    } catch {
+      // ignore
+    }
+
+    try {
+      if (this.parent) this.parent.remove(this)
+    } catch {
+      // ignore
+    }
+
     this._positions = null
     this._colors = null
+    this._velocities = null
     this._geometry = null
     this._material = null
     this._points = null

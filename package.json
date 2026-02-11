@@ -14,7 +14,8 @@
     "dev": "vite",
     "prebuild": "node scripts/gen-spectrum-index.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint:glsl": "sh -c 'glslangValidator -S frag ${1:-src/shaders/gpt-5.1-codex-max/*.glsl}' --"
   },
   "devDependencies": {
     "glslify": "^7.1.1",

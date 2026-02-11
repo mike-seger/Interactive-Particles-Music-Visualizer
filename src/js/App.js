@@ -3507,14 +3507,6 @@ export default class App {
       }
     }
 
-    this.performanceQualityControllers.defaults = folder
-      .add(this.performanceQualityConfig, 'saveAsDefaults')
-      .name('Save As Global PQ Defaults')
-
-    folder
-      .add(this.performanceQualityConfig, 'clearUserValues')
-      .name('Clear Stored Local PQ Values')
-
     this.performanceQualityControllers.antialias = folder
       .add(this.performanceQualityConfig, 'antialias')
       .name('Antialiasing')
@@ -3535,6 +3527,14 @@ export default class App {
         this._writePerVisualizerQualityOverride(type, { pixelRatio: pr })
         this._applyPerVisualizerQualityOverrides(type)
       })
+
+    this.performanceQualityControllers.defaults = folder
+      .add(this.performanceQualityConfig, 'saveAsDefaults')
+      .name('Save As Global PQ Defaults')
+
+    folder
+      .add(this.performanceQualityConfig, 'clearUserValues')
+      .name('Clear Stored Local PQ Values')
 
     // Initialize displayed values from storage/effective state.
     this._syncPerformanceQualityControls(App.visualizerType)
