@@ -105,11 +105,10 @@ export default class ButterchurnVisualizer {
       const bridgeTime = window.__bridgeTimeArray // set by bridge-integration.js
       if (bridgeTime && bridgeTime.length) {
         // Butterchurn's AudioProcessor uses fftSize = 1024 (numSamps * 2).
-        // If bridgeTimeArray is larger we must trim to avoid a RangeError in
-        // Uint8Array.set() inside updateAudio().
-        const BC_FFT = 1024
-        const wave = bridgeTime.length > BC_FFT
-          ? bridgeTime.subarray(0, BC_FFT)
+        // Query it at runtime so we stay correct if butterchurn ever changes.
+        const bcFft = this._visualizer?.audio?.fftSize || 1024
+        const wave = bridgeTime.length > bcFft
+          ? bridgeTime.subarray(0, bcFft)
           : bridgeTime
 
         this._visualizer.render({
