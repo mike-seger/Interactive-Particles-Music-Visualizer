@@ -11,9 +11,19 @@ import App from '../App'
  *   Three.js renderer canvas and show ours; during destroy() we reverse that.
  *
  * Audio:
- *   We connect Butterchurn to App.audioManager.analyserNode.  Bridge mode
- *   patches AnalyserNode.prototype so the same node works transparently.
+ *   In standalone mode we connect Butterchurn to App.audioManager.analyserNode,
+ *   which feeds time-domain data through the normal Web Audio pipeline.
+ *
+ *   In bridge mode the real AnalyserNodes carry silence (neutered source), so
+ *   instead we read the bridge's frequency data and synthesise a waveform that
+ *   we pass directly to butterchurn via its render({ audioLevels }) API.  This
+ *   bypasses the Web Audio graph entirely.
  */
+
+// Detect bridge mode (URL params set by bridge-integration.js)
+const _urlParams = new URLSearchParams(window.location.search)
+const _isBridgeMode = _urlParams.get('autostart') === '1' || _urlParams.get('hideui') === '1'
+
 export default class ButterchurnVisualizer {
   /**
    * @param {Object} opts
@@ -87,6 +97,32 @@ export default class ButterchurnVisualizer {
 
   update() {
     if (!this._visualizer) return
+
+    if (_isBridgeMode) {
+      // In bridge mode the real Web Audio pipeline carries silence.
+      // Read the bridge's frequency data and synthesise a time-domain waveform
+      // that butterchurn can use for its FFT + audio-level calculations.
+      const bridgeTime = window.__bridgeTimeArray // set by bridge-integration.js
+      if (bridgeTime && bridgeTime.length) {
+        // Butterchurn's AudioProcessor uses fftSize = 1024 (numSamps * 2).
+        // If bridgeTimeArray is larger we must trim to avoid a RangeError in
+        // Uint8Array.set() inside updateAudio().
+        const BC_FFT = 1024
+        const wave = bridgeTime.length > BC_FFT
+          ? bridgeTime.subarray(0, BC_FFT)
+          : bridgeTime
+
+        this._visualizer.render({
+          audioLevels: {
+            timeByteArray: wave,
+            timeByteArrayL: wave,
+            timeByteArrayR: wave,
+          }
+        })
+        return
+      }
+    }
+
     this._visualizer.render()
   }
 

@@ -29,7 +29,76 @@
   
   // Store BPM audio buffer received from bridge
   window.__bridgeBPMBuffer = null;
-  
+
+  // --- Bridge time-domain waveform synthesis ---
+  // Declared at IIFE scope (not inside `if (bridgeMode)`) so the AUDIO_DATA
+  // handler can call refreshTimeDomainFromFreq / refreshTimeDomainFromPCM.
+  // Without this, strict-mode block-scoping makes the functions unreachable.
+  const bridgeTimeArray = new Uint8Array(2048);
+  let phaseLow = 0;
+  let phaseMid = 0;
+  let phaseHigh = 0;
+
+  const bandAvg = (src, start, count) => {
+    const len = src.length;
+    if (start >= len || count <= 0) return 0;
+    const end = Math.min(len, start + count);
+    let sum = 0;
+    for (let i = start; i < end; i++) sum += src[i];
+    const n = end - start;
+    return n ? (sum / n) : 0;
+  };
+
+  const scaleAmp = (v, minAmp, maxAmp) => {
+    const norm = Math.max(0, v - 12) / 243; // damp tiny noise, map to 0..1
+    return Math.min(maxAmp, Math.max(minAmp, minAmp + norm * (maxAmp - minAmp)));
+  };
+
+  function refreshTimeDomainFromFreq(srcArray) {
+    if (!srcArray || !srcArray.length) return;
+
+    const lowAvg = bandAvg(srcArray, 0, 96);          // ~0-375Hz depending on FFT size
+    const midAvg = bandAvg(srcArray, 96, 192);        // mids
+    const highAvg = bandAvg(srcArray, 288, 256);      // highs/tops
+
+    const lowAmp = scaleAmp(lowAvg, 8, 110);
+    const midAmp = scaleAmp(midAvg, 4, 70);
+    const highAmp = scaleAmp(highAvg, 2, 36);
+
+    const lowStep = 0.010 + lowAvg * 0.00015;
+    const midStep = 0.032 + midAvg * 0.0002;
+    const highStep = 0.085 + highAvg * 0.00025;
+
+    for (let i = 0; i < bridgeTimeArray.length; i++) {
+      const sLow = Math.sin(phaseLow + i * lowStep);
+      const sMid = Math.sin(phaseMid + i * midStep);
+      const sHigh = Math.sin(phaseHigh + i * highStep);
+      const noise = (Math.random() - 0.5) * 6;
+      const val = 128 + sLow * lowAmp + sMid * midAmp + sHigh * highAmp + noise;
+      bridgeTimeArray[i] = Math.max(0, Math.min(255, Math.floor(val)));
+    }
+
+    phaseLow += lowStep * bridgeTimeArray.length;
+    phaseMid += midStep * bridgeTimeArray.length;
+    phaseHigh += highStep * bridgeTimeArray.length;
+  }
+
+  function refreshTimeDomainFromPCM(srcArray) {
+    if (!srcArray || !srcArray.length) return false;
+    const len = Math.min(srcArray.length, bridgeTimeArray.length);
+    for (let i = 0; i < len; i++) {
+      bridgeTimeArray[i] = srcArray[i];
+    }
+    // If incoming shorter, pad with midpoint.
+    for (let i = len; i < bridgeTimeArray.length; i++) {
+      bridgeTimeArray[i] = 128;
+    }
+    return len > 0;
+  }
+
+  // Expose bridgeTimeArray globally so visualizers (e.g. Butterchurn) can read it.
+  window.__bridgeTimeArray = bridgeTimeArray;
+
   // Hide UI elements if requested — but keep lil-gui controls accessible
   if (hideui) {
     const style = document.createElement('style');
@@ -498,68 +567,9 @@
     // The visualizer's App runs in module scope, so we can't access it directly
     // Instead, intercept at the AnalyserNode level
     const bridgeDataArray = window.App.audioManager.audioAnalyser.data;
-    const bridgeTimeArray = new Uint8Array(2048);
-    let phaseLow = 0;
-    let phaseMid = 0;
-    let phaseHigh = 0;
+    // bridgeTimeArray, refreshTimeDomainFromFreq, refreshTimeDomainFromPCM
+    // are now declared at IIFE scope (see top of file).
 
-    const bandAvg = (src, start, count) => {
-      const len = src.length;
-      if (start >= len || count <= 0) return 0;
-      const end = Math.min(len, start + count);
-      let sum = 0;
-      for (let i = start; i < end; i++) sum += src[i];
-      const n = end - start;
-      return n ? (sum / n) : 0;
-    };
-
-    const scaleAmp = (v, minAmp, maxAmp) => {
-      const norm = Math.max(0, v - 12) / 243; // damp tiny noise, map to 0..1
-      return Math.min(maxAmp, Math.max(minAmp, minAmp + norm * (maxAmp - minAmp)));
-    };
-
-    function refreshTimeDomainFromFreq(srcArray) {
-      if (!srcArray || !srcArray.length) return;
-
-      const lowAvg = bandAvg(srcArray, 0, 96);          // ~0-375Hz depending on FFT size
-      const midAvg = bandAvg(srcArray, 96, 192);        // mids
-      const highAvg = bandAvg(srcArray, 288, 256);      // highs/tops
-
-      const lowAmp = scaleAmp(lowAvg, 8, 110);
-      const midAmp = scaleAmp(midAvg, 4, 70);
-      const highAmp = scaleAmp(highAvg, 2, 36);
-
-      const lowStep = 0.010 + lowAvg * 0.00015;
-      const midStep = 0.032 + midAvg * 0.0002;
-      const highStep = 0.085 + highAvg * 0.00025;
-
-      for (let i = 0; i < bridgeTimeArray.length; i++) {
-        const sLow = Math.sin(phaseLow + i * lowStep);
-        const sMid = Math.sin(phaseMid + i * midStep);
-        const sHigh = Math.sin(phaseHigh + i * highStep);
-        const noise = (Math.random() - 0.5) * 6;
-        const val = 128 + sLow * lowAmp + sMid * midAmp + sHigh * highAmp + noise;
-        bridgeTimeArray[i] = Math.max(0, Math.min(255, Math.floor(val)));
-      }
-
-      phaseLow += lowStep * bridgeTimeArray.length;
-      phaseMid += midStep * bridgeTimeArray.length;
-      phaseHigh += highStep * bridgeTimeArray.length;
-    }
-
-    function refreshTimeDomainFromPCM(srcArray) {
-      if (!srcArray || !srcArray.length) return false;
-      const len = Math.min(srcArray.length, bridgeTimeArray.length);
-      for (let i = 0; i < len; i++) {
-        bridgeTimeArray[i] = srcArray[i];
-      }
-      // If incoming shorter, pad with midpoint.
-      for (let i = len; i < bridgeTimeArray.length; i++) {
-        bridgeTimeArray[i] = 128;
-      }
-      return len > 0;
-    }
-    
     if (window.AnalyserNode && window.AnalyserNode.prototype) {
       const originalGetByteFrequencyData = window.AnalyserNode.prototype.getByteFrequencyData;
       
