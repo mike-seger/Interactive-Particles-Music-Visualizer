@@ -25,7 +25,8 @@ export default class AudioManager {
 
     this.song = {
  //     url: 'http://localhost:8080/backup/vid_TKWp_ND-B1U.mp4',
-      url: 'http://localhost:8080/player/video/user__eoy_bonus_mix_2025/vid_TKWp_ND-B1U.mp4',
+ //     url: 'http://localhost:8080/player/video/user__eoy_bonus_mix_2025/vid_TKWp_ND-B1U.mp4',
+      url: 'http://localhost:8080/player/video/pl_2025-2_golden_weekdays/vid_87TRyySHou8.mp4',
     }
   }
 
