@@ -49,99 +49,33 @@
   position: relative;
 }
 
-/* Small square 'X' button - absolute positioned at top right */
-.gui-title-close-btn {
-  position: absolute !important;
-  top: 5px !important;
-  right: 5px !important;
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  min-height: 20px !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: transparent !important;
+/* Pop-out hotzone button (fixed at top-right, visible on hover) */
+.gui-popout-btn {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 48px;
+  height: 48px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
+  background: rgba(15, 18, 25, 0.75);
   color: #e6e9f0;
-  font-size: 14px;
-  font-weight: bold;
+  font-size: 26px;
   line-height: 1;
-  cursor: pointer;
-  padding: 0;
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.7;
-  transition: all 0.2s;
-  z-index: 10 !important;
-}
-
-.gui-title-close-btn:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1) !important;
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-/* Hide GUI when collapsed unless hovering */
-.lil-gui.lil-root.gui-collapsed {
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  height: 34px;
-}
-
-.lil-gui.lil-root.gui-collapsed:hover {
-  opacity: 1;
-}
-
-/* Re-enable pointer events for the close button inside the title */
-.lil-gui.lil-root > .title .gui-close-btn {
-  pointer-events: auto !important;
-}
-
-/* Close button styling */
-.gui-close-btn {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
-  color: #e6e9f0;
-  font-size: 28px;
-  line-height: 20px;
   cursor: pointer;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.7;
-  transition: opacity 0.2s;
-}
-
-.gui-close-btn:hover {
-  opacity: 1;
-}
-
-/* Show button (80x80px hot zone at top right) */
-.gui-show-btn {
-  position: fixed;
-  top: 12px;
-  right: 12px;
-  width: 80px;
-  height: 80px;
-  border: none;
-  background: rgba(15, 18, 25, 0.8);
-  border: 1px solid #2b2f3a;
-  border-radius: 10px;
-  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.3s, background 0.2s, border-color 0.2s;
   z-index: 2500;
-  opacity: 0.6;
-  transition: opacity 0.2s;
 }
 
-.gui-show-btn:hover {
+.gui-popout-btn:hover {
   opacity: 1;
+  background: rgba(15, 18, 25, 0.9);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .lil-gui.lil-root > .lil-children {
