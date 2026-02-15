@@ -1,0 +1,200 @@
+@use 'includes/reset';
+@use 'includes/base';
+
+@font-face {
+  font-family: 'Local Material Symbols Rounded';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/player-fill0.woff2') format('woff2');
+}
+
+/* Player Controls */
+#player-controls {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+
+  background: #0f1219 !important;
+  border: 1px solid #2b2f3a !important;
+  border-radius: 10px !important;
+  box-shadow: 0 8px 24px #00000059 !important;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 100;
+}
+
+#player-controls button {
+  font-family: 'Material Symbols Rounded', 'Local Material Symbols Rounded', 'Inter', system-ui, -apple-system, sans-serif;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-variant-ligatures: normal;
+  font-feature-settings: 'liga' 1;
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+/* Safety: ensure these remain icon buttons even if a class (like .letter-btn) is present. */
+#play-pause-btn,
+#mute-btn,
+#mic-btn,
+#lock-btn {
+  font-family: 'Material Symbols Rounded', 'Local Material Symbols Rounded', 'Inter', system-ui, -apple-system, sans-serif;
+  font-variant-ligatures: normal;
+  font-feature-settings: 'liga' 1;
+}
+
+/* Hide ligature names (e.g. "volume_off") until the icon font is ready. */
+html:not(.icons-ready) #player-controls button {
+  visibility: hidden;
+}
+
+#play-pause-btn,
+#mute-btn,
+#mic-btn,
+#lock-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-size: 26px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+#play-pause-btn:hover,
+#mute-btn:hover,
+#mic-btn:hover,
+#lock-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: scale(1.05);
+}
+
+/* Sync toggle (mounted by SyncClient ToggleButton) */
+#syncButton {
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#syncButton label {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  transition: all 0.2s ease;
+}
+
+#syncButton label:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: scale(1.05);
+}
+
+#player-metrics {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#fps-display {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.2;
+  color: rgba(255, 255, 255, 0.75);
+  user-select: none;
+}
+
+.letter-btn {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+}
+
+.letter-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: scale(1.05);
+}
+
+.letter-btn.active {
+  color: red;
+}
+
+#position-slider {
+  width: 540px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.2);
+  outline: none;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+#position-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+#position-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+#position-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: white;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+#position-slider::-moz-range-thumb:hover {
+  transform: scale(1.2);
+  background: rgba(255, 255, 255, 0.9);
+}
+
+#time-display {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  text-align: center;
+}

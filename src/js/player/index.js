@@ -1,18 +1,16 @@
-import '../scss/style.scss'
-import App from './AppMonolithic'
+import '../../scss/player.scss'
+import PlayerApp from './PlayerApp'
+
 ;(() => {
   // Ensure Material Symbols font loads reliably and avoid showing ligature names
   // (e.g. "volume_off") before the font is ready.
   try {
     document.documentElement.classList.remove('icons-ready')
-    // NOTE: Material Symbols Rounded is loaded via <link> in index.html.
-    // We also ship a local fallback font ("Local Material Symbols Rounded").
 
     const markReady = () => document.documentElement.classList.add('icons-ready')
 
     const applyIconFallbacks = () => {
       try {
-        // Never show the ligature names as visible text if the font fails to load.
         const muteBtn = document.getElementById('mute-btn')
         const micBtn = document.getElementById('mic-btn')
         if (muteBtn) muteBtn.textContent = '🔊'
@@ -22,7 +20,6 @@ import App from './AppMonolithic'
       }
     }
 
-    // Trigger a load, but gate UI by an actual check.
     if (document.fonts && typeof document.fonts.load === 'function') {
       try {
         void document.fonts.load("16px 'Material Symbols Rounded'")
@@ -44,12 +41,10 @@ import App from './AppMonolithic'
             return true
           }
         } else {
-          // No Font Loading API: show immediately.
           markReady()
           return true
         }
       } catch {
-        // If check fails for any reason, don't block forever.
         markReady()
         return true
       }
@@ -62,7 +57,6 @@ import App from './AppMonolithic'
       return false
     }
 
-    // Try immediately, then poll briefly.
     if (!checkReady()) {
       const interval = setInterval(() => {
         if (checkReady()) clearInterval(interval)
@@ -72,5 +66,26 @@ import App from './AppMonolithic'
     document.documentElement.classList.add('icons-ready')
   }
 
-  new App()
+  // Forward keyboard events to the orchestrator (parent window).
+  // The orchestrator centralises all keyboard handling.
+  window.addEventListener('keydown', (e) => {
+    if (window.parent === window) return
+    try {
+      window.parent.postMessage({
+        source: 'player',
+        type: 'keydown',
+        key: e.key,
+        code: e.code,
+        location: e.location,
+        ctrlKey: e.ctrlKey,
+        shiftKey: e.shiftKey,
+        altKey: e.altKey,
+        metaKey: e.metaKey,
+      }, '*')
+    } catch {
+      // cross-origin — ignore
+    }
+  })
+
+  new PlayerApp()
 })()

@@ -124,12 +124,16 @@
 }
 
 /* Show button (80x80px hot zone at top right) */
+/* Show button – inside the controls iframe, position: fixed is relative to
+   the iframe viewport.  Use static/relative so it contributes to the body's
+   scroll dimensions, which we send back to the orchestrator to size the
+   iframe. */
 .gui-show-btn {
-  position: fixed;
-  top: 12px;
-  right: 12px;
+  position: relative;
+  display: block;
   width: 80px;
   height: 80px;
+  margin: 12px;
   border: none;
   background: rgba(15, 18, 25, 0.8);
   border: 1px solid #2b2f3a;

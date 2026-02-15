@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audio Visualizer – Player</title>
+    <meta name="author" content="Michael Seger" />
+    <link rel="shortcut icon" href="img/favicon.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap"
+    />
+    <link rel="preload" href="./player-fill0.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
+    <link rel="stylesheet" href="./src/scss/player.scss" />
+    <script>
+      document.documentElement.className = 'js'
+    </script>
+    <!-- Bridge integration for Polaris Player -->
+    <script type="module" defer src="/bridge-integration.js"></script>
+    <script type="module" defer src="./src/js/player/index.js"></script>
+  </head>
+  <body class="demo-1">
+    <main>
+      <div class="content"></div>
+
+      <!-- Player Controls -->
+      <div id="player-controls">
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button id="play-pause-btn">❚❚</button>
+          <button id="mute-btn">volume_up</button>
+          <button id="mic-btn">mic_off</button>
+          <div id="syncButton" title="Sync"></div>
+          <button id="lock-btn" title="Lock controls visible">lock_open_right</button>
+        </div>
+        <input type="range" id="position-slider" min="0" max="100" value="0" step="0.1">
+        <div id="player-metrics">
+          <div id="time-display">0:00 / 0:00</div>
+          <div id="fps-display" aria-label="FPS">FPS: --</div>
+        </div>
+      </div>
+
+      <div class="user_interaction">
+        <p>Click to Start</p>
+      </div>
+    </main>
+  </body>
+</html>
