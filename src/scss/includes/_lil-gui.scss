@@ -92,35 +92,72 @@
   opacity: 1;
 }
 
-/* Re-enable pointer events for the close button inside the title */
-.lil-gui.lil-root > .title .gui-close-btn {
+/* Re-enable pointer events for the title-area buttons */
+.lil-gui.lil-root > .gui-close-btn,
+.lil-gui.lil-root > .gui-popout-btn {
   pointer-events: auto !important;
 }
 
-/* Close button styling */
+/* Close (hide) button - absolute positioned next to the X collapse button */
 .gui-close-btn {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: transparent;
+  position: absolute !important;
+  top: 5px !important;
+  right: 28px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: transparent !important;
   color: #e6e9f0;
-  font-size: 28px;
-  line-height: 20px;
+  font-size: 18px;
+  line-height: 1;
   cursor: pointer;
   padding: 0;
-  display: flex;
+  display: flex !important;
   align-items: center;
   justify-content: center;
   opacity: 0.7;
-  transition: opacity 0.2s;
+  transition: all 0.2s;
+  z-index: 10 !important;
 }
 
 .gui-close-btn:hover {
   opacity: 1;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Pop-out button (opens controls in a separate window) */
+.gui-popout-btn {
+  position: absolute !important;
+  top: 5px !important;
+  right: 51px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: transparent !important;
+  color: #e6e9f0;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: all 0.2s;
+  z-index: 10 !important;
+}
+
+.gui-popout-btn:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 /* Show button (80x80px hot zone at top right) */

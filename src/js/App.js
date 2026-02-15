@@ -160,6 +160,12 @@ export default class App {
     this.handleBridgeMessage = (event) => this.onBridgeMessage(event)
     window.addEventListener('message', this.handleBridgeMessage)
 
+    // BroadcastChannel for popup controls window
+    this._controlsChannel = null
+    this._controlsPopup = null
+    this._controlsPopupPollTimer = null
+    this._setupControlsChannel()
+
     // GUI controller references
     this.visualizerSwitcherConfig = null
     this.visualizerController = null
@@ -219,6 +225,204 @@ export default class App {
     // Short sliding window for auto-quality sampling.
     // Important: a lifetime average reacts far too slowly after a sudden perf drop.
     this.qualityWindow = { frames: 0, sumDt: 0, maxDt: 0, startAt: 0 }
+  }
+
+  // -------------------------------------------------------------------
+  // Pop-out controls (BroadcastChannel)
+  // -------------------------------------------------------------------
+
+  _setupControlsChannel() {
+    try {
+      this._controlsChannel = new BroadcastChannel('visualizer-controls')
+      this._controlsChannel.onmessage = (e) => this._onControlsChannelMessage(e)
+    } catch {
+      // BroadcastChannel not supported — pop-out will be unavailable
+    }
+  }
+
+  _broadcastToControls(msg) {
+    try { this._controlsChannel?.postMessage(msg) } catch { /* */ }
+  }
+
+  _onControlsChannelMessage(event) {
+    const msg = event?.data
+    if (!msg || typeof msg !== 'object') return
+
+    switch (msg.type) {
+      case 'controls-ready':
+        // Popup is open and waiting — send full init state
+        this._sendControlsInit()
+        break
+
+      case 'controls-closed':
+        this._onControlsPopupClosed()
+        break
+
+      case 'select-visualizer':
+        if (msg.name) this.switchVisualizer(msg.name)
+        break
+
+      case 'set-quality': {
+        const type = App.visualizerType
+        if (typeof msg.antialias === 'boolean') {
+          this._writePerVisualizerQualityOverride(type, { antialias: msg.antialias })
+        }
+        if (Number.isFinite(msg.pixelRatio)) {
+          this._writePerVisualizerQualityOverride(type, { pixelRatio: msg.pixelRatio })
+        }
+        this._applyPerVisualizerQualityOverrides(type)
+        this._syncPerformanceQualityControls(type)
+        break
+      }
+
+      case 'save-quality-defaults':
+        if (this.performanceQualityConfig?.saveAsDefaults) {
+          this.performanceQualityConfig.saveAsDefaults()
+        }
+        break
+
+      case 'clear-quality-overrides':
+        if (this.performanceQualityConfig?.clearUserValues) {
+          this.performanceQualityConfig.clearUserValues()
+        }
+        break
+
+      case 'set-fv3-param':
+        if (App.currentVisualizer && typeof App.currentVisualizer.setParam === 'function') {
+          App.currentVisualizer.setParam(msg.key, msg.value)
+        }
+        // Also update the inline FV3 controls if visible
+        if (this.variant3Config && msg.key in this.variant3Config) {
+          this.variant3Config[msg.key] = msg.value
+          this.variant3Controllers?.[msg.key]?.updateDisplay?.()
+        }
+        break
+
+      case 'apply-fv3-params':
+        if (App.currentVisualizer && typeof App.currentVisualizer.applyParams === 'function') {
+          App.currentVisualizer.applyParams(msg.params)
+        } else if (App.currentVisualizer && msg.params) {
+          // Fallback: apply each param individually
+          for (const [k, v] of Object.entries(msg.params)) {
+            if (typeof App.currentVisualizer.setParam === 'function') {
+              App.currentVisualizer.setParam(k, v)
+            }
+          }
+        }
+        // Sync inline controls
+        if (this.variant3Config && msg.params) {
+          Object.assign(this.variant3Config, msg.params)
+          Object.values(this.variant3Controllers).forEach((c) => c?.updateDisplay?.())
+        }
+        break
+
+      case 'set-shader-uniform':
+        if (App.currentVisualizer?.material?.uniforms?.[msg.uniform]) {
+          App.currentVisualizer.material.uniforms[msg.uniform].value = msg.value
+        }
+        break
+
+      default:
+        break
+    }
+  }
+
+  _sendControlsInit() {
+    this._broadcastToControls({
+      type: 'init',
+      visualizerList: [...App.visualizerList],
+      activeVisualizer: App.visualizerType || '',
+    })
+    // Also send current visualizer details
+    this._broadcastVisualizerChanged()
+    // And quality state
+    this._broadcastQualityState()
+  }
+
+  _broadcastVisualizerChanged() {
+    if (!this._controlsChannel) return
+    const v = App.currentVisualizer
+    const type = App.visualizerType
+    const msg = {
+      type: 'visualizer-changed',
+      name: type,
+      hasFV3: type === 'Frequency Visualization 3' && v != null,
+      hasShaderConfig: !!(v?.shaderConfig),
+    }
+    if (msg.hasFV3 && v) {
+      msg.fv3Params = { ...(v.getParams?.() || v.params || {}) }
+    }
+    if (msg.hasShaderConfig && v?.shaderConfig) {
+      msg.shaderConfig = v.shaderConfig
+    }
+    this._broadcastToControls(msg)
+  }
+
+  _broadcastQualityState() {
+    if (!this._controlsChannel) return
+    const aa = this._getContextAntialias()
+    const pr = this.renderer?.getPixelRatio?.() || 1
+    this._broadcastToControls({
+      type: 'quality-update',
+      antialias: typeof aa === 'boolean' ? aa : false,
+      pixelRatio: this._snapPixelRatio(pr, { min: 0.25, max: 2 }),
+    })
+  }
+
+  _openControlsPopup() {
+    // If already open and alive, focus it
+    if (this._controlsPopup && !this._controlsPopup.closed) {
+      this._controlsPopup.focus()
+      return
+    }
+
+    const w = 460, h = 700
+    const left = window.screenX + window.outerWidth - w - 20
+    const top = window.screenY + 60
+    const features = `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+
+    // Resolve the controls page URL relative to the current page
+    const base = new URL('.', window.location.href).href
+    const url = new URL('viz-controls.html', base).href
+
+    this._controlsPopup = window.open(url, 'visualizer-controls', features)
+
+    if (!this._controlsPopup) {
+      alert('Popup blocked. Please allow popups for this site.')
+      return
+    }
+
+    // Hide the inline GUI while popup is open
+    this._setInlineGuiVisible(false)
+
+    // Poll for popup close (beforeunload isn't always reliable cross-window)
+    if (this._controlsPopupPollTimer) clearInterval(this._controlsPopupPollTimer)
+    this._controlsPopupPollTimer = setInterval(() => {
+      if (!this._controlsPopup || this._controlsPopup.closed) {
+        this._onControlsPopupClosed()
+      }
+    }, 500)
+  }
+
+  _onControlsPopupClosed() {
+    if (this._controlsPopupPollTimer) {
+      clearInterval(this._controlsPopupPollTimer)
+      this._controlsPopupPollTimer = null
+    }
+    this._controlsPopup = null
+    // Restore inline GUI
+    this._setInlineGuiVisible(true)
+    // Re-sync the inline controls to the current state
+    this._syncPerformanceQualityControls(App.visualizerType)
+  }
+
+  _setInlineGuiVisible(visible) {
+    const guiRoot = App.gui?.domElement
+    if (!guiRoot) return
+    guiRoot.style.display = visible ? '' : 'none'
+    // Also hide/show the show-button
+    const showBtn = document.querySelector('.gui-show-btn')
+    if (showBtn) showBtn.style.display = visible ? '' : 'none'
   }
 
   _snapPixelRatio(value, { min = 0.25, max = 2 } = {}) {
@@ -2240,6 +2444,10 @@ export default class App {
     // Keep the Performance + Quality controls in sync.
     this._syncPerformanceQualityControls(type)
 
+    // Notify popup controls window (if open)
+    this._broadcastVisualizerChanged()
+    this._broadcastQualityState()
+
     // Notify parent bridge about module change (only when embedded)
     if (notify && this.bridgeTarget) {
       this.postModuleSet(true, this.bridgeTarget)
@@ -2710,17 +2918,32 @@ export default class App {
       }
     })
     
-    // Get the title container
-    const titleElement = guiRoot.querySelector('.title')
+    // Get the title container (lil-gui v0.21 uses class 'lil-title')
+    const titleElement = guiRoot.querySelector('.lil-title')
     if (!titleElement) return
     
-    // Create close button
+    // Create close button (appended to guiRoot as sibling of .lil-title)
     const closeBtn = document.createElement('button')
     closeBtn.className = 'gui-close-btn'
     closeBtn.innerHTML = '×'
     closeBtn.title = 'Hide controls'
     closeBtn.style.pointerEvents = 'auto'
-    titleElement.appendChild(closeBtn)
+    guiRoot.appendChild(closeBtn)
+
+    // Create pop-out button (opens controls in a separate window)
+    if (this._controlsChannel) {
+      const popoutBtn = document.createElement('button')
+      popoutBtn.className = 'gui-popout-btn'
+      popoutBtn.innerHTML = '⧉'
+      popoutBtn.title = 'Pop out controls to separate window'
+      popoutBtn.style.pointerEvents = 'auto'
+      guiRoot.appendChild(popoutBtn)
+
+      popoutBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this._openControlsPopup()
+      })
+    }
     
     // Create show button (80x80px hot zone at top right)
     const showBtn = document.createElement('button')
@@ -3484,6 +3707,11 @@ export default class App {
           this.visualizerController.setValue(App.visualizerType)
           requestAnimationFrame(() => this._updateGuiWidthToFitVisualizerSelect())
         }
+        // Notify popup controls about the updated list
+        this._broadcastToControls({
+          type: 'visualizer-list-update',
+          visualizerList: [...App.visualizerList],
+        })
       })
     }
   }
@@ -3543,6 +3771,7 @@ export default class App {
         const type = App.visualizerType
         this._writePerVisualizerQualityOverride(type, { antialias: !!value })
         this._applyPerVisualizerQualityOverrides(type)
+        this._broadcastQualityState()
       })
 
     this.performanceQualityControllers.pixelRatio = folder
@@ -3554,6 +3783,7 @@ export default class App {
         const pr = typeof value === 'string' ? Number.parseFloat(value) : value
         this._writePerVisualizerQualityOverride(type, { pixelRatio: pr })
         this._applyPerVisualizerQualityOverrides(type)
+        this._broadcastQualityState()
       })
 
     this.performanceQualityControllers.defaults = folder

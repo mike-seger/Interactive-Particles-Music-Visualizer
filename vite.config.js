@@ -21,6 +21,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         visualizer: './index.html',
+        'viz-controls': './viz-controls.html',
       },
       output: {
         manualChunks(id) {
