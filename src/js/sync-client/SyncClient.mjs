@@ -120,6 +120,7 @@ class VideoSyncClient {
         try {
             this.toggleButton = new ToggleButton({
                 size: config?.size || 40,
+                iconScale: config?.iconScale,
                 svgUrl: config?.svgUrl || './img/link.svg',
                 colorOff: colorUnavailable,
                 colorOn: colorConnected,

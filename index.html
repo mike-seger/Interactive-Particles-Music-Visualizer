@@ -1,76 +1,793 @@
-<!DOCTYPE html>
-<html lang="en" class="no-js">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Audio Visualizer</title>
-    <meta
-      name="description"
-      content="Demo for the tutorial where you will learn how to build a particles music visualizer with Three.js, with techniques covering audio synchronization and 3D visual effects, inspired by ARKx's work for Coala Music's website."
-    />
-    <meta
-      name="keywords"
-      content="Three.js, audio-reactive visuals, WebGL, JavaScript, 3D visual effects, sound synchronization, audio visualization, visualizer, dynamic particles, web development, ARKx, tutorial"
-    />
-    <meta name="author" content="Tiago Canzian for Codrops" />
-    <link rel="shortcut icon" href="img/favicon.ico" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&display=swap"
-    />
-    <link rel="preload" href="./player-fill0.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
-    <link rel="stylesheet" href="./src/scss/style.scss" />
-    <script>
-      document.documentElement.className = 'js'
-    </script>
-    <!-- Bridge integration for Polaris Player -->
-    <script type="module" defer src="/bridge-integration.js"></script>
-    <script type="module" defer src="./src/js/index.js"></script>
-  </head>
-  <body class="demo-1">
-    <main>
-      <div class="content"></div>
-      
-      <!-- Player Controls -->
-      <div id="player-controls">
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <button id="play-pause-btn">❚❚</button>
-          <button id="mute-btn">volume_up</button>
-          <button id="mic-btn">mic_off</button>
-          <div id="syncButton" title="Sync"></div>
-          <button id="lock-btn" title="Lock controls visible">lock_open_right</button>
-        </div>
-        <input type="range" id="position-slider" min="0" max="100" value="0" step="0.1">
-        <div id="player-metrics">
-          <div id="time-display">0:00 / 0:00</div>
-          <div id="fps-display" aria-label="FPS">FPS: --</div>
+<html lang="en" class="js icons-ready">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Audio Visualizer</title>
+  <meta name="description"
+    content="Demo for the tutorial where you will learn how to build a particles music visualizer with Three.js, with techniques covering audio synchronization and 3D visual effects, inspired by ARKx's work for Coala Music's website.">
+  <meta name="keywords"
+    content="Three.js, audio-reactive visuals, WebGL, JavaScript, 3D visual effects, sound synchronization, audio visualization, visualizer, dynamic particles, web development, ARKx, tutorial">
+  <meta name="author" content="Tiago Canzian for Codrops">
+  <link rel="shortcut icon" href="img/favicon.ico">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+  <style>
+    .lil-gui {
+      font-family: var(--font-family);
+      font-size: var(--font-size);
+      line-height: 1;
+      font-weight: normal;
+      font-style: normal;
+      text-align: left;
+      color: var(--text-color);
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+      --background-color: #1f1f1f;
+      --text-color: #ebebeb;
+      --title-background-color: #111111;
+      --title-text-color: #ebebeb;
+      --widget-color: #424242;
+      --hover-color: #4f4f4f;
+      --focus-color: #595959;
+      --number-color: #2cc9ff;
+      --string-color: #a2db3c;
+      --font-size: 11px;
+      --input-font-size: 11px;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      --font-family-mono: Menlo, Monaco, Consolas, "Droid Sans Mono", monospace;
+      --padding: 4px;
+      --spacing: 4px;
+      --widget-height: 20px;
+      --title-height: calc(var(--widget-height) + var(--spacing) * 1.25);
+      --name-width: 45%;
+      --slider-knob-width: 2px;
+      --slider-input-width: 27%;
+      --color-input-width: 27%;
+      --slider-input-min-width: 45px;
+      --color-input-min-width: 45px;
+      --folder-indent: 7px;
+      --widget-padding: 0 0 0 3px;
+      --widget-border-radius: 2px;
+      --checkbox-size: calc(0.75 * var(--widget-height));
+      --scrollbar-width: 5px;
+    }
+
+    .lil-gui,
+    .lil-gui * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    .lil-gui.lil-root {
+      width: var(--width, 245px);
+      display: flex;
+      flex-direction: column;
+      background: var(--background-color);
+    }
+
+    .lil-gui.lil-root>.lil-title {
+      background: var(--title-background-color);
+      color: var(--title-text-color);
+    }
+
+    .lil-gui.lil-root>.lil-children {
+      overflow-x: hidden;
+      overflow-y: auto;
+    }
+
+    .lil-gui.lil-root>.lil-children::-webkit-scrollbar {
+      width: var(--scrollbar-width);
+      height: var(--scrollbar-width);
+      background: var(--background-color);
+    }
+
+    .lil-gui.lil-root>.lil-children::-webkit-scrollbar-thumb {
+      border-radius: var(--scrollbar-width);
+      background: var(--focus-color);
+    }
+
+    @media (pointer: coarse) {
+
+      .lil-gui.lil-allow-touch-styles,
+      .lil-gui.lil-allow-touch-styles .lil-gui {
+        --widget-height: 28px;
+        --padding: 6px;
+        --spacing: 6px;
+        --font-size: 13px;
+        --input-font-size: 16px;
+        --folder-indent: 10px;
+        --scrollbar-width: 7px;
+        --slider-input-min-width: 50px;
+        --color-input-min-width: 65px;
+      }
+    }
+
+    .lil-gui.lil-force-touch-styles,
+    .lil-gui.lil-force-touch-styles .lil-gui {
+      --widget-height: 28px;
+      --padding: 6px;
+      --spacing: 6px;
+      --font-size: 13px;
+      --input-font-size: 16px;
+      --folder-indent: 10px;
+      --scrollbar-width: 7px;
+      --slider-input-min-width: 50px;
+      --color-input-min-width: 65px;
+    }
+
+    .lil-gui.lil-auto-place,
+    .lil-gui.autoPlace {
+      max-height: 100%;
+      position: fixed;
+      top: 0;
+      right: 15px;
+      z-index: 1001;
+    }
+
+    .lil-controller {
+      display: flex;
+      align-items: center;
+      padding: 0 var(--padding);
+      margin: var(--spacing) 0;
+    }
+
+    .lil-controller.lil-disabled {
+      opacity: 0.5;
+    }
+
+    .lil-controller.lil-disabled,
+    .lil-controller.lil-disabled * {
+      pointer-events: none !important;
+    }
+
+    .lil-controller>.lil-name {
+      min-width: var(--name-width);
+      flex-shrink: 0;
+      white-space: pre;
+      padding-right: var(--spacing);
+      line-height: var(--widget-height);
+    }
+
+    .lil-controller .lil-widget {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+      min-height: var(--widget-height);
+    }
+
+    .lil-controller.lil-string input {
+      color: var(--string-color);
+    }
+
+    .lil-controller.lil-boolean {
+      cursor: pointer;
+    }
+
+    .lil-controller.lil-color .lil-display {
+      width: 100%;
+      height: var(--widget-height);
+      border-radius: var(--widget-border-radius);
+      position: relative;
+    }
+
+    @media (hover: hover) {
+      .lil-controller.lil-color .lil-display:hover:before {
+        content: " ";
+        display: block;
+        position: absolute;
+        border-radius: var(--widget-border-radius);
+        border: 1px solid #fff9;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+      }
+    }
+
+    .lil-controller.lil-color input[type=color] {
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+    }
+
+    .lil-controller.lil-color input[type=text] {
+      margin-left: var(--spacing);
+      font-family: var(--font-family-mono);
+      min-width: var(--color-input-min-width);
+      width: var(--color-input-width);
+      flex-shrink: 0;
+    }
+
+    .lil-controller.lil-option select {
+      opacity: 0;
+      position: absolute;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .lil-controller.lil-option .lil-display {
+      position: relative;
+      pointer-events: none;
+      border-radius: var(--widget-border-radius);
+      height: var(--widget-height);
+      line-height: var(--widget-height);
+      max-width: 100%;
+      overflow: hidden;
+      word-break: break-all;
+      padding-left: 0.55em;
+      padding-right: 1.75em;
+      background: var(--widget-color);
+    }
+
+    @media (hover: hover) {
+      .lil-controller.lil-option .lil-display.lil-focus {
+        background: var(--focus-color);
+      }
+    }
+
+    .lil-controller.lil-option .lil-display.lil-active {
+      background: var(--focus-color);
+    }
+
+    .lil-controller.lil-option .lil-display:after {
+      font-family: "lil-gui";
+      content: "↕";
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      padding-right: 0.375em;
+    }
+
+    .lil-controller.lil-option .lil-widget,
+    .lil-controller.lil-option select {
+      cursor: pointer;
+    }
+
+    @media (hover: hover) {
+      .lil-controller.lil-option .lil-widget:hover .lil-display {
+        background: var(--hover-color);
+      }
+    }
+
+    .lil-controller.lil-number input {
+      color: var(--number-color);
+    }
+
+    .lil-controller.lil-number.lil-has-slider input {
+      margin-left: var(--spacing);
+      width: var(--slider-input-width);
+      min-width: var(--slider-input-min-width);
+      flex-shrink: 0;
+    }
+
+    .lil-controller.lil-number .lil-slider {
+      width: 100%;
+      height: var(--widget-height);
+      background: var(--widget-color);
+      border-radius: var(--widget-border-radius);
+      padding-right: var(--slider-knob-width);
+      overflow: hidden;
+      cursor: ew-resize;
+      touch-action: pan-y;
+    }
+
+    @media (hover: hover) {
+      .lil-controller.lil-number .lil-slider:hover {
+        background: var(--hover-color);
+      }
+    }
+
+    .lil-controller.lil-number .lil-slider.lil-active {
+      background: var(--focus-color);
+    }
+
+    .lil-controller.lil-number .lil-slider.lil-active .lil-fill {
+      opacity: 0.95;
+    }
+
+    .lil-controller.lil-number .lil-fill {
+      height: 100%;
+      border-right: var(--slider-knob-width) solid var(--number-color);
+      box-sizing: content-box;
+    }
+
+    .lil-dragging .lil-gui {
+      --hover-color: var(--widget-color);
+    }
+
+    .lil-dragging * {
+      cursor: ew-resize !important;
+    }
+
+    .lil-dragging.lil-vertical * {
+      cursor: ns-resize !important;
+    }
+
+    .lil-gui .lil-title {
+      height: var(--title-height);
+      font-weight: 600;
+      padding: 0 var(--padding);
+      width: 100%;
+      text-align: left;
+      background: none;
+      text-decoration-skip: objects;
+    }
+
+    .lil-gui .lil-title:before {
+      font-family: "lil-gui";
+      content: "▾";
+      padding-right: 2px;
+      display: inline-block;
+    }
+
+    .lil-gui .lil-title:active {
+      background: var(--title-background-color);
+      opacity: 0.75;
+    }
+
+    @media (hover: hover) {
+      body:not(.lil-dragging) .lil-gui .lil-title:hover {
+        background: var(--title-background-color);
+        opacity: 0.85;
+      }
+
+      .lil-gui .lil-title:focus {
+        text-decoration: underline var(--focus-color);
+      }
+    }
+
+    .lil-gui.lil-root>.lil-title:focus {
+      text-decoration: none !important;
+    }
+
+    .lil-gui.lil-closed>.lil-title:before {
+      content: "▸";
+    }
+
+    .lil-gui.lil-closed>.lil-children {
+      transform: translateY(-7px);
+      opacity: 0;
+    }
+
+    .lil-gui.lil-closed:not(.lil-transition)>.lil-children {
+      display: none;
+    }
+
+    .lil-gui.lil-transition>.lil-children {
+      transition-duration: 300ms;
+      transition-property: height, opacity, transform;
+      transition-timing-function: cubic-bezier(0.2, 0.6, 0.35, 1);
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .lil-gui .lil-children:empty:before {
+      content: "Empty";
+      padding: 0 var(--padding);
+      margin: var(--spacing) 0;
+      display: block;
+      height: var(--widget-height);
+      font-style: italic;
+      line-height: var(--widget-height);
+      opacity: 0.5;
+    }
+
+    .lil-gui.lil-root>.lil-children>.lil-gui>.lil-title {
+      border: 0 solid var(--widget-color);
+      border-width: 1px 0;
+      transition: border-color 300ms;
+    }
+
+    .lil-gui.lil-root>.lil-children>.lil-gui.lil-closed>.lil-title {
+      border-bottom-color: transparent;
+    }
+
+    .lil-gui+.lil-controller {
+      border-top: 1px solid var(--widget-color);
+      margin-top: 0;
+      padding-top: var(--spacing);
+    }
+
+    .lil-gui .lil-gui .lil-gui>.lil-title {
+      border: none;
+    }
+
+    .lil-gui .lil-gui .lil-gui>.lil-children {
+      border: none;
+      margin-left: var(--folder-indent);
+      border-left: 2px solid var(--widget-color);
+    }
+
+    .lil-gui .lil-gui .lil-controller {
+      border: none;
+    }
+
+    .lil-gui label,
+    .lil-gui input,
+    .lil-gui button {
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .lil-gui input {
+      border: 0;
+      outline: none;
+      font-family: var(--font-family);
+      font-size: var(--input-font-size);
+      border-radius: var(--widget-border-radius);
+      height: var(--widget-height);
+      background: var(--widget-color);
+      color: var(--text-color);
+      width: 100%;
+    }
+
+    @media (hover: hover) {
+      .lil-gui input:hover {
+        background: var(--hover-color);
+      }
+
+      .lil-gui input:active {
+        background: var(--focus-color);
+      }
+    }
+
+    .lil-gui input:disabled {
+      opacity: 1;
+    }
+
+    .lil-gui input[type=text],
+    .lil-gui input[type=number] {
+      padding: var(--widget-padding);
+      -moz-appearance: textfield;
+    }
+
+    .lil-gui input[type=text]:focus,
+    .lil-gui input[type=number]:focus {
+      background: var(--focus-color);
+    }
+
+    .lil-gui input[type=checkbox] {
+      appearance: none;
+      width: var(--checkbox-size);
+      height: var(--checkbox-size);
+      border-radius: var(--widget-border-radius);
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .lil-gui input[type=checkbox]:checked:before {
+      font-family: "lil-gui";
+      content: "✓";
+      font-size: var(--checkbox-size);
+      line-height: var(--checkbox-size);
+    }
+
+    @media (hover: hover) {
+      .lil-gui input[type=checkbox]:focus {
+        box-shadow: inset 0 0 0 1px var(--focus-color);
+      }
+    }
+
+    .lil-gui button {
+      outline: none;
+      cursor: pointer;
+      font-family: var(--font-family);
+      font-size: var(--font-size);
+      color: var(--text-color);
+      width: 100%;
+      border: none;
+    }
+
+    .lil-gui .lil-controller button {
+      height: var(--widget-height);
+      text-transform: none;
+      background: var(--widget-color);
+      border-radius: var(--widget-border-radius);
+    }
+
+    @media (hover: hover) {
+      .lil-gui .lil-controller button:hover {
+        background: var(--hover-color);
+      }
+
+      .lil-gui .lil-controller button:focus {
+        box-shadow: inset 0 0 0 1px var(--focus-color);
+      }
+    }
+
+    .lil-gui .lil-controller button:active {
+      background: var(--focus-color);
+    }
+
+    @font-face {
+      font-family: "lil-gui";
+      src: url("data:application/font-woff2;charset=utf-8;base64,d09GMgABAAAAAALkAAsAAAAABtQAAAKVAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHFQGYACDMgqBBIEbATYCJAMUCwwABCAFhAoHgQQbHAbIDiUFEYVARAAAYQTVWNmz9MxhEgodq49wYRUFKE8GWNiUBxI2LBRaVnc51U83Gmhs0Q7JXWMiz5eteLwrKwuxHO8VFxUX9UpZBs6pa5ABRwHA+t3UxUnH20EvVknRerzQgX6xC/GH6ZUvTcAjAv122dF28OTqCXrPuyaDER30YBA1xnkVutDDo4oCi71Ca7rrV9xS8dZHbPHefsuwIyCpmT7j+MnjAH5X3984UZoFFuJ0yiZ4XEJFxjagEBeqs+e1iyK8Xf/nOuwF+vVK0ur765+vf7txotUi0m3N0m/84RGSrBCNrh8Ee5GjODjF4gnWP+dJrH/Lk9k4oT6d+gr6g/wssA2j64JJGP6cmx554vUZnpZfn6ZfX2bMwPPrlANsB86/DiHjhl0OP+c87+gaJo/gY084s3HoYL/ZkWHTRfBXvvoHnnkHvngKun4KBE/ede7tvq3/vQOxDXB1/fdNz6XbPdcr0Vhpojj9dG+owuSKFsslCi1tgEjirjXdwMiov2EioadxmqTHUCIwo8NgQaeIasAi0fTYSPTbSmwbMOFduyh9wvBrESGY0MtgRjtgQR8Q1bRPohn2UoCRZf9wyYANMXFeJTysqAe0I4mrherOekFdKMrYvJjLvOIUM9SuwYB5DVZUwwVjJJOaUnZCmcEkIZZrKqNvRGRMvmFZsmhP4VMKCSXBhSqUBxgMS7h0cZvEd71AWkEhGWaeMFcNnpqyJkyXgYL7PQ1MoSq0wDAkRtJIijkZSmqYTiSImfLiSWXIZwhRh3Rug2X0kk1Dgj+Iu43u5p98ghopcpSo0Uyc8SnjlYX59WUeaMoDqmVD2TOWD9a4pCRAzf2ECgwGcrHjPOWY9bNxq/OL3I/QjwEAAAA=") format("woff2");
+    }
+  </style>
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&amp;display=swap">
+  <link rel="preload" href="./player-fill0.woff2" as="font" type="font/woff2" crossorigin="anonymous">
+  <script>
+    document.documentElement.className = 'js'
+  </script>
+  <!-- Bridge integration for Polaris Player -->
+  <script type="module" defer src="/bridge-integration.js"></script>
+  <script type="module" defer src="./src/js/index.js"></script>
+</head>
+
+<body class="demo-1">
+  <main>
+    <div class="content"></div>
+
+    <!-- Player Controls -->
+    <div id="player-controls" style="display: flex; opacity: 1; pointer-events: auto;">
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button id="play-pause-btn">pause_circle</button>
+        <button id="mute-btn">volume_up</button>
+        <button id="mic-btn" disabled="" title="Microphone input not available in this build">mic_off</button>
+        <div id="syncButton" title="Sync"></div>
+        <button id="lock-btn" title="Unlock controls (allow auto-hide)">lock</button>
+        <button id="open-controls-btn" title="Open controls">settings</button>
+      </div>
+      <input type="range" id="position-slider" min="0" max="100" value="0" step="0.1">
+      <div id="player-metrics">
+        <div id="time-display">23:00 / 63:40</div>
+        <div id="fps-display" aria-label="FPS">FPS: 34.0 (16.7ms)</div>
+      </div>
+    </div>
+
+    <div class="user_interaction">
+      <p>Click to Start</p>
+    </div>
+
+  </main>
+
+
+  <div class="lil-gui lil-root lil-allow-touch-styles lil-auto-place autoPlace"
+    style="display: none; position: fixed; right: 12px; left: auto; top: 12px; z-index: 2500; pointer-events: auto; box-sizing: border-box; --width: 645.4px;">
+    <button class="lil-title" aria-expanded="true" data-close-sizing-bound="1">VISUALIZER</button>
+    <div class="lil-children">
+      <div class="lil-gui"><button class="lil-title" aria-expanded="true">TYPE</button>
+        <div class="lil-children">
+          <div class="lil-controller lil-option">
+            <div class="lil-name" id="lil-gui-name-1">Select Visualizer</div>
+            <div class="lil-widget"><select aria-labelledby="lil-gui-name-1">
+                <option>3D Audio Visualizer</option>
+                <option>Animated Blob</option>
+                <option>Audible 3d Spiral Lines</option>
+                <option>Audible Spiral</option>
+                <option>Audio Fabric</option>
+                <option>Audio Mesh</option>
+                <option>Audio Particles</option>
+                <option>Audio Sphere</option>
+                <option>Circular Audio Wave</option>
+                <option>Circular Spectrum</option>
+                <option>Circular Wave</option>
+                <option>Deep Lights</option>
+                <option>Deep Particles</option>
+                <option>Fireworks</option>
+                <option>Fireworks Night</option>
+                <option>Fireworks Shader</option>
+                <option>Fluid</option>
+                <option>Frequency Bars</option>
+                <option>Frequency Rings</option>
+                <option>Frequency Visualization 3</option>
+                <option>Iris</option>
+                <option>Kevs Plasma</option>
+                <option>Oscilloscope</option>
+                <option>Pulse Waves</option>
+                <option>Random Flowers</option>
+                <option>Reactive Particles</option>
+                <option>Simple Particles</option>
+                <option>Simple Plasma</option>
+                <option>Waveform Visualizer</option>
+                <option>Shader: 301s Fire Shader</option>
+                <option>Shader: 3d Audio Visualizer2</option>
+                <option>Shader: 4d Beats</option>
+                <option>Shader: Audio Cube Ii</option>
+                <option>Shader: Audio Eclipse</option>
+                <option>Shader: Audio Feedback Landscape</option>
+                <option>Shader: Audio Reaktive</option>
+                <option>Shader: Audio Spectrum Enhanced</option>
+                <option>Shader: Audiosurf</option>
+                <option>Shader: City At Night</option>
+                <option>Shader: Cyber Fuji</option>
+                <option>Shader: Daily</option>
+                <option>Shader: Dive To Cloud</option>
+                <option>Shader: Feedback Julia</option>
+                <option>Shader: Fft</option>
+                <option>Shader: Firestorm Cube</option>
+                <option>Shader: Fireworks</option>
+                <option>Shader: Flame Cppn</option>
+                <option>Shader: Flow Noise Fire</option>
+                <option>Shader: Fluther Of Orbs</option>
+                <option>Shader: Fractal Audio 01</option>
+                <option>Shader: Fractal Land</option>
+                <option>Shader: Fractal Pyramid</option>
+                <option>Shader: Fractal Trees</option>
+                <option>Shader: Glowest</option>
+                <option>Shader: Glowing Particles</option>
+                <option>Shader: Happy Jumping</option>
+                <option>Shader: Heater</option>
+                <option>Shader: Julies Dune Studies</option>
+                <option>Shader: Koan</option>
+                <option>Shader: Matrix Tunnel V3</option>
+                <option>Shader: Octagrams</option>
+                <option>Shader: Overstimulated Neurons</option>
+                <option>Shader: Phantom Star</option>
+                <option>Shader: Pixel Screen</option>
+                <option>Shader: Procedural Ocean</option>
+                <option>Shader: Psychedelic Lines</option>
+                <option>Shader: Pyroclastic Fireball</option>
+                <option>Shader: Raymarching</option>
+                <option>Shader: Re Cypher</option>
+                <option>Shader: Reactive Contour Lines</option>
+                <option>Shader: Reactive Radial Ripples</option>
+                <option>Shader: Retro Waves</option>
+                <option>Shader: Shader Tober Dark</option>
+                <option>Shader: Signal</option>
+                <option>Shader: Skinpeeler</option>
+                <option>Shader: Smooth Voronoi</option>
+                <option>Shader: Sound Sinus Wave</option>
+                <option>Shader: Sparkles And Lines</option>
+                <option>Shader: Spiral Spectrogram</option>
+                <option>Shader: Starbattle</option>
+                <option>Shader: Starleidoscope</option>
+                <option>Shader: Tm Gyroid</option>
+                <option>Shader: Turbulent Flame</option>
+                <option>Shader: Voronoi Distances</option>
+                <option>Shader: Warp Speed 2</option>
+                <option>Shader: Wave Matrix Product</option>
+                <option>Shader: Waves Remix</option>
+                <option>M: _Aderrasi - Wanderer in Curved Space - mash0000 - faclempt kibitzing meshuggana schmaltz
+                  (Geiss color mix)</option>
+                <option>M: _Geiss - Artifact 01</option>
+                <option>M: _Geiss - Desert Rose 2</option>
+                <option>M: _Geiss - untitled</option>
+                <option>M: _Mig_049</option>
+                <option>M: _Mig_085</option>
+                <option>M: _Rovastar + Geiss - Hurricane Nightmare (Posterize Mix)</option>
+                <option>M: $$$ Royal - Mashup (197)</option>
+                <option>M: $$$ Royal - Mashup (220)</option>
+                <option>M: $$$ Royal - Mashup (431)</option>
+                <option>M: Aderrasi - Potion of Spirits</option>
+                <option>M: Aderrasi - Songflower (Moss Posy)</option>
+                <option>M: Aderrasi - Storm of the Eye (Thunder) - mash0000 - quasi pseudo meta concentrics</option>
+                <option>M: Aderrasi + Geiss - Airhandler (Kali Mix) - Canvas Mix</option>
+                <option>M: An AdamFX n Martin Infusion 2 flexi - Why The Sky Looks Diffrent Today - AdamFx n Martin
+                  Infusion - Tack Tile Disfunction B</option>
+                <option>M: Cope - The Neverending Explosion of Red Liquid Fire</option>
+                <option>M: cope + martin - mother-of-pearl</option>
+                <option>M: Eo.S. - glowsticks v2 05 and proton lights (+Krash′s beat code) _Phat_remix02b</option>
+                <option>M: Eo.S. + Phat - cubetrace - v2</option>
+                <option>M: Eo.S. + Zylot - skylight (Stained Glass Majesty mix)</option>
+                <option>M: fiShbRaiN + Flexi - witchcraft 2.0</option>
+                <option>M: Flexi - alien fish pond</option>
+                <option>M: Flexi - area 51</option>
+                <option>M: flexi - bouncing balls [double mindblob neon mix]</option>
+                <option>M: Flexi - infused with the spiral</option>
+                <option>M: Flexi - mindblob [shiny mix]</option>
+                <option>M: Flexi - mindblob mix</option>
+                <option>M: flexi - mom, why the sky looks different today</option>
+                <option>M: flexi - patternton, district of media, capitol of the united abstractions of fractopia
+                </option>
+                <option>M: Flexi - predator-prey-spirals</option>
+                <option>M: Flexi - smashing fractals [acid etching mix]</option>
+                <option>M: flexi - swing out on the spiral</option>
+                <option>M: Flexi - truly soft piece of software - this is generic texturing (Jelly) </option>
+                <option>M: flexi - what is the matrix</option>
+                <option>M: flexi + amandio c - organic [random mashup]</option>
+                <option>M: flexi + amandio c - organic12-3d-2.milk</option>
+                <option>M: Flexi + amandio c - piercing 05 - Kopie (2) - Kopie</option>
+                <option>M: flexi + fishbrain - neon mindblob grafitti</option>
+                <option>M: flexi + geiss - pogo cubes vs. tokamak vs. game of life [stahls jelly 4.5 finish]</option>
+                <option>M: Flexi + Martin - astral projection</option>
+                <option>M: Flexi + Martin - cascading decay swing</option>
+                <option>M: Flexi + stahlregen - jelly showoff parade</option>
+                <option>M: Flexi, fishbrain, Geiss + Martin - tokamak witchery</option>
+                <option>M: Flexi, martin + geiss - dedicated to the sherwin maxawow</option>
+                <option>M: Fumbling_Foo &amp; Flexi, Martin, Orb, Unchained - Star Nova v7b</option>
+                <option>M: Geiss - Cauldron - painterly 2 (saturation remix)</option>
+                <option>M: Geiss - Reaction Diffusion 2</option>
+                <option>M: Geiss - Spiral Artifact</option>
+                <option>M: Geiss - Thumb Drum</option>
+                <option>M: Geiss + Flexi + Martin - disconnected</option>
+                <option>M: Geiss, Flexi + Stahlregen - Thumbdrum Tokamak [crossfiring aftermath jelly mashup]</option>
+                <option>M: Goody - The Wild Vort</option>
+                <option>M: high-altitude basket unraveling - singh grooves nitrogen argon nz+</option>
+                <option>M: Idiot - Star Of Annon</option>
+                <option>M: Krash + Illusion - Spiral Movement</option>
+                <option>M: Martin - acid wiring</option>
+                <option>M: martin - angel flight</option>
+                <option>M: martin - another kind of groove</option>
+                <option>M: martin - bombyx mori</option>
+                <option>M: martin - castle in the air</option>
+                <option>M: martin - chain breaker</option>
+                <option>M: Martin - charisma</option>
+                <option>M: martin - disco mix 4</option>
+                <option>M: martin - extreme heat</option>
+                <option>M: martin - frosty caves 2</option>
+                <option>M: martin - fruit machine</option>
+                <option>M: martin - ghost city</option>
+                <option>M: martin - glass corridor</option>
+                <option>M: martin - infinity (2010 update)</option>
+                <option>M: Martin - liquid arrows</option>
+                <option>M: martin - mandelbox explorer - high speed demo version</option>
+                <option>M: martin - mucus cervix</option>
+                <option>M: Martin - QBikal - Surface Turbulence IIb</option>
+                <option>M: martin - reflections on black tiles</option>
+                <option>M: martin - stormy sea (2010 update)</option>
+                <option>M: martin - The Bridge of Khazad-Dum</option>
+                <option>M: martin - witchcraft reloaded</option>
+                <option>M: martin [shadow harlequins shape code] - fata morgana</option>
+                <option>M: martin + flexi - diamond cutter [prismaticvortex.com] - camille - i wish i wish i wish i was
+                  constrained</option>
+                <option>M: martin, flexi, fishbrain + sto - enterstate [random mashup]</option>
+                <option>M: Milk Artist At our Best - FED - SlowFast Ft AdamFX n Martin - HD CosmoFX</option>
+                <option>M: ORB - Waaa</option>
+                <option>M: Phat+fiShbRaiN+Eo.S_Mandala_Chasers_remix</option>
+                <option>M: Rovastar - Oozing Resistance</option>
+                <option>M: Rovastar + Loadus + Geiss - FractalDrop (Triple Mix)</option>
+                <option>M: sawtooth grin roam</option>
+                <option>M: shifter - dark tides bdrv mix 2</option>
+                <option>M: suksma - heretical crosscut playpen</option>
+                <option>M: suksma - Rovastar - Sunflower Passion (Enlightment Mix)_Phat_edit + flexi und martin shaders
+                  - circumflex in character classes in regular expression</option>
+                <option>M: suksma - uninitialized variabowl (hydroponic chronic)</option>
+                <option>M: suksma - vector exp 1 - couldn′t not</option>
+                <option>M: TonyMilkdrop - Leonardo Da Vinci's Balloon [Flexi - merry-go-round + techstyle]</option>
+                <option>M: TonyMilkdrop - Magellan's Nebula [Flexi - you enter first + multiverse]</option>
+                <option>M: Unchained - Rewop</option>
+                <option>M: Unchained - Unified Drag 2</option>
+                <option>M: Unchained &amp; Rovastar - Wormhole Pillars (Hall of Shadows mix)</option>
+                <option>M: yin - 191 - Temporal singularities</option>
+                <option>M: Zylot - Paint Spill (Music Reactive Paint Mix)</option>
+                <option>M: Zylot - Star Ornament</option>
+                <option>M: Zylot - True Visionary (Final Mix)</option>
+              </select>
+              <div class="lil-display">Shader: Skinpeeler</div>
+            </div>
+          </div>
         </div>
       </div>
-      
-      <div class="user_interaction">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          xmlns:xlink="http://www.w3.org/1999/xlink"
-          version="1.1"
-          x="0px"
-          y="0px"
-          viewBox="0 0 100 125"
-          style="enable-background: new 0 0 100 100"
-          xml:space="preserve"
-        >
-          <g fill="#FFFFFF">
-            <path
-              d="M66.6,55.2l-7.4,4.4c-0.5,0.3-0.6,0.9-0.4,1.4c0.3,0.5,0.9,0.6,1.4,0.4l7.4-4.4c2.5-1.5,4-4.1,4-6.9s-1.5-5.5-4-6.9   L46.1,30.4c-2.5-1.5-5.5-1.5-8.1-0.1c-2.5,1.5-4.1,4.1-4.1,7v25.4c0,2.9,1.5,5.5,4.1,7c1.3,0.7,2.6,1.1,4,1.1   c1.4,0,2.8-0.4,4.1-1.1l8.2-4.8c0.5-0.3,0.6-0.9,0.4-1.4c-0.3-0.5-0.9-0.6-1.4-0.4l-8.2,4.8C43.2,69,41,69,39,67.9   c-1.9-1.1-3-3.1-3-5.2V37.3c0-2.2,1.1-4.2,3-5.2c1.9-1.1,4.2-1.1,6.1,0l21.5,12.7c1.9,1.1,3,3,3,5.2S68.5,54.1,66.6,55.2z"
-            />
-            <path
-              d="M50,93c9,0,17.7-2.8,25-8c0.5-0.3,0.6-0.9,0.2-1.4c-0.3-0.4-0.9-0.6-1.4-0.2c-7,5-15.2,7.6-23.8,7.6C27.4,91,9,72.6,9,50   S27.4,9,50,9s41,18.4,41,41c0,10.4-3.9,20.4-11,28c-0.4,0.4-0.4,1,0,1.4c0.4,0.4,1,0.4,1.4,0C88.9,71.4,93,60.9,93,50   C93,26.3,73.7,7,50,7S7,26.3,7,50S26.3,93,50,93z"
-            />
-          </g>
-        </svg>
-        <p>Click to Start</p>
+      <div class="lil-gui"><button class="lil-title" aria-expanded="true">PERFORMANCE + QUALITY</button>
+        <div class="lil-children"><label class="lil-controller lil-boolean">
+            <div class="lil-name" id="lil-gui-name-2">Antialiasing</div>
+            <div class="lil-widget"><input type="checkbox" aria-labelledby="lil-gui-name-2"></div>
+          </label>
+          <div class="lil-controller lil-option">
+            <div class="lil-name" id="lil-gui-name-3">PixelRatio</div>
+            <div class="lil-widget"><select aria-labelledby="lil-gui-name-3">
+                <option>0.25</option>
+                <option>0.5</option>
+                <option>1 </option>
+                <option>2 </option>
+              </select>
+              <div class="lil-display">1 </div>
+            </div>
+          </div>
+          <div class="lil-controller lil-function">
+            <div class="lil-widget"><button>
+                <div class="lil-name" id="lil-gui-name-4">Save As Global PQ Defaults</div>
+              </button></div>
+          </div>
+          <div class="lil-controller lil-function">
+            <div class="lil-widget"><button>
+                <div class="lil-name" id="lil-gui-name-5">Clear Stored Local PQ Values</div>
+              </button></div>
+          </div>
+        </div>
       </div>
-    </main>
-  </body>
+    </div>
+  </div><button class="gui-popout-btn" title="Open controls">⧉</button>
+  <div
+    style="position: fixed; bottom: 8px; right: 8px; padding: 2px 6px; height: 12px; line-height: 12px; font-size: 11px; font-family: Inter, system-ui, -apple-system, sans-serif; color: rgb(255, 255, 255); background: rgb(0, 0, 0); border-radius: 3px; opacity: 0; transition: opacity 250ms; pointer-events: none; z-index: 1000;">
+    Shader: Skinpeeler</div>
+</body>
+
 </html>

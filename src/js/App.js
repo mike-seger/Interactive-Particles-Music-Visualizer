@@ -820,6 +820,7 @@ export default class App {
     const muteBtn = document.getElementById('mute-btn')
     const micBtn = document.getElementById('mic-btn')
     const lockBtn = document.getElementById('lock-btn')
+    const openControlsBtn = document.getElementById('open-controls-btn')
     const syncButton = document.getElementById('syncButton')
     const positionSlider = document.getElementById('position-slider')
     const timeDisplay = document.getElementById('time-display')
@@ -928,7 +929,8 @@ export default class App {
       this.syncClient = new VideoSyncClient(App.audioManager.audio, null, serverAddress, {
         container: syncButton,
         svgUrl: getMainWindowAssetUrl('img/link.svg'),
-        size: 56,
+        size: 44,
+        iconScale: 0.55,
         colorConnected: '#cc0000',
         colorDisconnected: '#ffffff',
         colorUnavailable: '#a8b3c7',
@@ -1029,6 +1031,12 @@ export default class App {
       } else {
         scheduleIdle()
       }
+    })
+
+    // Open controls popup button
+    openControlsBtn?.addEventListener('click', () => {
+      this._openControlsPopup()
+      resetVisibility()
     })
 
     updateLockState()

@@ -50,7 +50,8 @@
 #play-pause-btn,
 #mute-btn,
 #mic-btn,
-#lock-btn {
+#lock-btn,
+#open-controls-btn {
   font-family: 'Material Symbols Rounded', 'Local Material Symbols Rounded', 'Inter', system-ui, -apple-system, sans-serif;
   font-variant-ligatures: normal;
   font-feature-settings: 'liga' 1;
@@ -64,13 +65,14 @@ html:not(.icons-ready) #player-controls button {
 #play-pause-btn,
 #mute-btn,
 #mic-btn,
-#lock-btn {
+#lock-btn,
+#open-controls-btn {
   background: rgba(255, 255, 255, 0.1);
   border: 1px solid rgba(255, 255, 255, 0.3);
   color: white;
-  font-size: 26px;
-  width: 56px;
-  height: 56px;
+  font-size: 24px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -83,7 +85,8 @@ html:not(.icons-ready) #player-controls button {
 #play-pause-btn:hover,
 #mute-btn:hover,
 #mic-btn:hover,
-#lock-btn:hover {
+#lock-btn:hover,
+#open-controls-btn:hover {
   background: rgba(255, 255, 255, 0.2);
   border-color: rgba(255, 255, 255, 0.5);
   transform: scale(1.05);
@@ -91,8 +94,8 @@ html:not(.icons-ready) #player-controls button {
 
 /* Sync toggle (mounted by SyncClient ToggleButton) */
 #syncButton {
-  width: 56px;
-  height: 56px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
