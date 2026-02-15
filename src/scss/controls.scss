@@ -31,9 +31,8 @@ html, body {
   display: none !important;
 }
 
-/* Hide close/popout buttons (not needed in popup) */
-.lil-gui.lil-root > .gui-close-btn,
-.lil-gui.lil-root > .gui-popout-btn {
+/* Hide popout hotzone in popup window (not needed) */
+.gui-popout-btn {
   display: none !important;
 }
 

@@ -370,30 +370,41 @@ export default class App {
   }
 
   _openControlsPopup() {
-    // If already open and alive, focus it
+    const w = 460, h = 700
+    const left = window.screenX + window.outerWidth - w - 20
+    const top = window.screenY + 60
+
+    // If already open and alive, move it near the button and focus it
     if (this._controlsPopup && !this._controlsPopup.closed) {
+      try {
+        this._controlsPopup.moveTo(left, top)
+        this._controlsPopup.resizeTo(w, h)
+      } catch { /* cross-origin or permission error — ignore */ }
       this._controlsPopup.focus()
       return
     }
 
-    const w = 460, h = 700
-    const left = window.screenX + window.outerWidth - w - 20
-    const top = window.screenY + 60
-    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},resizable=no,scrollbars=yes,menubar=no,toolbar=no,location=no,status=no`
 
     // Resolve the controls page URL relative to the current page
     const base = new URL('.', window.location.href).href
     const url = new URL('viz-controls.html', base).href
 
-    this._controlsPopup = window.open(url, 'visualizer-controls', features)
+    // Use empty string as window name to avoid browser reusing a stale target
+    this._controlsPopup = window.open(url, '', features)
 
     if (!this._controlsPopup) {
       alert('Popup blocked. Please allow popups for this site.')
       return
     }
 
-    // Hide the inline GUI while popup is open
-    this._setInlineGuiVisible(false)
+    // Prefix popup title with parent window title when running inside an iframe
+    const parentTitle = this._getParentWindowTitle()
+    if (parentTitle) {
+      this._controlsPopup.addEventListener('load', () => {
+        try { this._controlsPopup.document.title = `${parentTitle} – VISUALIZER CONTROLS` } catch { /* */ }
+      })
+    }
 
     // Poll for popup close (beforeunload isn't always reliable cross-window)
     if (this._controlsPopupPollTimer) clearInterval(this._controlsPopupPollTimer)
@@ -410,19 +421,14 @@ export default class App {
       this._controlsPopupPollTimer = null
     }
     this._controlsPopup = null
-    // Restore inline GUI
-    this._setInlineGuiVisible(true)
-    // Re-sync the inline controls to the current state
-    this._syncPerformanceQualityControls(App.visualizerType)
   }
 
-  _setInlineGuiVisible(visible) {
-    const guiRoot = App.gui?.domElement
-    if (!guiRoot) return
-    guiRoot.style.display = visible ? '' : 'none'
-    // Also hide/show the show-button
-    const showBtn = document.querySelector('.gui-show-btn')
-    if (showBtn) showBtn.style.display = visible ? '' : 'none'
+  /** Try to read the parent/top window title (for iframe/bridge mode). */
+  _getParentWindowTitle() {
+    if (window === window.top) return null // not in an iframe
+    try { return window.top.document.title || null } catch { /* cross-origin */ }
+    try { return window.parent.document.title || null } catch { /* cross-origin */ }
+    return null
   }
 
   _snapPixelRatio(value, { min = 0.25, max = 2 } = {}) {
@@ -2870,56 +2876,23 @@ export default class App {
     if (!App.gui?.domElement) return
     
     const guiRoot = App.gui.domElement
-    const titleButton = guiRoot.querySelector('.lil-title')
-    if (!titleButton) return
-    
-    // Disable the title button to prevent collapsing
-    titleButton.disabled = true
-    titleButton.style.cursor = 'default'
-    titleButton.style.pointerEvents = 'none'
-    
-    // Create close button (hides the entire controls panel)
-    const closeBtn = document.createElement('button')
-    closeBtn.className = 'gui-close-btn'
-    closeBtn.innerHTML = '×'
-    closeBtn.title = 'Hide controls'
-    closeBtn.style.pointerEvents = 'auto'
-    guiRoot.appendChild(closeBtn)
 
-    // Create pop-out button (opens controls in a separate window)
+    // Hide the inline GUI entirely – controls are pop-out only
+    guiRoot.style.display = 'none'
+
+    // Create pop-out hotzone (appears on hover at top-right corner)
     if (this._controlsChannel) {
       const popoutBtn = document.createElement('button')
       popoutBtn.className = 'gui-popout-btn'
       popoutBtn.innerHTML = '⧉'
-      popoutBtn.title = 'Pop out controls to separate window'
-      popoutBtn.style.pointerEvents = 'auto'
-      guiRoot.appendChild(popoutBtn)
+      popoutBtn.title = 'Open controls'
+      document.body.appendChild(popoutBtn)
 
       popoutBtn.addEventListener('click', (e) => {
         e.stopPropagation()
         this._openControlsPopup()
       })
     }
-    
-    // Create show button (hot zone at top right, invisible until hover)
-    const showBtn = document.createElement('button')
-    showBtn.className = 'gui-show-btn'
-    showBtn.title = 'Show controls'
-    showBtn.style.display = 'none'
-    document.body.appendChild(showBtn)
-    
-    // Close button handler
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      guiRoot.style.display = 'none'
-      showBtn.style.display = 'block'
-    })
-    
-    // Show button handler
-    showBtn.addEventListener('click', () => {
-      guiRoot.style.display = 'block'
-      showBtn.style.display = 'none'
-    })
   }
 
   teardownFrequencyViz3Controls() {
