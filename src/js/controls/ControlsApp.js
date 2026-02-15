@@ -173,32 +173,10 @@ export default class ControlsApp {
     const titleButton = guiRoot.querySelector('.lil-title')
     if (!titleButton) return
 
+    // Title is hidden via CSS in the popup; just disable collapsing
     titleButton.disabled = true
     titleButton.style.cursor = 'default'
     titleButton.style.pointerEvents = 'none'
-    titleButton.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); return false }, true)
-
-    const titleCloseBtn = document.createElement('button')
-    titleCloseBtn.className = 'gui-title-close-btn'
-    titleCloseBtn.innerHTML = 'X'
-    titleCloseBtn.title = 'Close controls'
-    titleButton.parentNode.insertBefore(titleCloseBtn, titleButton.nextSibling)
-
-    titleCloseBtn.addEventListener('click', (e) => {
-      e.stopPropagation(); e.preventDefault()
-      const ch = guiRoot.querySelector('.lil-children')
-      if (ch) {
-        const hidden = ch.style.display === 'none'
-        ch.style.display = hidden ? '' : 'none'
-        titleCloseBtn.innerHTML = hidden ? 'X' : 'O'
-        guiRoot.classList.toggle('gui-collapsed', !hidden)
-      }
-    })
-
-    guiRoot.addEventListener('click', () => {
-      const ch = guiRoot.querySelector('.lil-children')
-      if (ch && ch.style.display === 'none') { ch.style.display = ''; titleCloseBtn.innerHTML = 'X'; guiRoot.classList.remove('gui-collapsed') }
-    })
   }
 
   // -------------------------------------------------------------------

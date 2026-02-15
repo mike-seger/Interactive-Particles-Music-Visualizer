@@ -49,69 +49,26 @@
   position: relative;
 }
 
-/* Small square 'X' button - absolute positioned at top right */
-.gui-title-close-btn {
-  position: absolute !important;
-  top: 5px !important;
-  right: 5px !important;
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  min-height: 20px !important;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: transparent !important;
-  color: #e6e9f0;
-  font-size: 14px;
-  font-weight: bold;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0;
-  display: flex !important;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.7;
-  transition: all 0.2s;
-  z-index: 10 !important;
-}
-
-.gui-title-close-btn:hover {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.1) !important;
-  border-color: rgba(255, 255, 255, 0.5);
-}
-
-/* Hide GUI when collapsed unless hovering */
-.lil-gui.lil-root.gui-collapsed {
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  height: 34px;
-}
-
-.lil-gui.lil-root.gui-collapsed:hover {
-  opacity: 1;
-}
-
 /* Re-enable pointer events for the title-area buttons */
 .lil-gui.lil-root > .gui-close-btn,
 .lil-gui.lil-root > .gui-popout-btn {
   pointer-events: auto !important;
 }
 
-/* Close (hide) button - absolute positioned next to the X collapse button */
+/* Close (hide) button */
 .gui-close-btn {
   position: absolute !important;
   top: 5px !important;
-  right: 28px !important;
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  min-height: 20px !important;
+  right: 5px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
   border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent !important;
   color: #e6e9f0;
-  font-size: 18px;
+  font-size: 22px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -133,16 +90,16 @@
 .gui-popout-btn {
   position: absolute !important;
   top: 5px !important;
-  right: 51px !important;
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  min-height: 20px !important;
+  right: 38px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
   border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent !important;
   color: #e6e9f0;
-  font-size: 14px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -160,7 +117,7 @@
   border-color: rgba(255, 255, 255, 0.5);
 }
 
-/* Show button (80x80px hot zone at top right) */
+/* Show button (hot zone at top right, invisible until hovered) */
 .gui-show-btn {
   position: fixed;
   top: 12px;
@@ -173,8 +130,8 @@
   border-radius: 10px;
   cursor: pointer;
   z-index: 2500;
-  opacity: 0.6;
-  transition: opacity 0.2s;
+  opacity: 0;
+  transition: opacity 0.3s;
 }
 
 .gui-show-btn:hover {

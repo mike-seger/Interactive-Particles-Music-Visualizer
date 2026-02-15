@@ -379,7 +379,7 @@ export default class App {
     const w = 460, h = 700
     const left = window.screenX + window.outerWidth - w - 20
     const top = window.screenY + 60
-    const features = `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    const features = `popup=yes,width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
 
     // Resolve the controls page URL relative to the current page
     const base = new URL('.', window.location.href).href
@@ -2873,56 +2873,12 @@ export default class App {
     const titleButton = guiRoot.querySelector('.lil-title')
     if (!titleButton) return
     
-    // Disable the button to prevent collapsing
+    // Disable the title button to prevent collapsing
     titleButton.disabled = true
     titleButton.style.cursor = 'default'
     titleButton.style.pointerEvents = 'none'
     
-    // Prevent any click events from reaching the button
-    titleButton.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      e.stopImmediatePropagation()
-      return false
-    }, true)
-    
-    // Create small square 'x' button next to title
-    const titleCloseBtn = document.createElement('button')
-    titleCloseBtn.className = 'gui-title-close-btn'
-    titleCloseBtn.innerHTML = 'X'
-    titleCloseBtn.title = 'Close controls'
-    // Insert the button right after the title button
-    titleButton.parentNode.insertBefore(titleCloseBtn, titleButton.nextSibling)
-    
-    // Add click handler to hide all child folders
-    titleCloseBtn.addEventListener('click', (e) => {
-      e.stopPropagation()
-      e.preventDefault()
-      const childrenContainer = guiRoot.querySelector('.lil-children')
-      if (childrenContainer) {
-        const isHidden = childrenContainer.style.display === 'none'
-        childrenContainer.style.display = isHidden ? '' : 'none'
-        titleCloseBtn.innerHTML = isHidden ? 'X' : 'O'
-        guiRoot.classList.toggle('gui-collapsed', !isHidden)
-      }
-    })
-    
-    // When collapsed, clicking anywhere in the GUI should toggle it open
-    guiRoot.addEventListener('click', (e) => {
-      const childrenContainer = guiRoot.querySelector('.lil-children')
-      if (childrenContainer && childrenContainer.style.display === 'none') {
-        // We're collapsed, so expand
-        childrenContainer.style.display = ''
-        titleCloseBtn.innerHTML = 'X'
-        guiRoot.classList.remove('gui-collapsed')
-      }
-    })
-    
-    // Get the title container (lil-gui v0.21 uses class 'lil-title')
-    const titleElement = guiRoot.querySelector('.lil-title')
-    if (!titleElement) return
-    
-    // Create close button (appended to guiRoot as sibling of .lil-title)
+    // Create close button (hides the entire controls panel)
     const closeBtn = document.createElement('button')
     closeBtn.className = 'gui-close-btn'
     closeBtn.innerHTML = '×'
@@ -2945,7 +2901,7 @@ export default class App {
       })
     }
     
-    // Create show button (80x80px hot zone at top right)
+    // Create show button (hot zone at top right, invisible until hover)
     const showBtn = document.createElement('button')
     showBtn.className = 'gui-show-btn'
     showBtn.title = 'Show controls'

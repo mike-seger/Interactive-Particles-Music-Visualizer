@@ -13,6 +13,8 @@ html, body {
 
 /* In the popup window, the lil-gui sits at the top and fills the width */
 .lil-gui.lil-root {
+  --width: 100% !important;
+  width: 100% !important;
   position: relative !important;
   top: auto !important;
   right: auto !important;
@@ -21,6 +23,18 @@ html, body {
   border: none !important;
   box-shadow: none !important;
   max-height: none !important;
+  padding: 0 !important;
+}
+
+/* Hide the root title bar but keep children visible */
+.lil-gui.lil-root > .lil-title {
+  display: none !important;
+}
+
+/* Hide close/popout buttons (not needed in popup) */
+.lil-gui.lil-root > .gui-close-btn,
+.lil-gui.lil-root > .gui-popout-btn {
+  display: none !important;
 }
 
 /* lil-gui (visualizer dropdown) layout fixes */
